@@ -1,0 +1,42 @@
+name = "contify-presidio"
+main = "worker/src/index.ts"
+compatibility_date = "2026-07-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# D1: dati di dominio. Regione EU (WEUR) — i dati trattati sono dati personali
+# di clienti dello studio, inclusi dati relativi a condanne penali e reati
+# quando emergono in sede di adeguata verifica (art. 10 GDPR).
+[[d1_databases]]
+binding = "DB"
+database_name = "contify-presidio"
+database_id = "28e1e546-b37c-4a6f-8685-38b33b5651a9" # creato il 29.7.2026, regione WEUR, schema 0001 applicato
+
+# R2: documenti del fascicolo e backup. Jurisdiction EU obbligatoria (dati
+# AML, possibili dati ex art. 10 GDPR). Creare i bucket con:
+#   wrangler r2 bucket create contify-presidio-docs -J eu
+#   wrangler r2 bucket create contify-presidio-backups -J eu
+[[r2_buckets]]
+binding = "DOCS"
+bucket_name = "contify-presidio-docs"
+jurisdiction = "eu"
+
+[[r2_buckets]]
+binding = "BACKUPS"
+bucket_name = "contify-presidio-backups"
+jurisdiction = "eu"
+
+[vars]
+AMBIENTE = "produzione" # in locale e' scavalcato da .dev.vars
+
+# Backup notturno + calcolo dello scadenzario.
+[triggers]
+crons = ["0 2 * * *"]
+
+# Secret da impostare con `wrangler secret put`:
+#   MASTER_KEY      chiave base64 a 32 byte per la cifratura delle SOS e dei dati identificativi
+#   RESEND_API_KEY  invio email (notifiche di scadenza)

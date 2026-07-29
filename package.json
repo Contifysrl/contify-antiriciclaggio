@@ -1,0 +1,39 @@
+{
+  "name": "contify-presidio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Contify Presidio — SaaS antiriciclaggio per studi professionali (DLgs. 231/2007)",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "npm run build:web",
+    "build:web": "vite build --config web/vite.config.ts",
+    "typecheck": "tsc --noEmit -p worker && tsc --noEmit -p web",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:migrate:local": "wrangler d1 execute contify-presidio --local --file=migrations/0001_init.sql",
+    "db:seed:local": "wrangler d1 execute contify-presidio --local --file=scripts/seed.sql",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "hono": "^4.12.32"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241218.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "playwright": "^1.62.0",
+    "postcss": "^8.4.49",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^2.1.9",
+    "wrangler": "^3.99.0"
+  }
+}

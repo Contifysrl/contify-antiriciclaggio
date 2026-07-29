@@ -1,0 +1,130 @@
+/* Sistema colore Contify — Pantone 7474 C e sue sfumature. Nessun colore fuori
+   dal sistema, tranne il rosso funzionale per le violazioni e l'ambra per gli
+   avvisi: in un software di compliance il colore è informazione, non decoro. */
+
+:root {
+  --c-primario: #048587;
+  --c-identita: #4ca6a8;
+  --c-medio: #5dadae;
+  --c-chiaro: #99cecf;
+  --c-chiarissimo: #bcdfdf;
+  --c-scuro: #04383b;
+  --c-light: #e9f4f4;
+  --c-grey: #5a6a6a;
+  --c-ink: #1a2a2a;
+  --c-avviso-bg: #fff6e8;
+  --c-avviso: #8a5a00;
+  --c-critico: #a3232b;
+  --c-critico-bg: #fdf0f0;
+  --font-display: 'Outfit', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--font-display);
+  color: var(--c-ink);
+  background: #f7fafa;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+a { color: var(--c-primario); }
+
+.app { display: flex; min-height: 100vh; }
+
+/* ------------------------------------------------------------------ sidebar */
+.nav {
+  width: 232px;
+  flex-shrink: 0;
+  background: linear-gradient(150deg, #04595b 0%, #023c3e 47%, #01262a 100%);
+  color: #fff;
+  padding: 22px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.nav .marchio { display: flex; align-items: center; gap: 9px; margin-bottom: 24px; padding: 0 8px; }
+.nav .marchio img { height: 26px; }
+.nav .marchio .sottotitolo { font-size: 11px; color: var(--c-chiaro); letter-spacing: .06em; text-transform: uppercase; }
+.nav button {
+  background: none; border: 0; color: #cfe6e6; font: inherit; font-size: 14px;
+  text-align: left; padding: 9px 12px; border-radius: 7px; cursor: pointer; width: 100%;
+}
+.nav button:hover { background: rgba(255,255,255,.08); color: #fff; }
+.nav button[aria-current='page'] { background: rgba(153,206,207,.18); color: #fff; font-weight: 600; }
+.nav .separatore { height: 1px; background: rgba(255,255,255,.12); margin: 14px 6px; }
+.nav .piede { margin-top: auto; font-size: 12px; color: var(--c-chiaro); padding: 0 8px; }
+
+/* ---------------------------------------------------------------- contenuto */
+.contenuto { flex: 1; padding: 26px 32px 60px; max-width: 1180px; }
+h1 { font-size: 25px; margin: 0 0 4px; font-weight: 700; }
+h2 { font-size: 18px; margin: 26px 0 10px; color: var(--c-primario); font-weight: 600; }
+h3 { font-size: 15px; margin: 16px 0 6px; font-weight: 600; }
+.occhiello { color: var(--c-grey); font-size: 14px; margin: 0 0 20px; max-width: 760px; }
+
+.scheda { background: #fff; border: 1px solid #dfeaea; border-radius: 11px; padding: 18px 20px; margin-bottom: 16px; }
+.griglia { display: grid; gap: 14px; }
+.griglia.c2 { grid-template-columns: repeat(2, 1fr); }
+.griglia.c3 { grid-template-columns: repeat(3, 1fr); }
+.griglia.c4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 900px) { .griglia.c3, .griglia.c4 { grid-template-columns: repeat(2, 1fr); } .nav { width: 74px; } .nav .testo { display: none; } }
+
+.tessera { background: #fff; border: 1px solid #dfeaea; border-radius: 11px; padding: 15px 17px; }
+.tessera .etichetta { font-size: 12px; color: var(--c-grey); text-transform: uppercase; letter-spacing: .05em; }
+.tessera .valore { font-size: 27px; font-weight: 700; color: var(--c-scuro); font-family: var(--font-mono); }
+.tessera .nota { font-size: 12px; color: var(--c-grey); }
+
+label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.aiuto { font-size: 12px; color: var(--c-grey); font-weight: 400; margin-bottom: 6px; }
+input, select, textarea {
+  width: 100%; padding: 8px 10px; border: 1px solid #cfdede; border-radius: 7px;
+  font: inherit; font-size: 14px; background: #fff; color: var(--c-ink);
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--c-chiaro); border-color: var(--c-primario); }
+textarea { min-height: 84px; resize: vertical; }
+.campo { margin-bottom: 13px; }
+
+button.azione {
+  background: var(--c-primario); color: #fff; border: 0; border-radius: 7px;
+  padding: 9px 17px; font: inherit; font-weight: 600; font-size: 14px; cursor: pointer;
+}
+button.azione:hover { background: #036b6d; }
+button.azione:disabled { background: #a9c6c6; cursor: not-allowed; }
+button.secondaria { background: #fff; color: var(--c-primario); border: 1px solid var(--c-primario); }
+button.secondaria:hover { background: var(--c-light); }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; background: var(--c-light); color: var(--c-scuro); font-weight: 600; padding: 9px 11px; font-size: 13px; }
+td { padding: 9px 11px; border-top: 1px solid #eaf2f2; vertical-align: top; }
+tr:hover td { background: #fbfdfd; }
+.mono { font-family: var(--font-mono); font-size: 13px; }
+
+.pillola { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.r1 { background: var(--c-light); color: #05666a; }
+.r2 { background: var(--c-chiarissimo); color: #04585c; }
+.r3 { background: var(--c-avviso-bg); color: var(--c-avviso); }
+.r4 { background: var(--c-critico-bg); color: var(--c-critico); }
+
+.riquadro { border-radius: 9px; padding: 12px 15px; font-size: 14px; margin: 12px 0; }
+.riquadro.info { background: var(--c-light); border-left: 3px solid var(--c-primario); }
+.riquadro.avviso { background: var(--c-avviso-bg); border-left: 3px solid #d59b2a; }
+.riquadro.critico { background: var(--c-critico-bg); border-left: 3px solid var(--c-critico); }
+.riquadro .norma { font-family: var(--font-mono); font-size: 12px; color: var(--c-grey); display: block; margin-top: 5px; }
+
+.scala { display: flex; gap: 5px; }
+.scala button {
+  flex: 1; padding: 7px 0; border: 1px solid #cfdede; background: #fff; border-radius: 6px;
+  font: inherit; font-size: 13px; cursor: pointer; color: var(--c-grey);
+}
+.scala button[aria-pressed='true'] { background: var(--c-primario); color: #fff; border-color: var(--c-primario); font-weight: 600; }
+
+.accesso { display: grid; place-items: center; min-height: 100vh; background: linear-gradient(150deg, #04595b 0%, #023c3e 47%, #01262a 100%); }
+.accesso .riquadro-accesso { background: #fff; padding: 34px 32px; border-radius: 14px; width: 380px; }
+.accesso img { height: 30px; margin-bottom: 18px; }
+
+.errore { color: var(--c-critico); font-size: 13px; margin-top: 8px; }
+.caricamento { color: var(--c-grey); font-size: 14px; padding: 20px 0; }
+.piede-legale { margin-top: 40px; font-size: 12px; color: var(--c-grey); border-top: 1px solid #e2ecec; padding-top: 14px; max-width: 820px; }
