@@ -127,7 +127,7 @@ export function GruppoFattori({
 export function PiedeLegale() {
   return (
     <div className="piede-legale">
-      Contify Presidio è uno strumento di supporto agli adempimenti del DLgs. 21.11.2007 n. 231 e alle regole tecniche
+      Contify Antiriciclaggio è uno strumento di supporto agli adempimenti del DLgs. 21.11.2007 n. 231 e alle regole tecniche
       adottate dal CNDCEC ai sensi dell’art. 11 co. 2. Gli esiti prodotti non sostituiscono la valutazione del
       professionista incaricato, cui restano imputate le decisioni sull’adeguata verifica, sull’astensione e sulla
       segnalazione di operazioni sospette.

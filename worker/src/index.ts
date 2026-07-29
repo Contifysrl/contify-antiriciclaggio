@@ -1,5 +1,5 @@
 /**
- * Contify Presidio — API Worker
+ * Contify Antiriciclaggio — API Worker
  *
  * Regole trasversali applicate ovunque:
  *  - il tenant si legge SEMPRE dalla sessione, mai dal body o dalla query;
@@ -115,7 +115,7 @@ api.post('/auth/login', async (c) => {
 });
 
 api.post('/auth/logout', async (c) => {
-  const token = getCookie(c, 'presidio_sess');
+  const token = getCookie(c, 'antiriciclaggio_sess');
   if (token) await chiudiSessione(c.env.DB, token);
   rimuoviCookieSessione(c);
   return c.json({ ok: true });

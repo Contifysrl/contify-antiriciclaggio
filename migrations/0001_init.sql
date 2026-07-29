@@ -1,5 +1,5 @@
 -- =============================================================================
--- Contify Presidio — schema iniziale
+-- Contify Antiriciclaggio — schema iniziale
 -- SaaS antiriciclaggio per studi professionali. Cloudflare D1 (SQLite).
 --
 -- Principi di modellazione:

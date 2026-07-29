@@ -53,7 +53,7 @@ export default function App() {
           <img src="/logo-contify-white.png" alt="Contify" />
         </div>
         <div className="sottotitolo" style={{ padding: '0 8px', marginBottom: 18, fontSize: 11, color: 'var(--c-chiaro)', letterSpacing: '.08em' }}>
-          PRESIDIO ANTIRICICLAGGIO
+          CONTIFY ANTIRICICLAGGIO
         </div>
         {voci
           .filter((v) => !v.ruoli || v.ruoli.includes(sessione.utente.ruolo))
@@ -117,7 +117,7 @@ function Accesso({ onEntrato }: { onEntrato: (s: Sessione) => void }) {
     <div className="accesso">
       <form className="riquadro-accesso" onSubmit={entra}>
         <img src="/logo-contify.png" alt="Contify" />
-        <h2 style={{ margin: '0 0 4px', color: 'var(--c-scuro)' }}>Presidio antiriciclaggio</h2>
+        <h2 style={{ margin: '0 0 4px', color: 'var(--c-scuro)' }}>Contify Antiriciclaggio</h2>
         <p className="aiuto" style={{ marginBottom: 20 }}>
           Adempimenti del DLgs. 231/2007 per studi professionali.
         </p>

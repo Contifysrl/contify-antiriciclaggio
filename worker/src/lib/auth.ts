@@ -16,7 +16,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { sha256Hex, nuovoToken } from './crypto';
 import type { Env, Sessione, Utente, Variabili } from './tipi';
 
-const COOKIE = 'presidio_sess';
+const COOKIE = 'antiriciclaggio_sess';
 const DURATA_ORE = 12;
 
 export async function creaSessione(

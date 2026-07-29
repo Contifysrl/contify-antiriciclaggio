@@ -42,7 +42,7 @@ console.log('\n== Accesso ==');
   verifica('credenziali errate respinte con 401', r.stato === 401, r.dati);
 }
 {
-  const r = await req('POST', '/auth/login', { email: 'titolare@studiodemo.it', password: 'Presidio!2026' });
+  const r = await req('POST', '/auth/login', { email: 'titolare@studiodemo.it', password: 'Antiriciclaggio!2026' });
   verifica('accesso del titolare riuscito', r.stato === 200 && r.dati.utente.ruolo === 'TITOLARE', r.dati);
   verifica('lo studio arriva dal database, non dal client', r.dati?.studio?.denominazione === 'Studio Commercialista Demo');
 }
@@ -249,7 +249,7 @@ console.log('\n== Segregazione per ruolo ==');
 console.log('\n== Integrità del registro (art. 32) ==');
 {
   await req('POST', '/auth/logout');
-  await req('POST', '/auth/login', { email: 'titolare@studiodemo.it', password: 'Presidio!2026' });
+  await req('POST', '/auth/login', { email: 'titolare@studiodemo.it', password: 'Antiriciclaggio!2026' });
   const r = await req('GET', '/audit/verifica');
   verifica('catena degli accessi integra', r.dati?.integra === true, r.dati);
   verifica('la catena copre tutte le scritture del collaudo', (r.dati?.righeVerificate ?? 0) >= 15, r.dati);

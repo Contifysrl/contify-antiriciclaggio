@@ -80,7 +80,7 @@ async function chiaveTenant(masterKeyB64: string, tenantId: string): Promise<Cry
   if (master.length !== 32) throw new Error('MASTER_KEY deve essere una chiave base64 di 32 byte');
   const ikm = await crypto.subtle.importKey('raw', master, 'HKDF', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
-    { name: 'HKDF', hash: 'SHA-256', salt: enc.encode('contify-presidio'), info: enc.encode(`tenant:${tenantId}`) },
+    { name: 'HKDF', hash: 'SHA-256', salt: enc.encode('contify-antiriciclaggio') /* MAI cambiare: invaliderebbe tutti i dati cifrati */, info: enc.encode(`tenant:${tenantId}`) },
     ikm,
     { name: 'AES-GCM', length: 256 },
     false,

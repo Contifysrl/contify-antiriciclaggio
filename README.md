@@ -1,4 +1,4 @@
-# Contify Presidio
+# Contify Antiriciclaggio
 
 SaaS antiriciclaggio per studi di dottori commercialisti ed esperti contabili.
 Attua il **DLgs. 21.11.2007 n. 231** e le **regole tecniche CNDCEC** adottate ai sensi
@@ -90,7 +90,7 @@ node scripts/smoke-api.mjs # 40 verifiche end-to-end
 npm run typecheck
 ```
 
-Credenziali di collaudo (solo locali): `titolare@studiodemo.it` / `Presidio!2026` e
+Credenziali di collaudo (solo locali): `titolare@studiodemo.it` / `Antiriciclaggio!2026` e
 `collaboratore@studiodemo.it` / `Collab!2026`.
 
 Prima di `wrangler dev` serve un file `.dev.vars` con la chiave di cifratura:
@@ -103,7 +103,7 @@ echo "MASTER_KEY=$(node -e "console.log(Buffer.from(crypto.getRandomValues(new U
 
 Stato al 29.7.2026 — già fatto:
 
-- [x] D1 `contify-presidio` creato in regione WEUR (`28e1e546-b37c-4a6f-8685-38b33b5651a9`,
+- [x] D1 `contify-antiriciclaggio` creato in regione WEUR (`7b64cd42-23fd-4378-8b1f-f544463b43ab`,
       id già in `wrangler.toml`) con `migrations/0001_init.sql` applicata (15 tabelle, 5 trigger).
 
 Passi rimanenti (dalla macchina con `wrangler login` sull'account Contify):
@@ -111,21 +111,21 @@ Passi rimanenti (dalla macchina con `wrangler login` sull'account Contify):
 1. Bucket R2 in giurisdizione EU (l'API standard li creerebbe fuori giurisdizione, serve `-J eu`):
 
    ```bash
-   wrangler r2 bucket create contify-presidio-docs -J eu
-   wrangler r2 bucket create contify-presidio-backups -J eu
+   wrangler r2 bucket create contify-antiriciclaggio-docs -J eu
+   wrangler r2 bucket create contify-antiriciclaggio-backups -J eu
    ```
 
 2. `wrangler secret put MASTER_KEY` — 32 byte base64 (generarla con il comando della sezione
    sviluppo). **Custodirla fuori da Cloudflare**: senza quella chiave i dati identificativi e le
    segnalazioni non sono più leggibili. Non riusare la chiave di sviluppo.
-3. Creare il repo `contifysrl/contify-presidio` (privato), push di `main`, poi in dashboard
+3. Creare il repo `contifysrl/contify-antiriciclaggio` (privato), push di `main`, poi in dashboard
    Cloudflare → Workers → Create → collegare il repo con Workers Builds
    (build command `npm ci && npm run build`, deploy command `npx wrangler deploy`), come per
    Assist.
 4. Primo collaudo in produzione: creare il tenant reale e l'utente titolare (nessun seed demo
    va caricato in produzione), poi giro di smoke con `BASE=https://<worker> node
    scripts/smoke-api.mjs` limitato alla sola parte di lettura o su tenant di prova.
-5. Dominio: route o custom domain `presidio.contify.it` sul Worker.
+5. Dominio: route o custom domain `antiriciclaggio.contify.it` sul Worker.
 
 ## Sicurezza e protezione dei dati
 

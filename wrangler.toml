@@ -1,4 +1,4 @@
-name = "contify-presidio"
+name = "contify-antiriciclaggio"
 main = "worker/src/index.ts"
 compatibility_date = "2026-07-01"
 compatibility_flags = ["nodejs_compat"]
@@ -13,21 +13,21 @@ not_found_handling = "single-page-application"
 # quando emergono in sede di adeguata verifica (art. 10 GDPR).
 [[d1_databases]]
 binding = "DB"
-database_name = "contify-presidio"
-database_id = "28e1e546-b37c-4a6f-8685-38b33b5651a9" # creato il 29.7.2026, regione WEUR, schema 0001 applicato
+database_name = "contify-antiriciclaggio"
+database_id = "7b64cd42-23fd-4378-8b1f-f544463b43ab" # creato il 29.7.2026, regione WEUR, schema 0001 applicato
 
 # R2: documenti del fascicolo e backup. Jurisdiction EU obbligatoria (dati
 # AML, possibili dati ex art. 10 GDPR). Creare i bucket con:
-#   wrangler r2 bucket create contify-presidio-docs -J eu
-#   wrangler r2 bucket create contify-presidio-backups -J eu
+#   wrangler r2 bucket create contify-antiriciclaggio-docs -J eu
+#   wrangler r2 bucket create contify-antiriciclaggio-backups -J eu
 [[r2_buckets]]
 binding = "DOCS"
-bucket_name = "contify-presidio-docs"
+bucket_name = "contify-antiriciclaggio-docs"
 jurisdiction = "eu"
 
 [[r2_buckets]]
 binding = "BACKUPS"
-bucket_name = "contify-presidio-backups"
+bucket_name = "contify-antiriciclaggio-backups"
 jurisdiction = "eu"
 
 [vars]

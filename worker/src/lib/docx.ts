@@ -276,7 +276,7 @@ export function costruisciDocx(corpo: string, opzioni: { etichettaHeader?: strin
       <w:pBdr><w:top w:val="single" w:sz="4" w:space="4" w:color="${COLORI.rigaTenue}"/></w:pBdr>
       <w:spacing w:after="0"/>
     </w:pPr>
-    ${run('Generato con Contify Presidio — Contify Srl · Corso Milano 106, Padova', { colore: COLORI.grigio, punti: 7.5 })}
+    ${run('Generato con Contify Antiriciclaggio — Contify Srl · Corso Milano 106, Padova', { colore: COLORI.grigio, punti: 7.5 })}
     <w:r><w:tab/></w:r>
     ${run('Pag. ', { colore: COLORI.grigio, punti: 7.5 })}
     <w:r><w:rPr><w:color w:val="${COLORI.grigio}"/><w:sz w:val="15"/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r>
