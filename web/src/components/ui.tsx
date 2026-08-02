@@ -2,8 +2,20 @@ import { ReactNode, useEffect, useState } from 'react';
 import { I, Icona } from './icone';
 
 // ── Componenti UI del design system (portati da Assist, AR-M2) ─────
-// Niente router: AR usa il routing su hash, i componenti che in Assist
-// linkavano pagine (HelpLink) arriveranno con la Guida (AR-M5).
+
+/** Help contestuale: "?" accanto ai titoli, apre la sezione della guida (AR-M5). */
+export function HelpLink({ sezione }: { sezione: string }) {
+  return (
+    <a
+      href={`#guida?sezione=${sezione}`}
+      title="Apri la guida di questa pagina"
+      aria-label="Guida di questa pagina"
+      className="inline-flex items-center justify-center w-6 h-6 rounded-full border border-ink-200 bg-ink-0 text-ink-400 text-xs font-bold hover:text-teal-700 hover:border-teal-300 transition-colors align-middle ml-2 no-underline"
+    >
+      ?
+    </a>
+  );
+}
 
 /** "Barbara Bettini" → "BB". */
 export function iniziali(nome: string): string {

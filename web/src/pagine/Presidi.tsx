@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, dataOggi, formattaData } from '../api';
 import { PiedeLegale, Riquadro, Tessera } from '../componenti';
+import { HelpLink } from '../components/ui';
 
 // ===========================================================================
 export function Scadenzario({ vaiA }: { vaiA: (p: string) => void }) {
@@ -36,7 +37,7 @@ export function Scadenzario({ vaiA }: { vaiA: (p: string) => void }) {
 
   return (
     <>
-      <h1>Scadenzario</h1>
+      <h1>Scadenzario <HelpLink sezione="scadenzario" /></h1>
       <p className="occhiello">
         Termini di legge e adempimenti organizzativi, distinti fra loro. I primi sono contestabili in sede ispettiva,
         i secondi sono scelte documentate dello studio e restano modificabili nelle impostazioni.
@@ -74,7 +75,7 @@ export function Contante() {
 
   return (
     <>
-      <h1>Limitazioni all’uso del contante</h1>
+      <h1>Limitazioni all’uso del contante <HelpLink sezione="contante" /></h1>
       <p className="occhiello">
         Art. 49 del DLgs. 231/2007. La soglia applicabile è quella vigente alla data dell’operazione, non quella
         odierna: un pagamento del 2021 va giudicato con il limite di 2.000 euro, non con quello attuale.
@@ -202,7 +203,7 @@ export function Sos() {
 
   return (
     <>
-      <h1>Segnalazioni di operazione sospetta</h1>
+      <h1>Segnalazioni di operazione sospetta <HelpLink sezione="sos" /></h1>
       <p className="occhiello">
         Artt. 35-39. L’accesso è riservato al titolare: l’art. 38 impone di assicurare la riservatezza dell’identità
         del segnalante e punisce con la reclusione da due a sei anni chi la rivela indebitamente. Il contenuto delle

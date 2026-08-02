@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, formattaData, type ClasseRischio, type EsitoAutovalutazione, type Ruleset } from '../api';
 import { ElencoVincoli, GruppoFattori, PiedeLegale, PillolaRischio, Riquadro, Tessera } from '../componenti';
+import { HelpLink } from '../components/ui';
 
 // ===========================================================================
 export function Cruscotto({ vaiA }: { vaiA: (p: string) => void }) {
@@ -19,7 +20,7 @@ export function Cruscotto({ vaiA }: { vaiA: (p: string) => void }) {
 
   return (
     <>
-      <h1>Cruscotto</h1>
+      <h1>Cruscotto <HelpLink sezione="cruscotto" /></h1>
       <p className="occhiello">
         Stato dei presidi antiriciclaggio dello studio. I contatori si riferiscono all’ultima valutazione firmata di
         ciascun fascicolo.
@@ -129,7 +130,7 @@ export function Autovalutazione() {
 
   return (
     <>
-      <h1>Autovalutazione del rischio dello studio</h1>
+      <h1>Autovalutazione del rischio dello studio <HelpLink sezione="autovalutazione" /></h1>
       <p className="occhiello">
         Artt. 15 e 16 del DLgs. 231/2007, attuati dalla Regola tecnica n. 1 del CNDCEC. Il rischio residuo è la media
         dei quattro fattori di rischio inerente ponderata al {rs.autovalutazione.pesi.inerente * 100}%, sommata alla
@@ -247,7 +248,16 @@ export function Registro() {
 
   return (
     <>
-      <h1>Registro degli accessi e delle operazioni</h1>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <h1>Registro degli accessi e delle operazioni <HelpLink sezione="registro" /></h1>
+        <button
+          className="btn btn-secondary btn-sm shrink-0 mt-1"
+          title="Scarica l'intero registro in CSV (con le impronte della catena), pronto per Excel"
+          onClick={() => api.scarica('/audit/export')}
+        >
+          Esporta CSV
+        </button>
+      </div>
       <p className="occhiello">
         L’art. 32 co. 2 impone di indicare i soggetti legittimati ad alimentare il sistema di conservazione e ad
         accedervi, e di garantire integrità e non alterabilità dei dati. Ogni voce contiene l’impronta della

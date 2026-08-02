@@ -23,7 +23,7 @@ import {
   soloTitolare,
 } from './lib/auth';
 import { cifra, decifra, generaPasswordTemporanea, hashPassword, nuovoId, nuovoToken, sha256Hex, verificaPassword } from './lib/crypto';
-import { inviaEmailBenvenuto, inviaEmailResetPassword, urlApp } from './lib/mail';
+import { inviaEmailAssistenza, inviaEmailBenvenuto, inviaEmailResetPassword, urlApp } from './lib/mail';
 import { scriviAudit, verificaCatenaAudit } from './lib/audit';
 import { backupSchedulato, chiaveDelTenant, prefissoTenant, runBackupTenant, type TipoBackupTenant } from './lib/backup';
 import { eseguiEliminaArchivio, eseguiRipristino, RipristinoError } from './lib/ripristino';
@@ -1195,6 +1195,74 @@ api.get('/audit', async (c) => {
 });
 
 api.get('/audit/verifica', async (c) => c.json(await verificaCatenaAudit(c.env.DB, c.get('tenantId'))));
+
+/**
+ * Export CSV del registro (AR-M5): l'intero registro del tenant, con le
+ * impronte della catena — è il documento da consegnare in sede ispettiva.
+ * Separatore ';' e BOM UTF-8: si apre con doppio clic in Excel italiano.
+ * Anche l'esportazione lascia traccia nel registro stesso.
+ */
+api.get('/audit/export', async (c) => {
+  const tenantId = c.get('tenantId');
+  const { results } = await c.env.DB.prepare(
+    `SELECT a.id, a.creato_il, u.nome AS utente, u.email, a.azione, a.entita, a.entita_id,
+            a.dettaglio, a.ip, a.hash_precedente, a.hash_riga
+     FROM audit_log a LEFT JOIN utenti u ON u.id = a.utente_id
+     WHERE a.tenant_id = ? ORDER BY a.id ASC`,
+  ).bind(tenantId).all<any>();
+
+  const cella = (v: unknown): string => {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const intestazione = ['id', 'data e ora (UTC)', 'utente', 'email', 'azione', 'entità', 'id entità', 'dettaglio', 'ip', 'hash precedente', 'hash riga'];
+  const righe = (results ?? []).map((r) =>
+    [r.id, r.creato_il, r.utente, r.email, r.azione, r.entita, r.entita_id, r.dettaglio, r.ip, r.hash_precedente, r.hash_riga].map(cella).join(';'),
+  );
+  const csv = '\uFEFF' + [intestazione.join(';'), ...righe].join('\r\n');
+
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: c.get('utente').id, azione: 'ESPORTA_REGISTRO',
+    dettaglio: { voci: results?.length ?? 0 }, ip: c.get('ip'),
+  });
+  const oggi = new Date().toISOString().slice(0, 10);
+  return new Response(csv, {
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="registro-attivita-${oggi}.csv"`,
+    },
+  });
+});
+
+// ===========================================================================
+// ASSISTENZA (AR-M5) — la richiesta parte come email verso Contify con i
+// riferimenti dello studio; reply-to sull'utente. Nel registro resta solo
+// l'oggetto: il corpo del messaggio non viene salvato nel database.
+// ===========================================================================
+
+api.post('/assistenza', async (c) => {
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const oggetto = String(b.oggetto ?? '').trim().slice(0, 150);
+  const messaggio = String(b.messaggio ?? '').trim().slice(0, 4000);
+  if (!oggetto || !messaggio) return c.json({ errore: 'Oggetto e messaggio sono obbligatori' }, 400);
+
+  const studio = await c.env.DB.prepare('SELECT denominazione FROM tenants WHERE id = ?').bind(u.tenant_id).first<any>();
+  const emailInviata = await inviaEmailAssistenza(c.env, {
+    studio: studio?.denominazione ?? u.tenant_id,
+    nome: u.nome,
+    email: u.email,
+    ruolo: u.ruolo,
+    oggetto,
+    messaggio,
+  });
+  await scriviAudit(c.env.DB, {
+    tenantId: u.tenant_id, utenteId: u.id, azione: 'RICHIESTA_ASSISTENZA',
+    dettaglio: { oggetto, emailInviata }, ip: c.get('ip'),
+  });
+  return c.json({ ok: true, emailInviata });
+});
 
 // ===========================================================================
 // VERBALI STAMPABILI (.docx) — ciò che lo studio esibisce all'ispezione.

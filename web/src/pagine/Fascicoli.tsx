@@ -9,6 +9,7 @@ import {
   type Ruleset,
 } from '../api';
 import { ElencoVincoli, GruppoFattori, PiedeLegale, PillolaRischio, Riquadro, Tessera } from '../componenti';
+import { HelpLink } from '../components/ui';
 
 // ===========================================================================
 export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
@@ -32,7 +33,7 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
 
   return (
     <>
-      <h1>Clienti</h1>
+      <h1>Clienti <HelpLink sezione="clienti" /></h1>
       <p className="occhiello">
         Anagrafica dei clienti dello studio. I dati identificativi di dettaglio sono cifrati: chi legge il database
         senza la chiave dello studio non li vede.
@@ -166,7 +167,7 @@ export function Fascicoli({ vaiA }: { vaiA: (p: string) => void }) {
 
   return (
     <>
-      <h1>Fascicoli</h1>
+      <h1>Fascicoli <HelpLink sezione="fascicoli" /></h1>
       <p className="occhiello">
         Un fascicolo corrisponde a una prestazione professionale, non a un cliente: lo stesso cliente può avere
         prestazioni con profili di rischio diversi, e l’esenzione dell’art. 17 co. 7 opera per singola prestazione.
@@ -366,7 +367,7 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
 
   return (
     <>
-      <h1>Fascicolo {f.codice}</h1>
+      <h1>Fascicolo {f.codice} <HelpLink sezione="fascicoli" /></h1>
       <p className="occhiello">
         {f.cliente} — {f.prestazione_descrizione} · incarico conferito il {formattaData(f.data_conferimento)}
       </p>

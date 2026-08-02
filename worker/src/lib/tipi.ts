@@ -6,6 +6,7 @@ export interface Env {
   AMBIENTE: string;
   MASTER_KEY: string;
   RESEND_API_KEY?: string;
+  ASSISTENZA_EMAIL?: string;
   MAIL_FROM?: string;
   APP_BASE_URL?: string;
 }

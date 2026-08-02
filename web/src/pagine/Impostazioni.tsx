@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
-import { AvatarUtente, Badge, ErrorBanner, Modal } from '../components/ui';
+import { AvatarUtente, Badge, ErrorBanner, HelpLink, Modal } from '../components/ui';
 import { Icona } from '../components/icone';
 import { ridimensionaAvatar } from '../lib/avatar';
 import { PiedeLegale } from '../componenti';
@@ -46,7 +46,7 @@ export function Impostazioni({ sessione, onSessioneAggiornata }: {
 }) {
   return (
     <>
-      <h1>Impostazioni</h1>
+      <h1>Impostazioni <HelpLink sezione="impostazioni" /></h1>
       <p className="occhiello">Il tuo profilo, la password e — per il titolare — gli utenti dello studio.</p>
       <Profilo sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} />
       <CambiaPassword />

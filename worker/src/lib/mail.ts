@@ -25,7 +25,7 @@ function involucro(contenuto: string): string {
   </div>`;
 }
 
-async function invia(env: Env, destinatario: string, oggetto: string, html: string): Promise<boolean> {
+async function invia(env: Env, destinatario: string, oggetto: string, html: string, rispondiA?: string): Promise<boolean> {
   if (!env.RESEND_API_KEY) {
     console.warn('RESEND_API_KEY non configurata: email NON inviata a', destinatario, '—', oggetto);
     return false;
@@ -33,7 +33,13 @@ async function invia(env: Env, destinatario: string, oggetto: string, html: stri
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: env.MAIL_FROM ?? 'Contify AR <no-reply@contify.it>', to: [destinatario], subject: oggetto, html }),
+    body: JSON.stringify({
+      from: env.MAIL_FROM ?? 'Contify AR <no-reply@contify.it>',
+      to: [destinatario],
+      subject: oggetto,
+      html,
+      ...(rispondiA ? { reply_to: [rispondiA] } : {}),
+    }),
   });
   if (!res.ok) {
     console.error('Invio email fallito', res.status, await res.text().catch(() => ''));
@@ -74,4 +80,27 @@ export async function inviaEmailBenvenuto(
       <a href="${urlApp(env)}" style="background:#048587;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 24px;border-radius:8px;display:inline-block">Accedi a ${PRODOTTO}</a>
     </p>`);
   return invia(env, dati.destinatario, `${PRODOTTO} — il tuo accesso`, html);
+}
+
+/**
+ * Richiesta di assistenza (AR-M5): parte verso Contify con i riferimenti
+ * dello studio; reply-to sull'email dell'utente, così la risposta è un
+ * semplice "Rispondi". Il contenuto è sanificato (testo semplice in HTML).
+ */
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+export async function inviaEmailAssistenza(
+  env: Env,
+  dati: { studio: string; nome: string; email: string; ruolo: string; oggetto: string; messaggio: string },
+): Promise<boolean> {
+  const destinatario = env.ASSISTENZA_EMAIL ?? 'info@contify.it';
+  const html = involucro(`
+    <p style="font-size:14px;color:#111827"><strong>Richiesta di assistenza da ${PRODOTTO}</strong></p>
+    <p style="font-size:13px;background:#f3f4f6;border-radius:8px;padding:12px 16px;color:#111827">
+      Studio: <strong>${escapeHtml(dati.studio)}</strong><br>
+      Utente: <strong>${escapeHtml(dati.nome)}</strong> (${escapeHtml(dati.email)}, ${escapeHtml(dati.ruolo.toLowerCase())})</p>
+    <p style="font-size:14px;color:#111827"><strong>${escapeHtml(dati.oggetto)}</strong></p>
+    <p style="font-size:14px;color:#374151;white-space:pre-wrap">${escapeHtml(dati.messaggio)}</p>`);
+  return invia(env, destinatario, `${PRODOTTO} — assistenza: ${dati.oggetto}`, html, dati.email);
 }

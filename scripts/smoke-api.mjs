@@ -315,6 +315,33 @@ console.log('\n== Integrità del registro (art. 32) ==');
   verifica('il registro non contiene il contenuto delle SOS', !JSON.stringify(log.dati).includes('Frazionamento artificioso'));
 }
 
+console.log('\n== Guida, assistenza ed export registro (AR-M5) ==');
+{
+  // Assistenza: campi obbligatori, invio registrato (senza corpo nel registro).
+  const rNo = await req('POST', '/assistenza', { oggetto: '', messaggio: '' });
+  verifica('assistenza senza oggetto respinta', rNo.stato === 400, rNo.dati);
+  const r = await req('POST', '/assistenza', { oggetto: 'Prova collaudo', messaggio: 'Messaggio di prova del collaudo automatico.' });
+  verifica('richiesta di assistenza accettata', r.stato === 200 && r.dati?.ok === true, r.dati);
+  verifica('la risposta dice se l’email è partita', typeof r.dati?.emailInviata === 'boolean', r.dati);
+  const log = await req('GET', '/audit');
+  const voce = (log.dati ?? []).find((v) => v.azione === 'RICHIESTA_ASSISTENZA');
+  verifica('l’assistenza è tracciata nel registro', Boolean(voce), voce);
+  verifica('il corpo del messaggio NON è nel registro', !JSON.stringify(log.dati).includes('Messaggio di prova del collaudo'));
+}
+{
+  // Export CSV del registro: intestazione, impronte, BOM per Excel.
+  const r = await fetch(`${BASE}/api/audit/export`, { headers: { Cookie: cookie } });
+  const grezzo = new Uint8Array(await r.arrayBuffer());
+  const testo = new TextDecoder().decode(grezzo);
+  verifica('export CSV del registro: 200 e content-type csv', r.status === 200 && (r.headers.get('Content-Type') ?? '').includes('csv'));
+  // text() striperebbe il BOM: si controllano i byte grezzi (EF BB BF).
+  verifica('il CSV parte con il BOM UTF-8 (Excel)', grezzo[0] === 0xef && grezzo[1] === 0xbb && grezzo[2] === 0xbf);
+  verifica('il CSV ha intestazione e impronte della catena', testo.includes('hash riga') && testo.includes('LOGIN'));
+  verifica('il CSV non contiene il contenuto delle SOS', !testo.includes('Frazionamento artificioso'));
+  const log = await req('GET', '/audit');
+  verifica('anche l’esportazione è tracciata', (log.dati ?? []).some((v) => v.azione === 'ESPORTA_REGISTRO'), null);
+}
+
 console.log('\n== Backup, ripristino ed eliminazione archivio (AR-M4) ==');
 let chiaveBackupManuale;
 {

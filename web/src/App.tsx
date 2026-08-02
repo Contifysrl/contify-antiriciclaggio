@@ -9,6 +9,7 @@ import { Autovalutazione, Cruscotto, Registro } from './pagine/Studio';
 import { Clienti, DettaglioFascicolo, Fascicoli } from './pagine/Fascicoli';
 import { Contante, Scadenzario, Sos } from './pagine/Presidi';
 import { Impostazioni } from './pagine/Impostazioni';
+import { Guida } from './pagine/Guida';
 
 type Sessione = SessioneApp;
 
@@ -64,6 +65,7 @@ export default function App() {
     { id: 'sos', testo: 'Segnalazioni', icona: 'avviso', ruoli: ['TITOLARE'] },
     { id: 'registro', testo: 'Registro accessi', icona: 'database' },
     { id: 'impostazioni', testo: 'Impostazioni', icona: 'ingranaggio' },
+    { id: 'guida', testo: 'Guida e assistenza', icona: 'aiuto' },
   ];
 
   return (
@@ -84,6 +86,7 @@ export default function App() {
       {pagina === 'sos' && <Sos />}
       {pagina === 'registro' && <Registro />}
       {pagina === 'impostazioni' && <Impostazioni sessione={sessione} onSessioneAggiornata={setSessione} />}
+      {pagina === 'guida' && <Guida sessione={sessione} sezione={parametri.get('sezione')} />}
     </Shell>
   );
 }
