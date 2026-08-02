@@ -269,3 +269,73 @@ export async function generaBozza(env: Env, tipo: TipoBozza, contesto: ContestoB
   const bozza = await chiamaClaude(env, sistema, utente, 800);
   return bozza.trim().slice(0, 4000);
 }
+
+// ── Chat di assistenza in-app (AR-M10) ─────────────────────────
+// Risponde su come si usa Contify AR e sulla normativa di riferimento.
+// Le conversazioni NON vengono conservate: viaggiano dal browser al
+// modello e tornano indietro; nel registro resta solo l'uso.
+
+export type MessaggioChat = { ruolo: 'utente' | 'assistente'; testo: string };
+
+const SISTEMA_CHAT = `Sei l'assistente in-app di Contify AR (AntiRiciclaggio), il software di Contify Srl per gli adempimenti del DLgs. 21.11.2007 n. 231 degli studi commercialisti italiani, costruito sulle Regole tecniche e la modulistica CNDCEC (Informativa n. 57/2026).
+
+COME È FATTO IL SOFTWARE (pagine del menu):
+- Cruscotto: stato dei presidi, percorso «Per iniziare», avvisi dei controlli automatici.
+- Autovalutazione studio: artt. 15-16, pesi 40/60 (inerente/vulnerabilità), descrittori ufficiali dei punteggi, firma che congela la versione, verbale Word.
+- Clienti: anagrafica (dati di dettaglio cifrati), qualifica PEP, «Compila dai registri» dalla partita IVA (VIES), «Importa da CSV».
+- Fascicoli: uno per prestazione; dentro: valutazione del rischio (Tabelle A e B CNDCEC, pesi 30/70, esoneri; le circostanze di legge — PEP, paesi terzi ad alto rischio, sospetto — alzano il livello da sole), titolarità effettiva (artt. 20-22, criteri guidati, riscontro col registro TE ex D.M. 122/2026), adeguata verifica a distanza (link monouso al cliente), documenti con impronta e conservazione decennale, astensioni ex art. 42, verbali Word (scheda di verifica e fascicolo per l'ispezione).
+- Scadenzario: controllo costante per classe di rischio (36/36/24/12 mesi), comunicazioni MEF.
+- Limiti al contante: art. 49, soglie storicizzate per data operazione (5.000 € dal 1.1.2023), comunicazione MEF ex art. 51.
+- Controlli automatici: screening notturno su liste sanzioni UE/ONU/OFAC di clienti e titolari effettivi (le corrispondenze si esaminano e si decidono con motivazione), paesi terzi ad alto rischio (Reg. UE 2025/1184), accreditamento biennale al registro TE.
+- Segnalazioni (solo titolare, art. 38): SOS cifrate, 34 indicatori e 400 sub-indici UIF letterali (provv. 12.5.2023), suggeritore AI degli indicatori.
+- Registro accessi: catena crittografica ex art. 32, verifica di integrità, export CSV.
+- Impostazioni: profilo, password, utenti e ruoli (titolare/collaboratore/lettore/revisore), logo studio, assistente AI, backup dell'archivio (notturni UE, ripristino self-service, eliminazione a 3 passi).
+- Guida e assistenza: guida per sezioni con «?» contestuale, modulo di contatto verso Contify.
+
+REGOLE:
+1. Rispondi in italiano, conciso e concreto: prima il "dove si fa" nel software, poi il riferimento normativo se utile. Cita articoli solo se ne sei certo; non inventare mai numeri di articoli, soglie o scadenze.
+2. Sei un aiuto all'uso e all'orientamento normativo, NON un parere legale: sulle scelte di merito (livello di verifica, astensione, segnalazione) ricorda che la valutazione spetta al professionista.
+3. Non chiedere né accettare nominativi o dati di clienti: se l'utente li scrive, invitalo a riformulare senza dati identificativi.
+4. Problemi di account, fatturazione o malfunzionamenti: indirizza al modulo di assistenza nella pagina «Guida e assistenza».
+5. Se non sai una cosa, dillo e suggerisci dove verificarla (guida in-app, fonte normativa, assistenza).`;
+
+export async function rispostaChat(env: Env, messaggi: MessaggioChat[]): Promise<string> {
+  if (env.AI_FIXTURES === '1') {
+    const ultima = messaggi[messaggi.length - 1]?.testo ?? '';
+    return `Risposta di prova (fixtures) alla domanda: «${ultima.slice(0, 80)}». Trovi il dettaglio nella Guida in-app.`;
+  }
+  if (!env.ANTHROPIC_API_KEY) {
+    throw new ErroreAi("La chiave API non è configurata: chiedi a Contify di completare l'attivazione.", 503);
+  }
+  let r: Response;
+  try {
+    r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: env.AI_MODEL ?? MODELLO_DEFAULT,
+        max_tokens: 900,
+        system: SISTEMA_CHAT,
+        messages: messaggi.slice(-16).map((m) => ({
+          role: m.ruolo === 'utente' ? 'user' : 'assistant',
+          content: m.testo.slice(0, 2000),
+        })),
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch {
+    throw new ErroreAi('Il servizio AI non risponde: riprova tra poco.', 503);
+  }
+  if (!r.ok) {
+    console.error('Claude chat errore', r.status, (await r.text().catch(() => '')).slice(0, 300));
+    throw new ErroreAi(r.status === 429 ? 'Servizio AI momentaneamente saturo: riprova tra poco.' : 'Errore del servizio AI.', 503);
+  }
+  const corpo = await r.json<any>();
+  const testo = (corpo?.content ?? []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim();
+  if (!testo) throw new ErroreAi('Risposta vuota dal servizio AI.', 502);
+  return testo.slice(0, 6000);
+}

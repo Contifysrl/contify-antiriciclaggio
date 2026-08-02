@@ -82,8 +82,9 @@ const SEZIONI: Sezione[] = [
           <><K>Revisore</K>: funzione di revisione indipendente <Norma>art. 16 co. 2</Norma>.</>,
         ]} />
         <Nota>
-          Ogni pagina dell'applicazione ha un pulsante <Btn>?</Btn> accanto al titolo che apre
-          la sezione pertinente di questa guida.
+          Nel <K>Cruscotto</K> trovi il percorso <K>«Per iniziare»</K>: la stessa sequenza, come
+          checklist che si spunta da sola sui dati reali dello studio. E ogni pagina ha un
+          pulsante <Btn>?</Btn> accanto al titolo che apre la sezione pertinente di questa guida.
         </Nota>
       </>
     ),
@@ -354,6 +355,12 @@ const SEZIONI: Sezione[] = [
           sub-indici pertinenti fra i 400 testi letterali del provvedimento 12.5.2023, con il
           motivo — e le <K>bozze</K> dei campi discorsivi (scopo e natura della prestazione,
           motivazione dell'astensione), sempre da rivedere prima di firmare.
+        </P>
+        <P>
+          C'è anche la <K>chat di assistenza</K> (il pulsante in basso a destra, quando l'AI è
+          abilitata): risponde su come si usa Contify AR e dà orientamento normativo, citando le
+          norme solo quando ne è certa. La conversazione vive nel tuo browser e{' '}
+          <K>non viene conservata</K>.
         </P>
         <Punti punti={[
           <>Si attiva in <K>Impostazioni</K> dal titolare, accettando l'informativa: finché è spento, i pulsanti AI non compaiono.</>,

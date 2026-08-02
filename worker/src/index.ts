@@ -40,7 +40,7 @@ import { SOGLIE_AVVISO_CANONE, bloccoPerStato, giorniAllaScadenza, statoValido }
 import { cercaAnagrafica, limiteSuperato } from './lib/lookup';
 import { aggiornaListeSanzioni, caricaListe, eseguiScreeningTenant, listeDaAggiornare, screeningSchedulato } from './lib/sanzioni';
 import { normalizzaPiva } from './lib/lookup/piva';
-import { ErroreAi, MODELLO_DEFAULT, aiAbilitata, generaBozza, suggerisciIndicatori } from './lib/ai';
+import { ErroreAi, MODELLO_DEFAULT, aiAbilitata, generaBozza, rispostaChat, suggerisciIndicatori } from './lib/ai';
 import { getCookie } from 'hono/cookie';
 
 import { CNDCEC_2025 } from './domain/rulesets/cndcec-2025';
@@ -1197,6 +1197,36 @@ api.post('/ai/bozza', puoScrivere, async (c) => {
   }
 });
 
+/**
+ * Chat di assistenza (AR-M10): aperta a tutti i ruoli dello studio — è
+ * aiuto all'uso, non contenuto SOS. Nessuna conservazione dei messaggi
+ * lato server; nel registro solo l'uso.
+ */
+api.post('/ai/chat', async (c) => {
+  if (!(await tenantConAiAbilitata(c))) {
+    return c.json({ errore: "L'assistente AI non è abilitato: il titolare può attivarlo dalle Impostazioni", codice: 'ai_disabilitata' }, 403);
+  }
+  const b = await c.req.json<any>().catch(() => ({}));
+  const messaggi = Array.isArray(b.messaggi) ? b.messaggi : [];
+  const validi = messaggi
+    .filter((m: any) => (m?.ruolo === 'utente' || m?.ruolo === 'assistente') && typeof m?.testo === 'string' && m.testo.trim())
+    .slice(-16);
+  if (!validi.length || validi[validi.length - 1].ruolo !== 'utente') {
+    return c.json({ errore: 'Scrivi una domanda' }, 400);
+  }
+  try {
+    const risposta = await rispostaChat(c.env, validi);
+    await scriviAudit(c.env.DB, {
+      tenantId: c.get('tenantId'), utenteId: c.get('utente').id, azione: 'USO_AI',
+      dettaglio: { funzione: 'chat' }, ip: c.get('ip'),
+    });
+    return c.json({ risposta });
+  } catch (e) {
+    if (e instanceof ErroreAi) return c.json({ errore: e.message }, e.status as 400);
+    throw e;
+  }
+});
+
 // ===========================================================================
 // CATALOGHI NORMATIVI (sola lettura)
 // ===========================================================================
@@ -1861,6 +1891,98 @@ async function calcolaScadenzario(db: D1Database, tenantId: string) {
 
 api.get('/scadenzario', async (c) => {
   return c.json(await calcolaScadenzario(c.env.DB, c.get('tenantId')));
+});
+
+/**
+ * Percorso «Per iniziare» (AR-M10): la checklist non si spunta a mano,
+ * si spunta DA SOLA sui dati reali dello studio. È la guida passo passo
+ * operativa: ogni passo dice dove si fa e perché la norma lo chiede.
+ */
+api.get('/primi-passi', async (c) => {
+  const tenantId = c.get('tenantId');
+  const [autovalFirmata, clienti, titolari, fascicoli, valutazioniFirmate, tenant] = await Promise.all([
+    c.env.DB.prepare('SELECT COUNT(*) AS n FROM autovalutazioni WHERE tenant_id = ? AND firmata_il IS NOT NULL').bind(tenantId).first<{ n: number }>(),
+    c.env.DB.prepare('SELECT COUNT(*) AS n FROM clienti WHERE tenant_id = ? AND attivo = 1').bind(tenantId).first<{ n: number }>(),
+    c.env.DB.prepare('SELECT COUNT(*) AS n FROM titolari_effettivi WHERE tenant_id = ? AND valido_al IS NULL').bind(tenantId).first<{ n: number }>(),
+    c.env.DB.prepare("SELECT COUNT(*) AS n FROM fascicoli WHERE tenant_id = ? AND stato != 'CESSATO'").bind(tenantId).first<{ n: number }>(),
+    c.env.DB.prepare('SELECT COUNT(*) AS n FROM valutazioni_rischio WHERE tenant_id = ? AND firmata_il IS NOT NULL').bind(tenantId).first<{ n: number }>(),
+    c.env.DB.prepare('SELECT parametri, logo_url FROM tenants WHERE id = ?').bind(tenantId).first<any>(),
+  ]);
+  const registroTe = await statoRegistroTe(c.env.DB, tenantId);
+
+  const passi = [
+    {
+      id: 'autovalutazione',
+      titolo: 'Compila e firma l’autovalutazione dello studio',
+      spiega: 'È la base documentale che l’ispettore chiede per prima (artt. 15-16).',
+      pagina: 'autovalutazione',
+      fatto: (autovalFirmata?.n ?? 0) > 0,
+      facoltativo: false,
+    },
+    {
+      id: 'clienti',
+      titolo: 'Carica i clienti dello studio',
+      spiega: 'A mano, dalla partita IVA o con l’import CSV dal gestionale.',
+      pagina: 'clienti',
+      fatto: (clienti?.n ?? 0) > 0,
+      facoltativo: false,
+    },
+    {
+      id: 'fascicolo',
+      titolo: 'Apri il primo fascicolo',
+      spiega: 'Un fascicolo per ogni prestazione: incarico, scopo e natura (art. 19).',
+      pagina: 'fascicoli',
+      fatto: (fascicoli?.n ?? 0) > 0,
+      facoltativo: false,
+    },
+    {
+      id: 'valutazione',
+      titolo: 'Registra e firma la prima valutazione del rischio',
+      spiega: 'Tabelle A e B della modulistica CNDCEC; firmata, è congelata e fa prova.',
+      pagina: 'fascicoli',
+      fatto: (valutazioniFirmate?.n ?? 0) > 0,
+      facoltativo: false,
+    },
+    {
+      id: 'titolari',
+      titolo: 'Registra i titolari effettivi dei clienti societari',
+      spiega: 'Artt. 20-22: criteri guidati, fotografia storicizzata, riscontro col registro.',
+      pagina: 'fascicoli',
+      fatto: (titolari?.n ?? 0) > 0,
+      facoltativo: false,
+    },
+    {
+      id: 'registro-te',
+      titolo: 'Registra l’accreditamento al registro dei titolari effettivi',
+      spiega: 'D.M. 122/2026: accesso biennale via Camera di Commercio, promemoria al rinnovo.',
+      pagina: 'controlli',
+      fatto: registroTe.accreditato,
+      facoltativo: false,
+    },
+    {
+      id: 'logo',
+      titolo: 'Carica il logo dello studio',
+      spiega: 'Comparirà sui verbali accanto all’intestazione (facoltativo).',
+      pagina: 'impostazioni',
+      fatto: Boolean(logoStudio(tenant?.logo_url)),
+      facoltativo: true,
+    },
+    {
+      id: 'ai',
+      titolo: 'Abilita l’assistente AI',
+      spiega: 'Suggeritore di indicatori UIF, bozze e chat di aiuto (facoltativo, con informativa).',
+      pagina: 'impostazioni',
+      fatto: aiAbilitata(tenant?.parametri),
+      facoltativo: true,
+    },
+  ];
+
+  const obbligatori = passi.filter((s) => !s.facoltativo);
+  return c.json({
+    passi,
+    completati: passi.filter((s) => s.fatto).length,
+    completatoIlPercorso: obbligatori.every((s) => s.fatto),
+  });
 });
 
 api.get('/cruscotto', async (c) => {

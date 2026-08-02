@@ -12,6 +12,7 @@ import { Controlli } from './pagine/Controlli';
 import { Impostazioni } from './pagine/Impostazioni';
 import { Guida } from './pagine/Guida';
 import { VerificaRemota } from './pagine/VerificaRemota';
+import { ChatAssistente } from './pagine/ChatAssistente';
 
 type Sessione = SessioneApp;
 
@@ -240,6 +241,9 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
           {children}
         </div>
       </main>
+
+      {/* Chat di assistenza (AR-M10): compare solo con l'AI abilitata. */}
+      <ChatAssistente />
     </div>
   );
 }

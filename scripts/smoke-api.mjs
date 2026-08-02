@@ -540,6 +540,35 @@ console.log('\n== Assistente AI (AR-M9) ==');
   await req('POST', '/auth/login', { email: 'titolare@studiodemo.it', password: 'Antiriciclaggio!2026' });
 }
 
+console.log('\n== Per iniziare e chat assistente (AR-M10) ==');
+{
+  // La checklist si spunta da sola sui dati reali del collaudo.
+  const r = await req('GET', '/primi-passi');
+  verifica('il percorso Per iniziare risponde con i passi', r.stato === 200 && Array.isArray(r.dati?.passi) && r.dati.passi.length >= 6, r.dati);
+  const passo = (id) => r.dati.passi.find((s) => s.id === id);
+  verifica('autovalutazione firmata → passo spuntato da solo', passo('autovalutazione')?.fatto === true, passo('autovalutazione'));
+  verifica('clienti presenti → passo spuntato da solo', passo('clienti')?.fatto === true, passo('clienti'));
+  verifica('accreditamento registro TE riconosciuto', passo('registro-te')?.fatto === true, passo('registro-te'));
+  verifica('ogni passo indica la pagina dove si fa', r.dati.passi.every((s) => typeof s.pagina === 'string' && s.pagina), r.dati.passi);
+}
+{
+  // Chat: gate AI, validazioni, risposta e audit senza contenuto.
+  const r = await req('POST', '/ai/chat', { messaggi: [{ ruolo: 'utente', testo: 'Come registro un titolare effettivo con quota indiretta?' }] });
+  verifica('la chat risponde (fixtures)', r.stato === 200 && typeof r.dati?.risposta === 'string' && r.dati.risposta.length > 10, r.dati);
+  const rVuota = await req('POST', '/ai/chat', { messaggi: [] });
+  verifica('chat senza domanda respinta', rVuota.stato === 400, rVuota.dati);
+  const log = await req('GET', '/audit');
+  verifica('l’uso della chat è tracciato senza contenuto',
+    (log.dati ?? []).some((v) => v.azione === 'USO_AI' && (v.dettaglio ?? '').includes('chat'))
+    && !JSON.stringify(log.dati).includes('quota indiretta'), null);
+
+  // Il gate dell'opt-in vale anche per la chat.
+  await req('POST', '/ai/abilita', { abilita: false });
+  const rSpenta = await req('POST', '/ai/chat', { messaggi: [{ ruolo: 'utente', testo: 'Ci sei?' }] });
+  verifica('con AI disabilitata la chat risponde 403', rSpenta.stato === 403 && rSpenta.dati?.codice === 'ai_disabilitata', rSpenta.dati);
+  await req('POST', '/ai/abilita', { abilita: true, accetto: true });
+}
+
 console.log('\n== Backup, ripristino ed eliminazione archivio (AR-M4) ==');
 let chiaveBackupManuale;
 {

@@ -26,6 +26,8 @@ export function Cruscotto({ vaiA }: { vaiA: (p: string) => void }) {
         ciascun fascicolo.
       </p>
 
+      <PerIniziare vaiA={vaiA} />
+
       <div className="griglia c4">
         <Tessera etichetta="Clienti" valore={d.clienti} />
         <Tessera etichetta="Fascicoli attivi" valore={d.fascicoli} />
@@ -303,5 +305,78 @@ export function Registro() {
       </div>
       <PiedeLegale />
     </>
+  );
+}
+
+// ── Percorso «Per iniziare» (AR-M10) ───────────────────────────
+// La checklist si spunta da sola sui dati reali dello studio: è la
+// guida passo passo operativa. Sparisce quando i passi obbligatori
+// sono completi; si può nascondere e riprendere quando si vuole.
+
+function PerIniziare({ vaiA }: { vaiA: (p: string) => void }) {
+  const [dati, setDati] = useState<any>(null);
+  const [nascosto, setNascosto] = useState(() => localStorage.getItem('ar-primi-passi-nascosto') === '1');
+
+  useEffect(() => { api.get('/primi-passi').then(setDati).catch(() => setDati(null)); }, []);
+
+  if (!dati || dati.completatoIlPercorso) return null;
+
+  if (nascosto) {
+    return (
+      <p className="occhiello" style={{ marginTop: 4 }}>
+        Percorso «Per iniziare»: {dati.completati} passi su {dati.passi.length} completati.{' '}
+        <a
+          href="#cruscotto"
+          onClick={(e) => { e.preventDefault(); localStorage.removeItem('ar-primi-passi-nascosto'); setNascosto(false); }}
+          className="text-teal-700 font-semibold"
+        >
+          Riprendi il percorso
+        </a>
+      </p>
+    );
+  }
+
+  return (
+    <div className="scheda" style={{ borderLeft: '3px solid var(--teal-600, #048587)' }}>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="!m-0">Per iniziare — {dati.completati} di {dati.passi.length} passi</h3>
+        <button
+          className="btn btn-ghost btn-sm"
+          title="Nascondi (potrai riprendere dal cruscotto)"
+          onClick={() => { localStorage.setItem('ar-primi-passi-nascosto', '1'); setNascosto(true); }}
+        >
+          Nascondi
+        </button>
+      </div>
+      <div className="aiuto">
+        Il percorso si spunta da solo man mano che lo studio prende forma: nessuna casella da ricordare.
+      </div>
+      <div className="space-y-1 mt-2">
+        {dati.passi.map((s: any) => (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => vaiA(s.pagina)}
+            className={`w-full text-left flex items-start gap-3 px-3 py-2 rounded-lg transition-colors ${
+              s.fatto ? 'opacity-60' : 'hover:bg-ink-50'
+            }`}
+          >
+            <span
+              className={`mt-0.5 inline-flex items-center justify-center w-5 h-5 rounded-full text-[11px] font-bold shrink-0 ${
+                s.fatto ? 'bg-teal-600 text-accento-on' : 'border-2 border-ink-200 text-transparent'
+              }`}
+            >
+              ✓
+            </span>
+            <span className="min-w-0">
+              <span className={`block text-sm font-semibold ${s.fatto ? 'line-through text-ink-500' : 'text-ink-800'}`}>
+                {s.titolo}{s.facoltativo && <span className="font-normal text-ink-400"> · facoltativo</span>}
+              </span>
+              <span className="block text-xs text-ink-400">{s.spiega}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
