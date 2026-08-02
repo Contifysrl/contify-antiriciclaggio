@@ -315,6 +315,74 @@ console.log('\n== Integrità del registro (art. 32) ==');
   verifica('il registro non contiene il contenuto delle SOS', !JSON.stringify(log.dati).includes('Frazionamento artificioso'));
 }
 
+console.log('\n== Backup, ripristino ed eliminazione archivio (AR-M4) ==');
+let chiaveBackupManuale;
+{
+  // Backup manuale: chiave nel prefisso dello studio, righe contate.
+  const r = await req('POST', '/backup');
+  verifica('backup manuale eseguito', r.stato === 201 && typeof r.dati?.key === 'string' && r.dati.key.startsWith('tenant/'), r.dati);
+  verifica('il backup contiene le righe dell’archivio', (r.dati?.righe ?? 0) > 10, r.dati);
+  verifica('il primo backup del mese scrive anche il mensile', r.dati?.mensileScritto === null || String(r.dati?.mensileScritto).includes('/monthly/'), r.dati);
+  chiaveBackupManuale = r.dati?.key;
+}
+{
+  const r = await req('GET', '/backup');
+  verifica('elenco dei backup dello studio', r.stato === 200 && r.dati.backups.some((b) => b.key === chiaveBackupManuale), r.dati);
+  const rScarica = await fetch(`${BASE}/api/backup/scarica?key=${encodeURIComponent(chiaveBackupManuale)}`, { headers: { Cookie: cookie } });
+  verifica('download del backup (.json.gz)', rScarica.status === 200 && (rScarica.headers.get('Content-Type') ?? '').includes('gzip'));
+  const rAltrui = await req('GET', `/backup/scarica?key=${encodeURIComponent('tenant/altro-studio/daily/archivio-2026-01-01.json.gz')}`);
+  verifica('chiave di un altro studio respinta', rAltrui.stato === 400, rAltrui.dati);
+}
+let clientiPrima;
+{
+  // Ripristino: un cliente creato DOPO il backup deve sparire.
+  clientiPrima = (await req('GET', '/clienti')).dati.length;
+  const r = await req('POST', '/clienti', { tipo: 'PERSONA_FISICA', denominazione: 'Cliente Da Ripristino', codiceFiscale: 'RPRTST80A01H501X' });
+  verifica('cliente usa-e-getta creato dopo il backup', r.stato === 201 || r.stato === 200, r.dati);
+  verifica('il cliente in più è nell’archivio', (await req('GET', '/clienti')).dati.length === clientiPrima + 1);
+
+  const rNo = await req('POST', '/backup/ripristina', { key: chiaveBackupManuale, conferma: 'ripristina tutto' });
+  verifica('ripristino senza parola esatta respinto', rNo.stato === 400, rNo.dati);
+
+  const rSi = await req('POST', '/backup/ripristina', { key: chiaveBackupManuale, conferma: 'RIPRISTINA' });
+  verifica('ripristino eseguito', rSi.stato === 200 && (rSi.dati?.righeRipristinate ?? 0) > 10, rSi.dati);
+  verifica('fotografia pre-ripristino creata', String(rSi.dati?.backupPreRipristino ?? '').includes('/pre-ripristino/'), rSi.dati);
+  verifica('l’archivio è tornato alla fotografia', (await req('GET', '/clienti')).dati.length === clientiPrima);
+
+  const audit = await req('GET', '/audit/verifica');
+  verifica('la catena del registro resta integra dopo il ripristino', audit.dati?.integra === true, audit.dati);
+}
+{
+  // Eliminazione archivio: parola obbligatoria, backup preventivo, tutto svuotato.
+  const rNo = await req('POST', '/backup/elimina-archivio', { conferma: 'ELIMINA TUTTO' });
+  verifica('eliminazione senza parola esatta respinta', rNo.stato === 400, rNo.dati);
+
+  const r = await req('POST', '/backup/elimina-archivio', { conferma: 'ELIMINA' });
+  verifica('archivio eliminato con conteggio', r.stato === 200 && (r.dati?.totale ?? 0) > 10, r.dati);
+  verifica('fotografia pre-eliminazione creata', String(r.dati?.backupPreEliminazione ?? '').includes('/pre-eliminazione/'), r.dati);
+  verifica('dopo l’eliminazione non restano clienti', (await req('GET', '/clienti')).dati.length === 0);
+  verifica('dopo l’eliminazione non restano fascicoli', (await req('GET', '/fascicoli')).dati.length === 0);
+
+  // Reversibilità: dal backup pre-eliminazione si torna indietro.
+  const elenco = await req('GET', '/backup');
+  const pre = elenco.dati.backups.find((b) => b.tipo === 'pre-eliminazione');
+  verifica('il backup pre-eliminazione è in elenco', Boolean(pre), elenco.dati);
+  const rTorna = await req('POST', '/backup/ripristina', { key: pre.key, conferma: 'RIPRISTINA' });
+  verifica('l’eliminazione è reversibile dal backup', rTorna.stato === 200 && (await req('GET', '/clienti')).dati.length === clientiPrima, rTorna.dati);
+
+  const audit = await req('GET', '/audit/verifica');
+  verifica('la catena del registro resta integra dopo l’eliminazione', audit.dati?.integra === true, audit.dati);
+}
+{
+  // Le operazioni sui backup sono riservate al titolare.
+  await req('POST', '/auth/logout');
+  await req('POST', '/auth/login', { email: 'collaboratore@studiodemo.it', password: 'Collab!2026' });
+  const r = await req('GET', '/backup');
+  verifica('i backup sono riservati al titolare', r.stato === 403, r.dati);
+  const r2 = await req('POST', '/backup/elimina-archivio', { conferma: 'ELIMINA' });
+  verifica('l’eliminazione è riservata al titolare', r2.stato === 403, r2.dati);
+}
+
 console.log('\n== Sessione ==');
 {
   await req('POST', '/auth/logout');

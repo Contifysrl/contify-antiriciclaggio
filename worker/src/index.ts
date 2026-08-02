@@ -25,6 +25,8 @@ import {
 import { cifra, decifra, generaPasswordTemporanea, hashPassword, nuovoId, nuovoToken, sha256Hex, verificaPassword } from './lib/crypto';
 import { inviaEmailBenvenuto, inviaEmailResetPassword, urlApp } from './lib/mail';
 import { scriviAudit, verificaCatenaAudit } from './lib/audit';
+import { backupSchedulato, chiaveDelTenant, prefissoTenant, runBackupTenant, type TipoBackupTenant } from './lib/backup';
+import { eseguiEliminaArchivio, eseguiRipristino, RipristinoError } from './lib/ripristino';
 import { getCookie } from 'hono/cookie';
 
 import { CNDCEC_2025 } from './domain/rulesets/cndcec-2025';
@@ -394,6 +396,96 @@ api.post('/utenti/:id/reset-password', soloTitolare, async (c) => {
     destinatario: target.email, nome: target.nome, passwordTemporanea, studio: studio?.denominazione ?? 'il tuo studio',
   });
   return c.json({ passwordTemporanea, emailInviata });
+});
+
+// ===========================================================================
+// BACKUP, RIPRISTINO ED ELIMINAZIONE DELL'ARCHIVIO — solo TITOLARE
+//
+// Ogni notte il cron fotografa l'archivio dello studio su R2 (bucket EU,
+// retention 30 giornalieri + 12 mensili). Qui il titolare può:
+// - vedere e scaricare le fotografie del SUO studio (mai di altri);
+// - farne una adesso;
+// - ripristinarne una (con backup pre-ripristino obbligatorio);
+// - eliminare l'archivio (con backup pre-eliminazione obbligatorio).
+// Le parole di conferma RIPRISTINA / ELIMINA sono verificate anche QUI:
+// i tre passaggi della UI non proteggono da una chiamata API diretta.
+// ===========================================================================
+
+api.post('/backup', soloTitolare, async (c) => {
+  const r = await runBackupTenant(c.env, c.get('tenantId'), 'manuale', c.get('utente').id);
+  return c.json(r, 201);
+});
+
+api.get('/backup', soloTitolare, async (c) => {
+  const tenantId = c.get('tenantId');
+  const backups: Array<{ key: string; tipo: TipoBackupTenant; bytes: number; caricatoIl: string; righe: number | null; trigger: string | null }> = [];
+  for (const tipo of ['daily', 'monthly', 'pre-ripristino', 'pre-eliminazione'] as const) {
+    let cursor: string | undefined;
+    do {
+      // `include` esiste ma manca dai tipi di questa versione di workers-types.
+      const page: R2Objects = await c.env.BACKUPS.list({ prefix: prefissoTenant(tenantId, tipo), cursor, include: ['customMetadata'] } as R2ListOptions);
+      for (const o of page.objects) {
+        backups.push({
+          key: o.key,
+          tipo,
+          bytes: o.size,
+          caricatoIl: o.uploaded.toISOString(),
+          righe: o.customMetadata?.righe ? Number(o.customMetadata.righe) : null,
+          trigger: o.customMetadata?.trigger ?? null,
+        });
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+  }
+  backups.sort((a, b) => b.caricatoIl.localeCompare(a.caricatoIl));
+  return c.json({ backups });
+});
+
+api.get('/backup/scarica', soloTitolare, async (c) => {
+  const tenantId = c.get('tenantId');
+  const key = c.req.query('key') ?? '';
+  if (!chiaveDelTenant(tenantId, key)) return c.json({ errore: 'Chiave di backup non valida' }, 400);
+  const obj = await c.env.BACKUPS.get(key);
+  if (!obj) return c.json({ errore: 'Backup non trovato' }, 404);
+  await scriviAudit(c.env.DB, { tenantId, utenteId: c.get('utente').id, azione: 'SCARICA_BACKUP', entita: 'sistema', entitaId: key, ip: c.get('ip') });
+  return new Response(obj.body, {
+    headers: {
+      'Content-Type': 'application/gzip',
+      'Content-Length': String(obj.size),
+      'Content-Disposition': `attachment; filename="${key.split('/').pop()}"`,
+    },
+  });
+});
+
+api.post('/backup/ripristina', soloTitolare, async (c) => {
+  const b = await c.req.json<any>().catch(() => ({}));
+  if (String(b.conferma ?? '') !== 'RIPRISTINA') {
+    return c.json({ errore: 'Conferma non valida: per procedere scrivi RIPRISTINA' }, 400);
+  }
+  try {
+    const r = await eseguiRipristino(c.env, c.get('tenantId'), c.get('utente').id, String(b.key ?? ''));
+    return c.json(r);
+  } catch (e) {
+    if (e instanceof RipristinoError) return c.json({ errore: e.message }, e.status as 400);
+    console.error('RIPRISTINO FALLITO:', e);
+    return c.json({
+      errore: 'Ripristino non riuscito. La fotografia pre-ripristino (se creata) è nella lista con tipo «pre-ripristino»; contatta l\'assistenza.',
+    }, 500);
+  }
+});
+
+api.post('/backup/elimina-archivio', soloTitolare, async (c) => {
+  const b = await c.req.json<any>().catch(() => ({}));
+  if (String(b.conferma ?? '') !== 'ELIMINA') {
+    return c.json({ errore: 'Conferma non valida: per procedere scrivi ELIMINA' }, 400);
+  }
+  try {
+    const r = await eseguiEliminaArchivio(c.env, c.get('tenantId'), c.get('utente').id);
+    return c.json(r);
+  } catch (e) {
+    console.error('ELIMINAZIONE ARCHIVIO FALLITA:', e);
+    return c.json({ errore: 'Eliminazione non riuscita: l\'archivio non è stato toccato. Riprova o contatta l\'assistenza.' }, 500);
+  }
 });
 
 // ===========================================================================
@@ -1250,28 +1342,12 @@ export default {
   fetch: app.fetch,
 
   /**
-   * Backup notturno su R2. La perdita dei dati non è solo un disservizio:
-   * l'art. 32 co. 2 impone che le modalità di conservazione prevengano
-   * qualsiasi perdita dei dati e delle informazioni.
+   * Backup notturno su R2 (lib/backup.ts): dump SQL di piattaforma con
+   * rotazione 30/12 + fotografia dell'archivio di ogni studio. La perdita
+   * dei dati non è solo un disservizio: l'art. 32 co. 2 impone che le
+   * modalità di conservazione prevengano qualsiasi perdita dei dati.
    */
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(eseguiBackup(env));
+    ctx.waitUntil(backupSchedulato(env));
   },
 };
-
-async function eseguiBackup(env: Env): Promise<void> {
-  const tabelle = [
-    'tenants', 'utenti', 'autovalutazioni', 'clienti', 'titolari_effettivi', 'fascicoli',
-    'valutazioni_rischio', 'documenti', 'operazioni', 'segnalazioni_sospette', 'astensioni',
-    'formazione', 'audit_log',
-  ];
-  const dump: Record<string, unknown[]> = {};
-  for (const t of tabelle) {
-    const { results } = await env.DB.prepare(`SELECT * FROM ${t}`).all();
-    dump[t] = results ?? [];
-  }
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  await env.BACKUPS.put(`daily/${stamp}.json`, JSON.stringify({ generatoIl: new Date().toISOString(), dump }), {
-    httpMetadata: { contentType: 'application/json' },
-  });
-}
