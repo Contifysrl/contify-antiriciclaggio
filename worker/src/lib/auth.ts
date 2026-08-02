@@ -83,6 +83,8 @@ export async function richiediAutenticazione(
     nome: riga.nome,
     ruolo: riga.ruolo,
     attivo: riga.attivo,
+    avatar: riga.avatar ?? null,
+    cambio_password_richiesto: riga.cambio_password_richiesto ?? 0,
   } as Utente);
   c.set('tenantId', riga.tenant_id);
   c.set('ip', c.req.header('CF-Connecting-IP') ?? null);

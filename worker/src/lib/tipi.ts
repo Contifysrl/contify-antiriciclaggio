@@ -6,6 +6,8 @@ export interface Env {
   AMBIENTE: string;
   MASTER_KEY: string;
   RESEND_API_KEY?: string;
+  MAIL_FROM?: string;
+  APP_BASE_URL?: string;
 }
 
 export interface Utente {
@@ -16,6 +18,8 @@ export interface Utente {
   ruolo: 'TITOLARE' | 'COLLABORATORE' | 'LETTORE' | 'REVISORE';
   attivo: number;
   password_hash?: string;
+  avatar?: string | null;
+  cambio_password_richiesto?: number;
 }
 
 export interface Sessione {

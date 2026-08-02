@@ -246,6 +246,64 @@ console.log('\n== Segregazione per ruolo ==');
   verifica('il collaboratore vede comunque i clienti', r3.stato === 200 && r3.dati.length >= 2);
 }
 
+console.log('\n== Gestione utenti e password (AR-M3) ==');
+let passwordTemporanea;
+let idNuovoUtente;
+{
+  await req('POST', '/auth/logout');
+  await req('POST', '/auth/login', { email: 'titolare@studiodemo.it', password: 'Antiriciclaggio!2026' });
+  const r = await req('GET', '/utenti');
+  verifica('elenco utenti riservato al titolare', r.stato === 200 && r.dati.length >= 2, r.dati);
+  const r2 = await req('POST', '/utenti', { nome: 'Rita Revisora', email: 'revisora.smoke@test.it', ruolo: 'REVISORE' });
+  verifica('utente creato con password temporanea monouso', r2.stato === 201 && typeof r2.dati?.passwordTemporanea === 'string' && r2.dati.passwordTemporanea.length >= 12, r2.dati);
+  passwordTemporanea = r2.dati?.passwordTemporanea;
+  idNuovoUtente = r2.dati?.id;
+  const r3 = await req('POST', '/utenti', { nome: 'Doppione', email: 'revisora.smoke@test.it', ruolo: 'LETTORE' });
+  verifica('email duplicata respinta con 409', r3.stato === 409, r3.dati);
+}
+{
+  // Il titolare non può lasciare lo studio senza titolari attivi.
+  const elenco = await req('GET', '/utenti');
+  const io = elenco.dati.find((u) => u.email === 'titolare@studiodemo.it');
+  const r = await req('POST', `/utenti/${io.id}`, { attivo: false });
+  verifica('lo studio non resta mai senza un titolare attivo', r.stato === 409, r.dati);
+}
+{
+  // Primo accesso del nuovo utente: password temporanea + cambio obbligato.
+  await req('POST', '/auth/logout');
+  const r = await req('POST', '/auth/login', { email: 'revisora.smoke@test.it', password: passwordTemporanea });
+  verifica('primo accesso con password temporanea', r.stato === 200 && r.dati?.utente?.cambioPasswordRichiesto === true, r.dati);
+  const corta = await req('POST', '/auth/cambia-password', { attuale: passwordTemporanea, nuova: 'corta' });
+  verifica('password nuova troppo corta respinta', corta.stato === 400, corta.dati);
+  const r2 = await req('POST', '/auth/cambia-password', { attuale: passwordTemporanea, nuova: 'RevisoraNuova!1' });
+  verifica('cambio password al primo accesso', r2.stato === 200, r2.dati);
+  const io = await req('GET', '/auth/io');
+  verifica('obbligo di cambio azzerato dopo il cambio', io.dati?.utente?.cambioPasswordRichiesto === false, io.dati);
+}
+{
+  // Reset self-service: la richiesta risponde sempre ok (niente enumerazione);
+  // un token inventato viene rifiutato senza rivelare nulla.
+  const r = await req('POST', '/auth/password-dimenticata', { email: 'inesistente@test.it' });
+  verifica('password dimenticata: risposta identica anche per email ignote', r.stato === 200 && r.dati?.ok === true, r.dati);
+  const r2 = await req('POST', '/auth/reset-password', { token: 'x'.repeat(43), nuova: 'NuovaPassword!1' });
+  verifica('token di reset inventato respinto', r2.stato === 400, r2.dati);
+}
+{
+  // Reset amministrativo: revoca le sessioni e impone il cambio.
+  await req('POST', '/auth/logout');
+  await req('POST', '/auth/login', { email: 'titolare@studiodemo.it', password: 'Antiriciclaggio!2026' });
+  const r = await req('POST', `/utenti/${idNuovoUtente}/reset-password`);
+  verifica('reset amministrativo genera nuova password temporanea', r.stato === 200 && typeof r.dati?.passwordTemporanea === 'string', r.dati);
+  const r2 = await req('POST', `/utenti/${idNuovoUtente}`, { attivo: false });
+  verifica('utente disattivabile dal titolare', r2.stato === 200, r2.dati);
+}
+{
+  const r = await req('POST', '/auth/avatar', { avatar: 'data:image/jpeg;base64,' + 'A'.repeat(64) });
+  verifica('foto profilo salvata', r.stato === 200, r.dati);
+  const io = await req('GET', '/auth/io');
+  verifica('la foto torna nella sessione', typeof io.dati?.utente?.avatar === 'string', io.dati?.utente?.avatar?.slice(0, 30));
+}
+
 console.log('\n== Integrità del registro (art. 32) ==');
 {
   await req('POST', '/auth/logout');

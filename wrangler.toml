@@ -32,6 +32,8 @@ jurisdiction = "eu"
 
 [vars]
 AMBIENTE = "produzione" # in locale e' scavalcato da .dev.vars
+MAIL_FROM = "Contify AR <no-reply@contify.it>"
+APP_BASE_URL = "https://antiriciclaggio.contify.it"
 
 # Dominio di produzione: contify.it è già una zona Cloudflare, quindi il
 # custom domain si crea da solo al deploy (DNS e certificato inclusi).

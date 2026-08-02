@@ -22,7 +22,8 @@ import {
   rimuoviCookieSessione,
   soloTitolare,
 } from './lib/auth';
-import { cifra, decifra, hashPassword, nuovoId, sha256Hex, verificaPassword } from './lib/crypto';
+import { cifra, decifra, generaPasswordTemporanea, hashPassword, nuovoId, nuovoToken, sha256Hex, verificaPassword } from './lib/crypto';
+import { inviaEmailBenvenuto, inviaEmailResetPassword, urlApp } from './lib/mail';
 import { scriviAudit, verificaCatenaAudit } from './lib/audit';
 import { getCookie } from 'hono/cookie';
 
@@ -111,7 +112,7 @@ api.post('/auth/login', async (c) => {
     .bind(u.tenant_id)
     .first<any>();
 
-  return c.json({ utente: { id: u.id, nome: u.nome, email: u.email, ruolo: u.ruolo }, studio: tenant });
+  return c.json({ utente: utentePubblico(u), studio: tenant });
 });
 
 api.post('/auth/logout', async (c) => {
@@ -121,18 +122,278 @@ api.post('/auth/logout', async (c) => {
   return c.json({ ok: true });
 });
 
+// ===========================================================================
+// RESET PASSWORD SELF-SERVICE — rotte PUBBLICHE (esentate dall'auth sotto)
+//
+// - password-dimenticata: genera un token monouso (60 minuti) e invia il
+//   link via email. Risposta SEMPRE identica, esista o no l'account
+//   (niente enumerazione utenti). Throttle per email: un nuovo token solo
+//   se il precedente ha più di due minuti.
+// - reset-password: consuma il token e imposta la nuova password.
+// Nel database sta solo l'HASH SHA-256 del token; il token in chiaro
+// viaggia esclusivamente nel link della mail.
+// ===========================================================================
+
+const RESET_TTL_MIN = 60;
+
+api.post('/auth/password-dimenticata', async (c) => {
+  const b = await c.req.json<any>().catch(() => ({}));
+  const email = String(b.email ?? '').toLowerCase().trim();
+  if (!email || !email.includes('@')) return c.json({ errore: 'Email non valida' }, 400);
+
+  const u = await c.env.DB.prepare('SELECT id, tenant_id, email FROM utenti WHERE email = ? AND attivo = 1')
+    .bind(email)
+    .first<any>();
+
+  if (u) {
+    // Throttle: se esiste già un token creato da meno di due minuti, non se
+    // ne genera un altro (e non si rimanda la mail).
+    const recente = await c.env.DB.prepare(
+      "SELECT 1 FROM password_reset_token WHERE utente_id = ? AND creato_il > datetime('now', '-2 minutes')",
+    ).bind(u.id).first();
+    if (!recente) {
+      await c.env.DB.prepare("DELETE FROM password_reset_token WHERE scade_il < datetime('now')").run();
+      await c.env.DB.prepare('DELETE FROM password_reset_token WHERE utente_id = ?').bind(u.id).run();
+      const token = nuovoToken();
+      const scadenza = new Date(Date.now() + RESET_TTL_MIN * 60_000).toISOString();
+      await c.env.DB.prepare('INSERT INTO password_reset_token (token_hash, utente_id, scade_il) VALUES (?,?,?)')
+        .bind(await sha256Hex(token), u.id, scadenza)
+        .run();
+      // URL costruito dalla configurazione, mai dall'header Host.
+      const urlReset = `${urlApp(c.env)}/#reset?token=${token}`;
+      await inviaEmailResetPassword(c.env, u.email, urlReset);
+      await scriviAudit(c.env.DB, { tenantId: u.tenant_id, utenteId: u.id, azione: 'RESET_RICHIESTO', ip: c.get('ip') ?? c.req.header('CF-Connecting-IP') ?? null });
+    }
+  }
+  // Risposta identica in ogni caso.
+  return c.json({ ok: true });
+});
+
+api.post('/auth/reset-password', async (c) => {
+  const b = await c.req.json<any>().catch(() => ({}));
+  const token = String(b.token ?? '');
+  const nuova = String(b.nuova ?? '');
+  if (nuova.length < 8) return c.json({ errore: 'La nuova password deve avere almeno 8 caratteri' }, 400);
+  if (!token) return c.json({ errore: 'Link non valido o scaduto. Richiedi un nuovo reset della password.' }, 400);
+
+  const riga = await c.env.DB.prepare(
+    `SELECT t.token_hash, u.id AS utente_id, u.tenant_id
+     FROM password_reset_token t JOIN utenti u ON u.id = t.utente_id
+     WHERE t.token_hash = ? AND t.usato_il IS NULL AND t.scade_il > datetime('now') AND u.attivo = 1`,
+  ).bind(await sha256Hex(token)).first<any>();
+  if (!riga) return c.json({ errore: 'Link non valido o scaduto. Richiedi un nuovo reset della password.' }, 400);
+
+  await c.env.DB.prepare('UPDATE utenti SET password_hash = ?, cambio_password_richiesto = 0 WHERE id = ?')
+    .bind(await hashPassword(nuova), riga.utente_id)
+    .run();
+  // Token consumato + tutte le sessioni aperte revocate.
+  await c.env.DB.prepare("UPDATE password_reset_token SET usato_il = datetime('now') WHERE token_hash = ?").bind(riga.token_hash).run();
+  await c.env.DB.prepare('DELETE FROM sessioni WHERE utente_id = ?').bind(riga.utente_id).run();
+  await scriviAudit(c.env.DB, { tenantId: riga.tenant_id, utenteId: riga.utente_id, azione: 'RESET_COMPLETATO', ip: c.req.header('CF-Connecting-IP') ?? null });
+
+  return c.json({ ok: true });
+});
+
 api.use('/*', async (c, next) => {
-  // Il login è l'unica rotta pubblica; tutto il resto richiede sessione.
-  if (c.req.path.startsWith('/api/auth/login') || c.req.path.startsWith('/api/auth/logout')) return next();
+  // Rotte pubbliche: login, logout e il reset password via email.
+  // Tutto il resto richiede sessione.
+  const pubbliche = ['/api/auth/login', '/api/auth/logout', '/api/auth/password-dimenticata', '/api/auth/reset-password'];
+  if (pubbliche.some((p) => c.req.path.startsWith(p))) return next();
   return richiediAutenticazione(c, next);
 });
+
+/** Vista dell'utente restituita al client: mai hash o campi interni. */
+function utentePubblico(u: any) {
+  return {
+    id: u.id,
+    nome: u.nome,
+    email: u.email,
+    ruolo: u.ruolo,
+    avatar: u.avatar ?? null,
+    cambioPasswordRichiesto: Boolean(u.cambio_password_richiesto),
+  };
+}
 
 api.get('/auth/io', async (c) => {
   const u = c.get('utente');
   const tenant = await c.env.DB.prepare('SELECT id, denominazione, piano, ruleset_default, parametri FROM tenants WHERE id = ?')
     .bind(u.tenant_id)
     .first<any>();
-  return c.json({ utente: { id: u.id, nome: u.nome, email: u.email, ruolo: u.ruolo }, studio: tenant });
+  return c.json({ utente: utentePubblico(u), studio: tenant });
+});
+
+// ---------------------------------------------------------------------------
+// Cambio password (self-service) e foto profilo
+// ---------------------------------------------------------------------------
+
+api.post('/auth/cambia-password', async (c) => {
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const attuale = String(b.attuale ?? '');
+  const nuova = String(b.nuova ?? '');
+  if (nuova.length < 8) return c.json({ errore: 'La nuova password deve avere almeno 8 caratteri' }, 400);
+
+  const riga = await c.env.DB.prepare('SELECT password_hash FROM utenti WHERE id = ?').bind(u.id).first<any>();
+  if (!riga || !(await verificaPassword(attuale, riga.password_hash))) {
+    return c.json({ errore: 'La password attuale non è corretta' }, 401);
+  }
+  await c.env.DB.prepare('UPDATE utenti SET password_hash = ?, cambio_password_richiesto = 0 WHERE id = ?')
+    .bind(await hashPassword(nuova), u.id)
+    .run();
+
+  // Chi cambia password spesso teme che qualcuno la conosca: le sessioni
+  // aperte ALTROVE vanno chiuse; quella corrente resta valida.
+  const token = getCookie(c, 'antiriciclaggio_sess');
+  const idCorrente = token ? await sha256Hex(token) : '';
+  const revocate = await c.env.DB.prepare('DELETE FROM sessioni WHERE utente_id = ? AND id <> ?')
+    .bind(u.id, idCorrente)
+    .run();
+  await scriviAudit(c.env.DB, {
+    tenantId: u.tenant_id, utenteId: u.id, azione: 'CAMBIA_PASSWORD',
+    dettaglio: { altreSessioniChiuse: revocate.meta.changes ?? 0 }, ip: c.get('ip'),
+  });
+  return c.json({ ok: true, altreSessioniChiuse: revocate.meta.changes ?? 0 });
+});
+
+api.post('/auth/avatar', async (c) => {
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const avatar = b.avatar === null ? null : String(b.avatar ?? '');
+  if (avatar !== null) {
+    if (!avatar.startsWith('data:image/jpeg;base64,') || avatar.length > 80_000) {
+      return c.json({ errore: 'Immagine non valida' }, 400);
+    }
+  }
+  await c.env.DB.prepare('UPDATE utenti SET avatar = ? WHERE id = ?').bind(avatar, u.id).run();
+  await scriviAudit(c.env.DB, { tenantId: u.tenant_id, utenteId: u.id, azione: avatar ? 'AGGIORNA_AVATAR' : 'RIMUOVI_AVATAR', ip: c.get('ip') });
+  return c.json({ ok: true });
+});
+
+// ===========================================================================
+// GESTIONE UTENTI DELLO STUDIO — solo TITOLARE
+//
+// Regole di sicurezza (stesse di Assist):
+// - la password iniziale è generata dal server, mostrata al titolare UNA
+//   SOLA volta e mai salvata in chiaro né scritta nell'audit;
+// - gli utenti creati (e quelli resettati) devono cambiare password al
+//   primo accesso;
+// - il titolare non può disattivare o degradare se stesso se è l'ultimo
+//   titolare attivo dello studio (l'art. 38 vuole sempre qualcuno che
+//   possa accedere alle SOS);
+// - disattivazione e reset amministrativo revocano le sessioni aperte.
+// ===========================================================================
+
+const RUOLI_VALIDI = ['TITOLARE', 'COLLABORATORE', 'LETTORE', 'REVISORE'];
+
+async function altriTitolariAttivi(db: D1Database, tenantId: string, escludiId: string): Promise<number> {
+  const r = await db.prepare(
+    "SELECT COUNT(*) AS n FROM utenti WHERE tenant_id = ? AND ruolo = 'TITOLARE' AND attivo = 1 AND id <> ?",
+  ).bind(tenantId, escludiId).first<{ n: number }>();
+  return r?.n ?? 0;
+}
+
+api.get('/utenti', soloTitolare, async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, email, nome, ruolo, attivo, cambio_password_richiesto, ultimo_accesso, creato_il
+     FROM utenti WHERE tenant_id = ?
+     ORDER BY attivo DESC, ruolo = 'TITOLARE' DESC, nome COLLATE NOCASE`,
+  ).bind(c.get('tenantId')).all<any>();
+  return c.json((results ?? []).map((u) => ({
+    id: u.id, email: u.email, nome: u.nome, ruolo: u.ruolo,
+    attivo: Boolean(u.attivo), cambioPasswordRichiesto: Boolean(u.cambio_password_richiesto),
+    ultimoAccesso: u.ultimo_accesso, creatoIl: u.creato_il,
+  })));
+});
+
+api.post('/utenti', soloTitolare, async (c) => {
+  const tenantId = c.get('tenantId');
+  const autore = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const email = String(b.email ?? '').toLowerCase().trim();
+  const nome = String(b.nome ?? '').trim();
+  const ruolo = String(b.ruolo ?? '');
+  if (!email.includes('@')) return c.json({ errore: 'Email non valida' }, 400);
+  if (!nome) return c.json({ errore: 'Il nome è obbligatorio' }, 400);
+  if (!RUOLI_VALIDI.includes(ruolo)) return c.json({ errore: 'Ruolo non valido' }, 400);
+
+  const esiste = await c.env.DB.prepare('SELECT id FROM utenti WHERE email = ?').bind(email).first();
+  if (esiste) return c.json({ errore: 'Esiste già un utente con questa email' }, 409);
+
+  const passwordTemporanea = generaPasswordTemporanea();
+  const id = nuovoId('usr');
+  await c.env.DB.prepare(
+    `INSERT INTO utenti (id, tenant_id, email, nome, password_hash, ruolo, cambio_password_richiesto)
+     VALUES (?,?,?,?,?,?,1)`,
+  ).bind(id, tenantId, email, nome, await hashPassword(passwordTemporanea), ruolo).run();
+
+  await scriviAudit(c.env.DB, { tenantId, utenteId: autore.id, azione: 'CREA_UTENTE', entita: 'utenti', entitaId: id, dettaglio: { email, nome, ruolo }, ip: c.get('ip') });
+
+  const studio = await c.env.DB.prepare('SELECT denominazione FROM tenants WHERE id = ?').bind(tenantId).first<any>();
+  // Attesa inline: la risposta dice al titolare se la mail è partita davvero;
+  // se non parte, l'utente esiste comunque e la password va comunicata a voce.
+  const emailInviata = await inviaEmailBenvenuto(c.env, {
+    destinatario: email, nome, passwordTemporanea, studio: studio?.denominazione ?? 'il tuo studio',
+  });
+
+  // passwordTemporanea compare nella risposta UNA SOLA VOLTA: non è salvata
+  // in chiaro da nessuna parte e non è recuperabile in seguito.
+  return c.json({ id, passwordTemporanea, emailInviata }, 201);
+});
+
+api.post('/utenti/:id', soloTitolare, async (c) => {
+  const tenantId = c.get('tenantId');
+  const autore = c.get('utente');
+  const id = c.req.param('id');
+  const b = await c.req.json<any>().catch(() => ({}));
+
+  const target = await c.env.DB.prepare('SELECT * FROM utenti WHERE id = ? AND tenant_id = ?').bind(id, tenantId).first<any>();
+  if (!target) return c.json({ errore: 'Utente non trovato' }, 404);
+
+  const nuovoNome = b.nome !== undefined ? String(b.nome).trim() : target.nome;
+  const nuovoRuolo = b.ruolo !== undefined ? String(b.ruolo) : target.ruolo;
+  const nuovoAttivo = b.attivo !== undefined ? Boolean(b.attivo) : Boolean(target.attivo);
+  if (!nuovoNome) return c.json({ errore: 'Il nome è obbligatorio' }, 400);
+  if (!RUOLI_VALIDI.includes(nuovoRuolo)) return c.json({ errore: 'Ruolo non valido' }, 400);
+
+  // Lo studio non può restare senza un titolare attivo: le SOS (art. 38)
+  // sarebbero inaccessibili a chiunque.
+  const perdeTitolare = target.ruolo === 'TITOLARE' && (nuovoRuolo !== 'TITOLARE' || !nuovoAttivo);
+  if (perdeTitolare && (await altriTitolariAttivi(c.env.DB, tenantId, target.id)) === 0) {
+    return c.json({ errore: 'Lo studio deve avere sempre almeno un titolare attivo' }, 409);
+  }
+
+  await c.env.DB.prepare('UPDATE utenti SET nome = ?, ruolo = ?, attivo = ? WHERE id = ?')
+    .bind(nuovoNome, nuovoRuolo, nuovoAttivo ? 1 : 0, id)
+    .run();
+  if (!nuovoAttivo) {
+    await c.env.DB.prepare('DELETE FROM sessioni WHERE utente_id = ?').bind(id).run();
+  }
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: autore.id, azione: 'MODIFICA_UTENTE', entita: 'utenti', entitaId: id,
+    dettaglio: { ruolo: nuovoRuolo, attivo: nuovoAttivo }, ip: c.get('ip'),
+  });
+  return c.json({ ok: true });
+});
+
+api.post('/utenti/:id/reset-password', soloTitolare, async (c) => {
+  const tenantId = c.get('tenantId');
+  const autore = c.get('utente');
+  const id = c.req.param('id');
+  const target = await c.env.DB.prepare('SELECT * FROM utenti WHERE id = ? AND tenant_id = ? AND attivo = 1').bind(id, tenantId).first<any>();
+  if (!target) return c.json({ errore: 'Utente non trovato' }, 404);
+
+  const passwordTemporanea = generaPasswordTemporanea();
+  await c.env.DB.prepare('UPDATE utenti SET password_hash = ?, cambio_password_richiesto = 1 WHERE id = ?')
+    .bind(await hashPassword(passwordTemporanea), id)
+    .run();
+  await c.env.DB.prepare('DELETE FROM sessioni WHERE utente_id = ?').bind(id).run();
+  await scriviAudit(c.env.DB, { tenantId, utenteId: autore.id, azione: 'RESET_PASSWORD_UTENTE', entita: 'utenti', entitaId: id, ip: c.get('ip') });
+
+  const studio = await c.env.DB.prepare('SELECT denominazione FROM tenants WHERE id = ?').bind(tenantId).first<any>();
+  const emailInviata = await inviaEmailBenvenuto(c.env, {
+    destinatario: target.email, nome: target.nome, passwordTemporanea, studio: studio?.denominazione ?? 'il tuo studio',
+  });
+  return c.json({ passwordTemporanea, emailInviata });
 });
 
 // ===========================================================================

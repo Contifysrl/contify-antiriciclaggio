@@ -128,3 +128,22 @@ export function nuovoId(prefisso: string): string {
 export function nuovoToken(): string {
   return b64(crypto.getRandomValues(new Uint8Array(32))).replace(/[+/=]/g, (c) => ({ '+': '-', '/': '_', '=': '' })[c]!);
 }
+
+/**
+ * Password temporanea per i nuovi utenti e per i reset amministrativi:
+ * 12 caratteri da un alfabeto senza ambiguità (niente 0/O, 1/l/I).
+ * Rigetto sopra soglia per non distorcere la distribuzione.
+ */
+const ALFABETO_PW = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+
+export function generaPasswordTemporanea(lunghezza = 12): string {
+  const out: string[] = [];
+  const max = 256 - (256 % ALFABETO_PW.length);
+  while (out.length < lunghezza) {
+    const bytes = crypto.getRandomValues(new Uint8Array(lunghezza * 2));
+    for (const b of bytes) {
+      if (b < max && out.length < lunghezza) out.push(ALFABETO_PW[b % ALFABETO_PW.length]);
+    }
+  }
+  return out.join('');
+}
