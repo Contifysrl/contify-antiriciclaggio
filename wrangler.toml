@@ -33,6 +33,13 @@ jurisdiction = "eu"
 [vars]
 AMBIENTE = "produzione" # in locale e' scavalcato da .dev.vars
 
+# Dominio di produzione: contify.it è già una zona Cloudflare, quindi il
+# custom domain si crea da solo al deploy (DNS e certificato inclusi).
+# Resta attivo anche https://contify-antiriciclaggio.contify.workers.dev.
+routes = [
+  { pattern = "antiriciclaggio.contify.it", custom_domain = true }
+]
+
 # Backup notturno + calcolo dello scadenzario.
 [triggers]
 crons = ["0 2 * * *"]
