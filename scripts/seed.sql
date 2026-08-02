@@ -6,8 +6,8 @@ VALUES ('ten_demo', 'Studio Commercialista Demo', '01234567890', 'ODCEC Padova',
         '{"giorniPreavviso":30,"referenteAntiriciclaggio":"Dott. Demo"}');
 
 INSERT INTO utenti (id, tenant_id, email, nome, password_hash, ruolo) VALUES
-  ('usr_tit', 'ten_demo', 'titolare@studiodemo.it', 'Dott. Demo Titolare', 'pbkdf2$210000$xzdgNRi8pz90E4ILCLcTWw==$bez1gQFjdifr44hxcU07lTgzCHm8DN4UFnC7HL8HcWk=', 'TITOLARE'),
-  ('usr_col', 'ten_demo', 'collaboratore@studiodemo.it', 'Anna Collaboratrice', 'pbkdf2$210000$7whuZETCPYLVMzMv9vPPww==$PB0HS4CQ6Tnu7XvIW99/OhDn0kleG9rwTPqedTeLamE=', 'COLLABORATORE');
+  ('usr_tit', 'ten_demo', 'titolare@studiodemo.it', 'Dott. Demo Titolare', 'pbkdf2$100000$DwgDOG/NsorSMTucXh1U4g==$qWeJ9ZbcYy5kG3zmKJjh6/ZRcBO7YWSuIBEhCNOHvfs=', 'TITOLARE'),
+  ('usr_col', 'ten_demo', 'collaboratore@studiodemo.it', 'Anna Collaboratrice', 'pbkdf2$100000$CnRgoTxuZg6B0pRgoeRDhg==$Ph15AlT80cZz0eEBgb9M8yd5XT6ekWeQW6RbsU6cnqs=', 'COLLABORATORE');
 
 INSERT INTO clienti (id, tenant_id, tipo, denominazione, codice_fiscale, partita_iva, paese_residenza, attivita_prevalente, creato_da)
 VALUES

@@ -35,7 +35,19 @@ export async function sha256Hex(input: string | ArrayBuffer): Promise<string> {
 
 // ------------------------------------------------------------------ password
 
-const PBKDF2_ITER = 210_000; // allineato alle raccomandazioni OWASP per PBKDF2-SHA256
+/**
+ * VINCOLO DI PIATTAFORMA — Cloudflare Workers limita PBKDF2 a 100.000
+ * iterazioni in produzione (protezione anti-DoS del runtime multi-tenant;
+ * cfr. workerd issue #1346). Oltre il limite `deriveBits` lancia un'eccezione:
+ * in `wrangler dev --local` non viene applicato, quindi il collaudo locale non
+ * lo intercetta — è stato scoperto al primo login di produzione.
+ *
+ * 100.000 è sotto la raccomandazione OWASP per PBKDF2-SHA256 (600.000): il
+ * divario è mitigato dal salt per utente, dal confronto a tempo costante e dal
+ * rate imposto dal runtime. Se il limite verrà alzato, aumentare QUI e
+ * rigenerare gli hash al primo login riuscito (l'iterazione è nel formato).
+ */
+const PBKDF2_ITER = 100_000;
 
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -52,6 +64,9 @@ export async function verificaPassword(password: string, stored: string): Promis
   const parti = stored.split('$');
   if (parti.length !== 4 || parti[0] !== 'pbkdf2') return false;
   const iter = Number(parti[1]);
+  // Un hash con iterazioni oltre il limite di piattaforma non è verificabile
+  // in produzione: meglio un rifiuto pulito che un 500 dal runtime.
+  if (!Number.isFinite(iter) || iter <= 0 || iter > 100_000) return false;
   const salt = unb64(parti[2]);
   const atteso = unb64(parti[3]);
   const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);

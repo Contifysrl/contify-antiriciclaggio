@@ -112,3 +112,26 @@ describe('Aritmetica delle date', () => {
     expect(() => aggiungiGiorni('non-una-data', 1)).toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Vincolo di piattaforma: Cloudflare Workers limita PBKDF2 a 100.000
+// iterazioni in produzione (workerd #1346). Il collaudo locale non lo
+// intercetta, quindi lo si blinda qui: se qualcuno rialza l'iterazione senza
+// sapere del limite, questo test glielo dice prima del deploy.
+import { hashPassword, verificaPassword } from '../worker/src/lib/crypto';
+
+describe('vincolo Cloudflare su PBKDF2', () => {
+  it('genera hash con non più di 100.000 iterazioni', async () => {
+    const h = await hashPassword('prova');
+    const iter = Number(h.split('$')[1]);
+    expect(iter).toBeLessThanOrEqual(100_000);
+    expect(await verificaPassword('prova', h)).toBe(true);
+    expect(await verificaPassword('sbagliata', h)).toBe(false);
+  });
+
+  it('rifiuta pulitamente gli hash sopra il limite invece di lanciare', async () => {
+    const h = await hashPassword('prova');
+    const sopra = h.replace('$100000$', '$210000$');
+    expect(await verificaPassword('prova', sopra)).toBe(false);
+  });
+});
