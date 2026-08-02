@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Variabili del design system Assist portate in AR (AR-M1).
+     Formato "R G B" senza virgole: serve a Tailwind per le trasparenze
+     (bg-teal-600/10). Valori di partenza = palette Contify Pantone 7474 C;
+     il tema colore scelto dall'utente arriverà con AR-M2. */
+  :root {
+    --c-50: 238 250 250;
+    --c-100: 213 242 242;
+    --c-200: 174 228 229;
+    --c-300: 123 207 209;
+    --c-400: 75 165 165;
+    --c-500: 14 138 143;
+    --c-600: 4 133 135;
+    --c-700: 10 96 104;
+    --c-800: 13 79 86;
+    --c-900: 15 65 71;
+    --c-on: 255 255 255;
+
+    --k-0: 255 255 255;
+    --k-50: 247 248 249;
+    --k-100: 236 238 240;
+    --k-200: 213 217 221;
+    --k-300: 177 184 191;
+    --k-400: 138 147 156;
+    --k-500: 107 116 126;
+    --k-600: 85 93 102;
+    --k-700: 69 75 83;
+    --k-800: 58 63 69;
+    --k-900: 36 39 43;
+
+    --rd-50: 254 242 242; --rd-100: 254 226 226; --rd-200: 254 202 202;
+    --rd-300: 252 165 165; --rd-400: 248 113 113; --rd-500: 239 68 68;
+    --rd-600: 220 38 38; --rd-700: 185 28 28; --rd-800: 153 27 27; --rd-900: 127 29 29;
+
+    --am-50: 255 251 235; --am-100: 254 243 199; --am-200: 253 230 138;
+    --am-300: 252 211 77; --am-400: 251 191 36; --am-500: 245 158 11;
+    --am-600: 217 119 6; --am-700: 180 83 9; --am-800: 146 64 14; --am-900: 120 53 15;
+
+    --gr-50: 240 253 244; --gr-100: 220 252 231; --gr-200: 187 247 208;
+    --gr-300: 134 239 172; --gr-400: 74 222 128; --gr-500: 34 197 94;
+    --gr-600: 22 163 74; --gr-700: 21 128 61; --gr-800: 22 101 52; --gr-900: 20 83 45;
+  }
+}
+
+@layer components {
+  /* Classi di componente del design system Assist. In AR-M1 le usa il login;
+     dall'AR-M2 tutta l'interfaccia. */
+  .btn { @apply inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed; }
+  .btn-primary { @apply bg-teal-600 text-accento-on hover:bg-teal-700; }
+  .btn-secondary { @apply bg-ink-0 border border-ink-200 text-ink-700 hover:border-teal-400 hover:text-teal-700; }
+  .btn-ghost { @apply text-ink-500 hover:bg-ink-100 hover:text-ink-800; }
+  .btn-danger { @apply text-red-500 hover:bg-red-50 hover:text-red-700; }
+  .btn-sm { @apply px-2 py-1 text-xs; }
+  .input { @apply w-full rounded-lg border border-ink-200 bg-ink-0 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-500; }
+  .label { @apply block text-xs font-semibold text-ink-500 mb-1 uppercase tracking-wide; }
+  .card { @apply bg-ink-0 rounded-xl border border-ink-100 shadow-sm; }
+  .th { @apply px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wider text-ink-400 bg-ink-50 border-b border-ink-100; }
+  .td { @apply px-4 py-2.5 text-sm border-b border-ink-100; }
+}

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
+import { LayoutAuth } from './components/LayoutAuth';
+import { Icona } from './components/icone';
 import { Autovalutazione, Cruscotto, Registro } from './pagine/Studio';
 import { Clienti, DettaglioFascicolo, Fascicoli } from './pagine/Fascicoli';
 import { Contante, Scadenzario, Sos } from './pagine/Presidi';
@@ -53,7 +55,7 @@ export default function App() {
           <img src="/logo-contify-white.png" alt="Contify" />
         </div>
         <div className="sottotitolo" style={{ padding: '0 8px', marginBottom: 18, fontSize: 11, color: 'var(--c-chiaro)', letterSpacing: '.08em' }}>
-          CONTIFY ANTIRICICLAGGIO
+          AR · ANTIRICICLAGGIO
         </div>
         {voci
           .filter((v) => !v.ruoli || v.ruoli.includes(sessione.utente.ruolo))
@@ -97,6 +99,7 @@ export default function App() {
 function Accesso({ onEntrato }: { onEntrato: (s: Sessione) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [mostraPassword, setMostraPassword] = useState(false);
   const [errore, setErrore] = useState('');
   const [inCorso, setInCorso] = useState(false);
 
@@ -114,32 +117,57 @@ function Accesso({ onEntrato }: { onEntrato: (s: Sessione) => void }) {
   }
 
   return (
-    <div className="accesso">
-      <form className="riquadro-accesso" onSubmit={entra}>
-        <img src="/logo-contify.png" alt="Contify" />
-        <h2 style={{ margin: '0 0 4px', color: 'var(--c-scuro)' }}>Contify Antiriciclaggio</h2>
-        <p className="aiuto" style={{ marginBottom: 20 }}>
-          Adempimenti del DLgs. 231/2007 per studi professionali.
-        </p>
-        <div className="campo">
-          <label>Email</label>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" required />
-        </div>
-        <div className="campo">
-          <label>Password</label>
+    <LayoutAuth
+      titolo="Accedi a Contify AR"
+      sottotitolo="AntiRiciclaggio — adempimenti del DLgs. 231/2007 per studi professionali"
+    >
+      <form onSubmit={entra} className="space-y-4">
+        <div>
+          <label className="label">Email</label>
           <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
+            className="input"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Inserisci il tuo indirizzo email"
+            autoFocus
             required
+            autoComplete="username"
           />
         </div>
-        <button className="azione" style={{ width: '100%' }} disabled={inCorso}>
-          {inCorso ? 'Verifica…' : 'Entra'}
+        <div>
+          <label className="label">Password</label>
+          <div className="relative">
+            <input
+              className="input pr-10"
+              type={mostraPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Inserisci la tua password"
+              required
+              autoComplete="current-password"
+            />
+            <button
+              type="button"
+              className="absolute inset-y-0 right-0 px-3 flex items-center text-ink-400 hover:text-ink-700 transition-colors"
+              onClick={() => setMostraPassword((v) => !v)}
+              aria-label={mostraPassword ? 'Nascondi password' : 'Mostra password'}
+              aria-pressed={mostraPassword}
+            >
+              <Icona nome="occhio" size={16} />
+            </button>
+          </div>
+        </div>
+        {errore && <div className="text-sm text-red-600 font-semibold">{errore}</div>}
+        <button className="btn btn-primary w-full justify-center py-2.5" disabled={inCorso}>
+          {inCorso ? 'Accesso in corso…' : <>Accedi <Icona nome="frecciaDestra" size={15} /></>}
         </button>
-        {errore && <div className="errore">{errore}</div>}
+        {/* Accettazione condizioni: quando le CGS di Contify AR saranno
+            approvate dallo studio legale, questa riga linkerà il documento. */}
+        <p className="text-[11px] text-ink-400 text-center pt-2">
+          Accedendo accetti le Condizioni Generali di Servizio di Contify AR.
+        </p>
       </form>
-    </div>
+    </LayoutAuth>
   );
 }
