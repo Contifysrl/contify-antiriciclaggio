@@ -9,6 +9,13 @@ export interface Env {
   ASSISTENZA_EMAIL?: string;
   MAIL_FROM?: string;
   APP_BASE_URL?: string;
+  /** '1' in locale: risposte VIES finte, ripetibili (mai in produzione). */
+  VIES_FIXTURES?: string;
+  /** '1' in locale: liste sanzioni finte, ripetibili (mai in produzione). */
+  SANZIONI_FIXTURES?: string;
+  URL_LISTA_UE?: string;
+  URL_LISTA_ONU?: string;
+  URL_LISTA_OFAC?: string;
 }
 
 export interface Utente {

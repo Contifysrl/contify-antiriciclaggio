@@ -8,6 +8,7 @@ import { Accesso, CambioPasswordObbligatorio, PasswordDimenticata, ResetPassword
 import { Autovalutazione, Cruscotto, Registro } from './pagine/Studio';
 import { Clienti, DettaglioFascicolo, Fascicoli } from './pagine/Fascicoli';
 import { Contante, Scadenzario, Sos } from './pagine/Presidi';
+import { Controlli } from './pagine/Controlli';
 import { Impostazioni } from './pagine/Impostazioni';
 import { Guida } from './pagine/Guida';
 
@@ -62,6 +63,7 @@ export default function App() {
     { id: 'fascicoli', testo: 'Fascicoli', icona: 'elenco' },
     { id: 'scadenzario', testo: 'Scadenzario', icona: 'orologio' },
     { id: 'contante', testo: 'Limiti al contante', icona: 'mano' },
+    { id: 'controlli', testo: 'Controlli automatici', icona: 'cerca' },
     { id: 'sos', testo: 'Segnalazioni', icona: 'avviso', ruoli: ['TITOLARE'] },
     { id: 'registro', testo: 'Registro accessi', icona: 'database' },
     { id: 'impostazioni', testo: 'Impostazioni', icona: 'ingranaggio' },
@@ -83,6 +85,7 @@ export default function App() {
       {pagina === 'fascicolo' && <DettaglioFascicolo id={parametri.get('id') ?? ''} vaiA={vaiA} />}
       {pagina === 'scadenzario' && <Scadenzario vaiA={vaiA} />}
       {pagina === 'contante' && <Contante />}
+      {pagina === 'controlli' && <Controlli vaiA={vaiA} />}
       {pagina === 'sos' && <Sos />}
       {pagina === 'registro' && <Registro />}
       {pagina === 'impostazioni' && <Impostazioni sessione={sessione} onSessioneAggiornata={setSessione} />}

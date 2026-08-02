@@ -10,6 +10,7 @@ import {
 } from '../api';
 import { ElencoVincoli, GruppoFattori, PiedeLegale, PillolaRischio, Riquadro, Tessera } from '../componenti';
 import { HelpLink } from '../components/ui';
+import { ImportClientiModal } from './ImportClienti';
 
 // ===========================================================================
 export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
@@ -17,9 +18,41 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
   const [nuovo, setNuovo] = useState(false);
   const [f, setF] = useState<any>({ tipo: 'SOCIETA_CAPITALI', paeseResidenza: 'IT' });
   const [errore, setErrore] = useState('');
+  const [importa, setImporta] = useState(false);
+  const [cercaInCorso, setCercaInCorso] = useState(false);
+  const [avvisiLookup, setAvvisiLookup] = useState<string[]>([]);
 
   const carica = () => api.get<any[]>('/clienti').then(setLista);
   useEffect(() => { carica(); }, []);
+
+  // AR-M7: compilazione dell'anagrafica dalla partita IVA (VIES).
+  const compilaDaPiva = async () => {
+    setErrore('');
+    setAvvisiLookup([]);
+    setCercaInCorso(true);
+    try {
+      const r = await api.get<any>(`/lookup/piva/${encodeURIComponent(f.partitaIva ?? '')}`);
+      if (r.esito === 'trovato') {
+        const nome: string = r.dati.ragioneSociale ?? '';
+        const tipo = /S\.r\.l\.|S\.p\.A\.|S\.c\./i.test(nome) ? 'SOCIETA_CAPITALI'
+          : /S\.a\.s\.|S\.n\.c\./i.test(nome) ? 'SOCIETA_PERSONE' : f.tipo;
+        setF({ ...f, denominazione: f.denominazione?.trim() ? f.denominazione : nome, tipo, paeseResidenza: 'IT' });
+        setAvvisiLookup(r.avvisi ?? []);
+      } else if (r.esito === 'partita_iva_non_valida') {
+        setErrore('La partita IVA non è formalmente valida: controlla le 11 cifre.');
+      } else if (r.esito === 'non_trovato') {
+        setErrore('Partita IVA non presente nell’archivio europeo (in Italia l’iscrizione al VIES è facoltativa): compila a mano.');
+      } else if (r.esito === 'limite_raggiunto') {
+        setErrore('Troppe ricerche in quest’ora: riprova più tardi.');
+      } else {
+        setErrore('Il servizio europeo non risponde in questo momento: riprova tra poco o compila a mano.');
+      }
+    } catch (e) {
+      setErrore((e as Error).message);
+    } finally {
+      setCercaInCorso(false);
+    }
+  };
 
   async function salva() {
     setErrore('');
@@ -41,7 +74,8 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
 
       <button className="azione" onClick={() => setNuovo(!nuovo)}>
         {nuovo ? 'Annulla' : 'Nuovo cliente'}
-      </button>
+      </button>{' '}
+      <button className="azione secondaria" onClick={() => setImporta(true)}>Importa da CSV</button>
 
       {nuovo && (
         <div className="scheda" style={{ marginTop: 14 }}>
@@ -67,7 +101,18 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
             </div>
             <div className="campo">
               <label>Partita IVA</label>
-              <input value={f.partitaIva ?? ''} onChange={(e) => setF({ ...f, partitaIva: e.target.value })} />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={f.partitaIva ?? ''} onChange={(e) => setF({ ...f, partitaIva: e.target.value })} style={{ flex: 1 }} />
+                <button
+                  type="button"
+                  className="azione secondaria"
+                  onClick={compilaDaPiva}
+                  disabled={cercaInCorso || !(f.partitaIva ?? '').trim()}
+                  title="Compila denominazione e natura giuridica dall'archivio IVA europeo (VIES)"
+                >
+                  {cercaInCorso ? 'Cerco…' : 'Compila dai registri'}
+                </button>
+              </div>
             </div>
             <div className="campo">
               <label>Paese di residenza o sede</label>
@@ -107,9 +152,18 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
               </>
             )}
           </div>
+          {avvisiLookup.length > 0 && (
+            <Riquadro tipo="avviso">
+              {avvisiLookup.map((a, i) => <div key={i}>{a}</div>)}
+            </Riquadro>
+          )}
           <button className="azione" onClick={salva} disabled={!f.denominazione}>Salva</button>
           {errore && <div className="errore">{errore}</div>}
         </div>
+      )}
+
+      {importa && (
+        <ImportClientiModal onChiudi={() => setImporta(false)} onImportati={() => { setImporta(false); carica(); }} />
       )}
 
       <div className="scheda" style={{ marginTop: 16 }}>

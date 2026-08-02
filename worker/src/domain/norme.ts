@@ -230,3 +230,83 @@ export function formattaData(iso: string): string {
   const [a, m, g] = iso.split('-');
   return `${g}.${m}.${a}`;
 }
+
+// ═══════════════════════════════════════════════════════════════
+// PAESI TERZI AD ALTO RISCHIO (AR-M7)
+//
+// Elenco della Commissione europea ex art. 9 direttiva (UE) 2015/849,
+// richiamato dall'art. 1 co. 2 lett. bb) DLgs. 231/2007: verso questi
+// paesi l'art. 24 co. 5 lett. a) impone l'adeguata verifica rafforzata.
+// Come le soglie, l'elenco è una serie temporale: la valutazione di un
+// fascicolo usa l'elenco vigente ALLA DATA della valutazione, e quando
+// l'elenco cambia il cruscotto segnala i clienti da rivalutare.
+// ═══════════════════════════════════════════════════════════════
+
+export interface SeriePaesiAltoRischio {
+  /** Data di applicazione, ISO. */
+  da: string;
+  /** Fine applicazione inclusa; null se vigente. */
+  a: string | null;
+  fonte: string;
+  /** Codice ISO 3166-1 alpha-2 → denominazione italiana. */
+  paesi: Record<string, string>;
+}
+
+export const PAESI_ALTO_RISCHIO: SeriePaesiAltoRischio[] = [
+  {
+    // Regolamento delegato (UE) 2025/1184 del 10 giugno 2025,
+    // applicabile dal 5 agosto 2025. 29 giurisdizioni.
+    da: '2025-08-05',
+    a: null,
+    fonte: 'Reg. delegato (UE) 2025/1184 (in G.U.U.E. 15.7.2025)',
+    paesi: {
+      AF: 'Afghanistan', DZ: 'Algeria', AO: 'Angola', BF: 'Burkina Faso',
+      CM: 'Camerun', CD: 'Repubblica Democratica del Congo', CI: "Costa d'Avorio",
+      HT: 'Haiti', IR: 'Iran', KE: 'Kenya', LA: 'Laos', LB: 'Libano',
+      ML: 'Mali', MC: 'Monaco', MZ: 'Mozambico', MM: 'Myanmar', NA: 'Namibia',
+      NP: 'Nepal', NG: 'Nigeria', KP: 'Corea del Nord', ZA: 'Sudafrica',
+      SS: 'Sudan del Sud', SY: 'Siria', TZ: 'Tanzania', TT: 'Trinidad e Tobago',
+      VU: 'Vanuatu', VE: 'Venezuela', VN: 'Vietnam', YE: 'Yemen',
+    },
+  },
+];
+
+/** Alias e grafie correnti → codice ISO, per il campo paese scritto a mano. */
+const ALIAS_PAESI: Record<string, string> = {};
+for (const serie of PAESI_ALTO_RISCHIO) {
+  for (const [codice, nome] of Object.entries(serie.paesi)) {
+    ALIAS_PAESI[nome.toUpperCase()] = codice;
+  }
+}
+Object.assign(ALIAS_PAESI, {
+  'NORTH KOREA': 'KP', 'COREA DEL NORD (RPDC)': 'KP', 'RPDC': 'KP', 'DPRK': 'KP',
+  'BIRMANIA': 'MM', 'BURMA': 'MM', 'CONGO RD': 'CD', 'RD CONGO': 'CD',
+  'IVORY COAST': 'CI', "COTE D'IVOIRE": 'CI', 'SOUTH AFRICA': 'ZA',
+  'SOUTH SUDAN': 'SS', 'LEBANON': 'LB', 'SYRIA': 'SY', 'PRINCIPATO DI MONACO': 'MC',
+});
+
+/** Normalizza il paese scritto nel gestionale (codice ISO o nome) in ISO2, se riconosciuto. */
+export function codicePaese(input: string | null | undefined): string | null {
+  const p = (input ?? '').trim().toUpperCase();
+  if (!p) return null;
+  if (/^[A-Z]{2}$/.test(p)) return p;
+  return ALIAS_PAESI[p] ?? null;
+}
+
+export interface EsitoPaeseAltoRischio {
+  altoRischio: boolean;
+  paese: string | null;
+  nomePaese: string | null;
+  fonte: string | null;
+  vigenteDal: string | null;
+}
+
+/** Il paese è nell'elenco UE vigente alla data indicata? */
+export function paeseAltoRischio(paese: string | null | undefined, data: string): EsitoPaeseAltoRischio {
+  const codice = codicePaese(paese);
+  const nulla: EsitoPaeseAltoRischio = { altoRischio: false, paese: codice, nomePaese: null, fonte: null, vigenteDal: null };
+  if (!codice) return nulla;
+  const serie = PAESI_ALTO_RISCHIO.find((s) => data >= s.da && (s.a === null || data <= s.a));
+  if (!serie || !(codice in serie.paesi)) return nulla;
+  return { altoRischio: true, paese: codice, nomePaese: serie.paesi[codice], fonte: serie.fonte, vigenteDal: serie.da };
+}

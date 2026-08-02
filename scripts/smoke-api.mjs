@@ -367,6 +367,62 @@ console.log('\n== Logo dello studio e ciclo commerciale (AR-M6) ==');
   verifica('senza logo il verbale torna alla sola intestazione Contify', !('word/media/logo-studio.png' in unzipSync(doc2.bytes)));
 }
 
+console.log('\n== Automatismi: P.IVA, import, screening sanzioni (AR-M7) ==');
+{
+  // Compilazione da partita IVA (fixtures VIES: richiede VIES_FIXTURES=1 in .dev.vars).
+  const r = await req('GET', '/lookup/piva/04639770280');
+  verifica('lookup P.IVA: trovato sul VIES (fixture)', r.stato === 200 && r.dati?.esito === 'trovato', r.dati);
+  verifica('la denominazione arriva ripulita', r.dati?.dati?.ragioneSociale === 'Poliambulatorio San Martino S.r.l.', r.dati?.dati);
+  const r2 = await req('GET', '/lookup/piva/12345678901');
+  verifica('P.IVA con checksum errato respinta senza uscire in rete', r2.dati?.esito === 'partita_iva_non_valida', r2.dati);
+  const r3 = await req('GET', '/lookup/piva/00347320277');
+  verifica('P.IVA valida ma non iscritta: esito non_trovato', r3.dati?.esito === 'non_trovato', r3.dati);
+}
+{
+  // Import clienti da CSV: valida, scarta e riporta i motivi.
+  const r = await req('POST', '/clienti/import', {
+    righe: [
+      { denominazione: 'Import Prova S.r.l.', tipo: 'SOCIETA_CAPITALI', partitaIva: '04639770280' },
+      { denominazione: '', tipo: 'ALTRO' },
+      { denominazione: 'Tipo Sbagliato', tipo: 'SPAZIALE' },
+    ],
+  });
+  verifica('import CSV: 1 creato, 2 scartate con motivo', r.stato === 200 && r.dati?.creati === 1 && r.dati?.scartate?.length === 2, r.dati);
+  const r2 = await req('POST', '/clienti/import', { righe: [{ denominazione: 'Doppione', partitaIva: '04639770280', tipo: 'ALTRO' }] });
+  verifica('la P.IVA già presente non si duplica', r2.dati?.creati === 0 && r2.dati?.scartate?.length === 1, r2.dati);
+  const log = await req('GET', '/audit');
+  verifica('l’import è tracciato nel registro', (log.dati ?? []).some((v) => v.azione === 'IMPORT_CLIENTI'));
+}
+let idEsitoScreening;
+{
+  // Screening sanzioni (fixtures: richiede SANZIONI_FIXTURES=1 in .dev.vars).
+  await req('POST', '/clienti', { tipo: 'PERSONA_FISICA', denominazione: 'Mario Rossi Collaudo Sanzioni' });
+  const r = await req('POST', '/screening/esegui');
+  verifica('screening manuale eseguito', r.stato === 200 && (r.dati?.soggetti ?? 0) > 0, r.dati);
+  verifica('la corrispondenza con la lista (fixture ONU) viene trovata', (r.dati?.nuoveCorrispondenze ?? 0) >= 1, r.dati);
+
+  const r2 = await req('POST', '/screening/esegui');
+  verifica('rieseguire lo screening non duplica le corrispondenze', r2.dati?.nuoveCorrispondenze === 0, r2.dati);
+
+  const elenco = await req('GET', '/screening');
+  const esito = (elenco.dati?.esiti ?? []).find((e) => e.stato === 'DA_ESAMINARE');
+  verifica('l’esito compare da esaminare con fonte e punteggio', Boolean(esito) && esito.fonte === 'ONU' && esito.punteggio > 0.5, esito);
+  verifica('il diario delle corse è alimentato', Boolean(elenco.dati?.ultimaCorsa), elenco.dati?.ultimaCorsa);
+  idEsitoScreening = esito?.id;
+
+  const cru = await req('GET', '/cruscotto');
+  verifica('il cruscotto segnala le corrispondenze da esaminare', (cru.dati?.screening?.daEsaminare ?? 0) >= 1, cru.dati?.screening);
+}
+{
+  // La decisione va motivata e resta tracciata.
+  const rNo = await req('POST', `/screening/${idEsitoScreening}`, { stato: 'ESCLUSO', nota: '' });
+  verifica('esclusione senza motivazione respinta', rNo.stato === 400, rNo.dati);
+  const r = await req('POST', `/screening/${idEsitoScreening}`, { stato: 'ESCLUSO', nota: 'Omonimia: data di nascita diversa, CF verificato.' });
+  verifica('esclusione motivata registrata', r.stato === 200, r.dati);
+  const log = await req('GET', '/audit');
+  verifica('la decisione è nel registro', (log.dati ?? []).some((v) => v.azione === 'VALUTA_SCREENING'));
+}
+
 console.log('\n== Backup, ripristino ed eliminazione archivio (AR-M4) ==');
 let chiaveBackupManuale;
 {

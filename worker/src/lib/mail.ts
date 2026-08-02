@@ -124,3 +124,53 @@ export async function inviaEmailAvvisoCanone(
     amministrano sul database (tenants.stato, tenants.data_scadenza_canone).</p>`);
   return invia(env, destinatario, `${PRODOTTO} — canone ${dati.studio}: ${quando}`, html);
 }
+
+/**
+ * Riepilogo settimanale dello scadenzario (AR-M7): parte il lunedì
+ * notte verso ogni titolare attivo dello studio. Niente dati di
+ * clienti nel corpo oltre alla denominazione: il dettaglio sta
+ * nell'applicazione.
+ */
+export async function inviaEmailScadenzario(
+  env: Env,
+  dati: {
+    destinatario: string;
+    nome: string;
+    studio: string;
+    scadute: Array<{ cliente: string; codice: string; descrizione?: string }>;
+    inScadenza: Array<{ cliente: string; codice: string; giorniResidui?: number }>;
+    screeningDaEsaminare: number;
+    paesiDaRivalutare: number;
+  },
+): Promise<boolean> {
+  const rigaElenco = (testo: string) => `<li style="margin-bottom:4px">${escapeHtml(testo)}</li>`;
+  const MAX_RIGHE = 8;
+
+  const blocchi: string[] = [];
+  if (dati.scadute.length) {
+    blocchi.push(`<p style="font-size:14px;color:#b91c1c;margin-bottom:6px"><strong>${dati.scadute.length} adempimenti scaduti</strong></p>
+      <ul style="font-size:13px;color:#374151;margin-top:0">${dati.scadute.slice(0, MAX_RIGHE).map((v) => rigaElenco(`${v.cliente} — fascicolo ${v.codice}`)).join('')}
+      ${dati.scadute.length > MAX_RIGHE ? rigaElenco(`… e altri ${dati.scadute.length - MAX_RIGHE}`) : ''}</ul>`);
+  }
+  if (dati.inScadenza.length) {
+    blocchi.push(`<p style="font-size:14px;color:#92400e;margin-bottom:6px"><strong>${dati.inScadenza.length} in scadenza nei prossimi 30 giorni</strong></p>
+      <ul style="font-size:13px;color:#374151;margin-top:0">${dati.inScadenza.slice(0, MAX_RIGHE).map((v) => rigaElenco(`${v.cliente} — fascicolo ${v.codice}${v.giorniResidui !== undefined ? ` (${v.giorniResidui} giorni)` : ''}`)).join('')}
+      ${dati.inScadenza.length > MAX_RIGHE ? rigaElenco(`… e altri ${dati.inScadenza.length - MAX_RIGHE}`) : ''}</ul>`);
+  }
+  if (dati.screeningDaEsaminare > 0) {
+    blocchi.push(`<p style="font-size:14px;color:#92400e"><strong>${dati.screeningDaEsaminare}</strong> corrispondenze dello screening sanzioni da esaminare.</p>`);
+  }
+  if (dati.paesiDaRivalutare > 0) {
+    blocchi.push(`<p style="font-size:14px;color:#92400e"><strong>${dati.paesiDaRivalutare}</strong> clienti in paesi terzi ad alto rischio da rivalutare.</p>`);
+  }
+
+  const html = involucro(`
+    <p style="font-size:15px;color:#111827">Buongiorno ${escapeHtml(dati.nome.split(' ')[0])},<br>
+    ecco il punto della settimana per <strong>${escapeHtml(dati.studio)}</strong>.</p>
+    ${blocchi.join('')}
+    <p style="margin:28px 0;text-align:center">
+      <a href="${urlApp(env)}/#scadenzario" style="background:#048587;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 24px;border-radius:8px;display:inline-block">Apri lo scadenzario</a>
+    </p>
+    <p style="font-size:12px;color:#9ca3af">Ricevi questo riepilogo ogni lunedì quando c'è qualcosa da fare.</p>`);
+  return invia(env, dati.destinatario, `${PRODOTTO} — ${dati.scadute.length ? `${dati.scadute.length} adempimenti scaduti` : 'il punto della settimana'}`, html);
+}

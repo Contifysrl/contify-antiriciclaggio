@@ -76,6 +76,10 @@ export const TABELLE_ARCHIVIO = [
   'segnalazioni_sospette',
   'astensioni',
   'formazione',
+  // AR-M7: gli esiti dello screening referenziano clienti e titolari
+  // effettivi → dopo di loro; le corse sono un diario indipendente.
+  'screening_esiti',
+  'screening_corse',
 ] as const;
 
 /** Ordine di eliminazione: figli prima dei padri. */
@@ -107,7 +111,7 @@ export type DumpResult = { sql: string; tabelle: number; righe: number };
  * un ripristino si rifà login, che è anche la cosa giusta), e la loro
  * assenza evita di custodire nel backup materiale di autenticazione.
  */
-const TABELLE_NON_DUMP = ['sessioni', 'password_reset_token'];
+const TABELLE_NON_DUMP = ['sessioni', 'password_reset_token', 'lookup_piva_cache'];
 const NON_DUMP_SQL = TABELLE_NON_DUMP.map((t) => `'${t}'`).join(', ');
 
 export async function buildDump(db: D1Database): Promise<DumpResult> {

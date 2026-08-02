@@ -23,11 +23,14 @@ import {
   soloTitolare,
 } from './lib/auth';
 import { cifra, decifra, generaPasswordTemporanea, hashPassword, nuovoId, nuovoToken, sha256Hex, verificaPassword } from './lib/crypto';
-import { inviaEmailAssistenza, inviaEmailAvvisoCanone, inviaEmailBenvenuto, inviaEmailResetPassword, urlApp } from './lib/mail';
+import { inviaEmailAssistenza, inviaEmailAvvisoCanone, inviaEmailBenvenuto, inviaEmailResetPassword, inviaEmailScadenzario, urlApp } from './lib/mail';
 import { scriviAudit, verificaCatenaAudit } from './lib/audit';
 import { backupSchedulato, chiaveDelTenant, prefissoTenant, runBackupTenant, type TipoBackupTenant } from './lib/backup';
 import { eseguiEliminaArchivio, eseguiRipristino, RipristinoError } from './lib/ripristino';
 import { SOGLIE_AVVISO_CANONE, bloccoPerStato, giorniAllaScadenza, statoValido } from './lib/licenza';
+import { cercaAnagrafica, limiteSuperato } from './lib/lookup';
+import { aggiornaListeSanzioni, caricaListe, eseguiScreeningTenant, listeDaAggiornare, screeningSchedulato } from './lib/sanzioni';
+import { normalizzaPiva } from './lib/lookup/piva';
 import { getCookie } from 'hono/cookie';
 
 import { CNDCEC_2025 } from './domain/rulesets/cndcec-2025';
@@ -35,7 +38,7 @@ import { CATALOGO_PRESTAZIONI_2025, prestazioneObbligatoria, trovaPrestazione } 
 import { calcolaAutovalutazione, calcolaProfiloCliente, ErroreDominio } from './domain/risk';
 import { analizzaTitolaritaEffettiva } from './domain/titolare-effettivo';
 import { calcolaScadenzeFascicolo, scadenzaComunicazioneMef, statoScadenze } from './domain/scadenze';
-import { SOGLIE, TERMINI, aggiungiAnni, verificaContante } from './domain/norme';
+import { SOGLIE, TERMINI, aggiungiAnni, paeseAltoRischio, verificaContante } from './domain/norme';
 import { AVVISO_INDICATORI, INDICATORI_UIF_2023 } from './domain/indicatori-uif';
 import { SUB_INDICI_UIF_2023 } from './domain/sub-indici-uif';
 import { costruisciDocx, rispostaDocx } from './lib/docx';
@@ -558,6 +561,183 @@ api.post('/backup/elimina-archivio', soloTitolare, async (c) => {
     console.error('ELIMINAZIONE ARCHIVIO FALLITA:', e);
     return c.json({ errore: 'Eliminazione non riuscita: l\'archivio non è stato toccato. Riprova o contatta l\'assistenza.' }, 500);
   }
+});
+
+// ===========================================================================
+// COMPILAZIONE ANAGRAFICA DA PARTITA IVA (AR-M7, dal VIES)
+// GET, ma riservata a chi può scrivere: a un profilo di sola lettura la
+// ricerca non serve e consumerebbe soltanto il tetto orario.
+// ===========================================================================
+
+api.get('/lookup/piva/:piva', puoScrivere, async (c) => {
+  const u = c.get('utente');
+  if (await limiteSuperato(c.env.DB, u.tenant_id)) {
+    return c.json({ esito: 'limite_raggiunto', fonte: null, affidabilita: null, dati: {}, avvisi: [] });
+  }
+  const risposta = await cercaAnagrafica(c.env, c.req.param('piva') ?? '');
+  // Tracciata sempre: alimenta il registro ed è il contatore del tetto orario.
+  await scriviAudit(c.env.DB, {
+    tenantId: u.tenant_id, utenteId: u.id, azione: 'LOOKUP_ANAGRAFICA', entita: 'clienti',
+    dettaglio: { esito: risposta.esito, fonte: risposta.fonte }, ip: c.get('ip'),
+  });
+  return c.json(risposta);
+});
+
+// ===========================================================================
+// CONTROLLI AUTOMATICI (AR-M7): screening sanzioni + paesi ad alto rischio
+// ===========================================================================
+
+/** Clienti in paesi oggi ad alto rischio senza una valutazione firmata dopo l'entrata in lista. */
+async function clientiPaesiDaRivalutare(db: D1Database, tenantId: string) {
+  const { results } = await db.prepare(
+    `SELECT c.id, c.denominazione, c.paese_residenza, MAX(v.firmata_il) AS ultima_firma
+     FROM clienti c
+     LEFT JOIN fascicoli f ON f.cliente_id = c.id AND f.stato != 'CESSATO'
+     LEFT JOIN valutazioni_rischio v ON v.fascicolo_id = f.id AND v.firmata_il IS NOT NULL
+     WHERE c.tenant_id = ? AND c.attivo = 1
+     GROUP BY c.id`,
+  ).bind(tenantId).all<any>();
+
+  const adesso = oggi();
+  return (results ?? []).flatMap((c) => {
+    const esito = paeseAltoRischio(c.paese_residenza, adesso);
+    if (!esito.altoRischio) return [];
+    const daRivalutare = !c.ultima_firma || c.ultima_firma.slice(0, 10) < esito.vigenteDal!;
+    return daRivalutare
+      ? [{ clienteId: c.id, denominazione: c.denominazione, paese: esito.nomePaese, fonte: esito.fonte, vigenteDal: esito.vigenteDal, ultimaValutazione: c.ultima_firma }]
+      : [];
+  });
+}
+
+api.get('/screening', async (c) => {
+  const tenantId = c.get('tenantId');
+  const [esiti, corsa, liste] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT e.*, u.nome AS deciso_da_nome FROM screening_esiti e
+       LEFT JOIN utenti u ON u.id = e.deciso_da
+       WHERE e.tenant_id = ? ORDER BY e.stato = 'DA_ESAMINARE' DESC, e.creato_il DESC LIMIT 200`,
+    ).bind(tenantId).all<any>(),
+    c.env.DB.prepare('SELECT * FROM screening_corse WHERE tenant_id = ? ORDER BY id DESC LIMIT 1').bind(tenantId).first<any>(),
+    caricaListe(c.env),
+  ]);
+  return c.json({
+    esiti: esiti.results ?? [],
+    ultimaCorsa: corsa ?? null,
+    liste: liste ? { aggiornatoIl: liste.aggiornatoIl, fonti: liste.fonti, voci: liste.voci.length } : null,
+    paesiDaRivalutare: await clientiPaesiDaRivalutare(c.env.DB, tenantId),
+  });
+});
+
+api.post('/screening/esegui', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  if (await listeDaAggiornare(c.env)) await aggiornaListeSanzioni(c.env);
+  const liste = await caricaListe(c.env);
+  if (!liste || !liste.voci.length) {
+    return c.json({ errore: 'Liste sanzioni non ancora disponibili: riprova tra qualche minuto.' }, 503);
+  }
+  const r = await eseguiScreeningTenant(c.env, tenantId, liste);
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: c.get('utente').id, azione: 'SCREENING_MANUALE',
+    dettaglio: { soggetti: r.soggetti, nuoveCorrispondenze: r.nuoveCorrispondenze }, ip: c.get('ip'),
+  });
+  return c.json(r);
+});
+
+api.post('/screening/:id', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const stato = String(b.stato ?? '');
+  const nota = String(b.nota ?? '').trim();
+  if (!['ESCLUSO', 'CONFERMATO', 'DA_ESAMINARE'].includes(stato)) {
+    return c.json({ errore: 'Stato non valido' }, 400);
+  }
+  // La decisione va motivata: "escluso" senza il perché non si difende in ispezione.
+  if (stato !== 'DA_ESAMINARE' && !nota) {
+    return c.json({ errore: 'Motiva la decisione: la nota è ciò che si esibisce in caso di controllo' }, 400);
+  }
+  const r = await c.env.DB.prepare(
+    `UPDATE screening_esiti SET stato = ?, nota = ?, deciso_da = ?, deciso_il = datetime('now')
+     WHERE id = ? AND tenant_id = ?`,
+  ).bind(stato, nota || null, u.id, c.req.param('id'), tenantId).run();
+  if (!r.meta.changes) return c.json({ errore: 'Corrispondenza non trovata' }, 404);
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: u.id, azione: 'VALUTA_SCREENING', entita: 'screening_esiti',
+    entitaId: c.req.param('id'), dettaglio: { stato, nota }, ip: c.get('ip'),
+  });
+  return c.json({ ok: true });
+});
+
+// ===========================================================================
+// IMPORT CLIENTI DA CSV (AR-M7)
+// Il parsing e la mappatura colonne stanno nel browser: qui arrivano
+// righe già strutturate, si valida, si scartano i duplicati e si
+// registra tutto. Tetto per chiamata: 500 righe.
+// ===========================================================================
+
+api.post('/clienti/import', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const righe: any[] = Array.isArray(b.righe) ? b.righe : [];
+  if (!righe.length) return c.json({ errore: 'Nessuna riga da importare' }, 400);
+  if (righe.length > 500) return c.json({ errore: 'Massimo 500 righe per volta' }, 400);
+
+  const TIPI = ['PERSONA_FISICA', 'SOCIETA_CAPITALI', 'SOCIETA_PERSONE', 'ENTE_NON_PROFIT', 'TRUST', 'ALTRO'];
+  const esistenti = (
+    await c.env.DB.prepare('SELECT denominazione, codice_fiscale, partita_iva FROM clienti WHERE tenant_id = ?').bind(tenantId).all<any>()
+  ).results ?? [];
+  const giaCf = new Set(esistenti.map((e) => (e.codice_fiscale ?? '').toUpperCase()).filter(Boolean));
+  const giaPiva = new Set(esistenti.map((e) => (e.partita_iva ?? '')).filter(Boolean));
+  const giaNome = new Set(esistenti.map((e) => e.denominazione.trim().toLowerCase()));
+
+  let creati = 0;
+  const scartate: Array<{ riga: number; motivo: string }> = [];
+
+  for (let i = 0; i < righe.length; i++) {
+    const r = righe[i];
+    const denominazione = String(r.denominazione ?? '').trim();
+    const tipo = String(r.tipo ?? 'ALTRO').trim().toUpperCase();
+    const cf = String(r.codiceFiscale ?? '').trim().toUpperCase() || null;
+    let piva = String(r.partitaIva ?? '').trim() || null;
+    if (piva) {
+      const n = normalizzaPiva(piva);
+      if (n.valida) piva = n.piva;   // scritta male: la si tiene com'è, si corregge poi
+    }
+
+    if (!denominazione) { scartate.push({ riga: i + 1, motivo: 'denominazione mancante' }); continue; }
+    if (!TIPI.includes(tipo)) { scartate.push({ riga: i + 1, motivo: `tipo non riconosciuto: ${r.tipo}` }); continue; }
+    if (cf && giaCf.has(cf)) { scartate.push({ riga: i + 1, motivo: `codice fiscale già presente (${cf})` }); continue; }
+    if (piva && giaPiva.has(piva)) { scartate.push({ riga: i + 1, motivo: `partita IVA già presente (${piva})` }); continue; }
+    if (!cf && !piva && giaNome.has(denominazione.toLowerCase())) {
+      scartate.push({ riga: i + 1, motivo: 'denominazione già presente (senza CF/P.IVA per distinguere)' });
+      continue;
+    }
+
+    await c.env.DB.prepare(
+      `INSERT INTO clienti (id, tenant_id, tipo, denominazione, codice_fiscale, partita_iva,
+        paese_residenza, attivita_prevalente, ateco, pep, note, creato_da)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).bind(
+      nuovoId('cli'), tenantId, tipo, denominazione, cf, piva,
+      String(r.paeseResidenza ?? 'IT').trim().toUpperCase() || 'IT',
+      String(r.attivitaPrevalente ?? '').trim() || null,
+      String(r.ateco ?? '').trim() || null,
+      r.pep === true || /^(s[iì]|x|1|true|y|yes)$/i.test(String(r.pep ?? '')) ? 1 : 0,
+      String(r.note ?? '').trim() || null,
+      u.id,
+    ).run();
+    if (cf) giaCf.add(cf);
+    if (piva) giaPiva.add(piva);
+    giaNome.add(denominazione.toLowerCase());
+    creati++;
+  }
+
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: u.id, azione: 'IMPORT_CLIENTI',
+    dettaglio: { righe: righe.length, creati, scartate: scartate.length }, ip: c.get('ip'),
+  });
+  return c.json({ creati, scartate });
 });
 
 // ===========================================================================
@@ -1187,9 +1367,9 @@ api.get('/documenti/:id', async (c) => {
 // SCADENZARIO E CRUSCOTTO
 // ===========================================================================
 
-api.get('/scadenzario', async (c) => {
-  const tenantId = c.get('tenantId');
-  const { results } = await c.env.DB.prepare(
+/** Scadenzario del tenant: usato dall'endpoint e dall'email settimanale (AR-M7). */
+async function calcolaScadenzario(db: D1Database, tenantId: string) {
+  const { results } = await db.prepare(
     `SELECT f.id, f.codice, f.prestazione_codice, f.data_conferimento, f.data_cessazione, f.ultimo_controllo, cl.denominazione AS cliente,
             v.classe, v.controllo_costante_mesi, v.esente_verifica
      FROM fascicoli f JOIN clienti cl ON cl.id = f.cliente_id
@@ -1215,11 +1395,15 @@ api.get('/scadenzario', async (c) => {
   );
 
   voci.sort((a, b) => a.giorniResidui - b.giorniResidui);
-  return c.json({
+  return {
     scadute: voci.filter((v) => v.stato === 'SCADUTA'),
     inScadenza: voci.filter((v) => v.stato === 'IN_SCADENZA'),
     future: voci.filter((v) => v.stato === 'FUTURA'),
-  });
+  };
+}
+
+api.get('/scadenzario', async (c) => {
+  return c.json(await calcolaScadenzario(c.env.DB, c.get('tenantId')));
 });
 
 api.get('/cruscotto', async (c) => {
@@ -1242,7 +1426,19 @@ api.get('/cruscotto', async (c) => {
      AND v.id = (SELECT id FROM valutazioni_rischio WHERE fascicolo_id = v.fascicolo_id ORDER BY versione DESC LIMIT 1)`,
   ).bind(tenantId).first<{ n: number }>();
 
+  // Controlli automatici (AR-M7): esiti da esaminare e ultima corsa.
+  const [screeningDaEsaminare, ultimaCorsa] = await Promise.all([
+    c.env.DB.prepare("SELECT COUNT(*) AS n FROM screening_esiti WHERE tenant_id = ? AND stato = 'DA_ESAMINARE'").bind(tenantId).first<{ n: number }>(),
+    c.env.DB.prepare('SELECT eseguito_il, soggetti FROM screening_corse WHERE tenant_id = ? ORDER BY id DESC LIMIT 1').bind(tenantId).first<any>(),
+  ]);
+  const paesiDaRivalutare = await clientiPaesiDaRivalutare(c.env.DB, tenantId);
+
   return c.json({
+    screening: {
+      daEsaminare: screeningDaEsaminare?.n ?? 0,
+      ultimaCorsa: ultimaCorsa ?? null,
+      paesiDaRivalutare: paesiDaRivalutare.length,
+    },
     clienti: clienti?.n ?? 0,
     fascicoli: fascicoli?.n ?? 0,
     perClasse: perClasse.results ?? [],
@@ -1503,18 +1699,67 @@ export default {
   },
 };
 
-/** Cron notturno: backup (piattaforma + studi) e avvisi canone a Contify. */
+/**
+ * Cron notturno: avvisi canone, screening sanzioni (AR-M7), riepilogo
+ * settimanale del lunedì e backup. Ogni blocco è isolato — un errore in
+ * uno non azzittisce gli altri — ma il fallimento del BACKUP deve
+ * risultare failed in dashboard, quindi resta ultimo e senza catch.
+ */
 async function lavoroNotturno(env: Env): Promise<void> {
-  // Gli avvisi prima del backup: pochi millisecondi, e un errore nel
-  // backup non deve azzittire i promemoria commerciali (né viceversa:
-  // ogni blocco ha il suo catch, ma il fallimento del backup DEVE
-  // risultare failed in dashboard).
   try {
     await avvisiCanone(env);
   } catch (e) {
     console.error('avvisi canone falliti:', e);
   }
+  try {
+    await screeningSchedulato(env);
+  } catch (e) {
+    console.error('screening sanzioni fallito:', e);
+  }
+  try {
+    // Il riepilogo parte nella notte fra domenica e lunedì.
+    if (new Date().getUTCDay() === 1) await riepiloghiSettimanali(env);
+  } catch (e) {
+    console.error('riepiloghi settimanali falliti:', e);
+  }
   await backupSchedulato(env);
+}
+
+/** Email del lunedì ai titolari: solo quando c'è davvero qualcosa da fare. */
+async function riepiloghiSettimanali(env: Env): Promise<void> {
+  const tenants = (
+    await env.DB.prepare("SELECT id, denominazione, stato FROM tenants WHERE stato IS NULL OR stato = 'attivo'").all<any>()
+  ).results ?? [];
+
+  for (const t of tenants) {
+    try {
+      const [scadenzario, screening, paesi] = await Promise.all([
+        calcolaScadenzario(env.DB, t.id),
+        env.DB.prepare("SELECT COUNT(*) AS n FROM screening_esiti WHERE tenant_id = ? AND stato = 'DA_ESAMINARE'").bind(t.id).first<{ n: number }>(),
+        clientiPaesiDaRivalutare(env.DB, t.id),
+      ]);
+      const daFare = scadenzario.scadute.length + scadenzario.inScadenza.length + (screening?.n ?? 0) + paesi.length;
+      if (!daFare) continue;   // niente da fare, niente rumore
+
+      const titolari = (
+        await env.DB.prepare("SELECT nome, email FROM utenti WHERE tenant_id = ? AND ruolo = 'TITOLARE' AND attivo = 1").bind(t.id).all<any>()
+      ).results ?? [];
+      for (const dest of titolari) {
+        const inviata = await inviaEmailScadenzario(env, {
+          destinatario: dest.email,
+          nome: dest.nome,
+          studio: t.denominazione,
+          scadute: scadenzario.scadute,
+          inScadenza: scadenzario.inScadenza,
+          screeningDaEsaminare: screening?.n ?? 0,
+          paesiDaRivalutare: paesi.length,
+        });
+        console.log(`riepilogo settimanale ${t.denominazione} → ${dest.email}: ${inviata ? 'inviato' : 'NON inviato'}`);
+      }
+    } catch (e) {
+      console.error(`riepilogo settimanale ${t.id} fallito:`, e);
+    }
+  }
 }
 
 async function avvisiCanone(env: Env): Promise<void> {

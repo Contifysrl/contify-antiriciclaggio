@@ -268,6 +268,38 @@ const SEZIONI: Sezione[] = [
     ),
   },
   {
+    id: 'controlli',
+    titolo: 'Controlli automatici',
+    icona: 'cerca',
+    corpo: (
+      <>
+        <P>
+          Ogni notte Contify AR confronta <K>tutti i clienti e i titolari effettivi</K> dello
+          studio con le liste sanzioni pubbliche — <K>UE</K> (sanzioni finanziarie), <K>ONU</K>{' '}
+          (Consiglio di Sicurezza) e <K>OFAC</K> (Tesoro USA) — e i paesi delle anagrafiche con
+          l'elenco europeo dei <K>paesi terzi ad alto rischio</K>. È il controllo costante che
+          diventa un controllo vero: gira da solo, non quando ci si ricorda.
+        </P>
+        <Punti punti={[
+          <>Una <K>corrispondenza</K> è un fatto da esaminare, quasi sempre un'omonimia: la esamini con i dati del fascicolo e registri la decisione (<K>esclusa</K> o <K>confermata</K>) con la motivazione. Decisione e motivazione finiscono nel registro.</>,
+          <>Una corrispondenza <K>confermata</K> impone astensione e congelamento e va valutata la segnalazione alla UIF.</>,
+          <>Se un paese entra nell'elenco UE dopo la tua ultima valutazione firmata, il cliente compare tra quelli <K>da rivalutare</K> <Norma>art. 24 co. 5 lett. a)</Norma>.</>,
+          <>Il diario delle corse (quando, su quante anagrafiche, con quali liste) documenta il presidio in caso di ispezione.</>,
+        ]} />
+        <Nota>
+          Nella pagina <K>Clienti</K> trovi anche due acceleratori: <Btn>Compila dai registri</Btn>{' '}
+          (denominazione e natura giuridica dalla partita IVA, archivio IVA europeo) e{' '}
+          <Btn>Importa da CSV</Btn> per portare dentro l'elenco clienti dal gestionale in un colpo solo.
+        </Nota>
+        <P>
+          Ogni lunedì, se c'è qualcosa da fare, i titolari ricevono via email il{' '}
+          <K>punto della settimana</K>: adempimenti scaduti e in scadenza, corrispondenze da
+          esaminare, clienti da rivalutare.
+        </P>
+      </>
+    ),
+  },
+  {
     id: 'sos',
     titolo: 'Segnalazioni (SOS)',
     icona: 'avviso',

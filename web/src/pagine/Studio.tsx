@@ -41,6 +41,20 @@ export function Cruscotto({ vaiA }: { vaiA: (p: string) => void }) {
         />
       </div>
 
+      {d.screening && (d.screening.daEsaminare > 0 || d.screening.paesiDaRivalutare > 0) && (
+        <Riquadro tipo="avviso">
+          <strong>Controlli automatici:</strong>{' '}
+          {d.screening.daEsaminare > 0 && <>{d.screening.daEsaminare} corrispondenze con le liste sanzioni da esaminare. </>}
+          {d.screening.paesiDaRivalutare > 0 && <>{d.screening.paesiDaRivalutare} clienti in paesi terzi ad alto rischio da rivalutare. </>}
+          <button className="azione" style={{ marginTop: 10 }} onClick={() => vaiA('controlli')}>Apri i controlli</button>
+        </Riquadro>
+      )}
+      {d.screening && d.screening.daEsaminare === 0 && d.screening.paesiDaRivalutare === 0 && d.screening.ultimaCorsa && (
+        <p className="occhiello" style={{ marginTop: 8 }}>
+          Screening sanzioni: nessuna corrispondenza da esaminare (ultimo controllo su {d.screening.ultimaCorsa.soggetti} anagrafiche).
+        </p>
+      )}
+
       <h2>Autovalutazione dello studio</h2>
       {d.autovalutazione ? (
         <div className="scheda">
