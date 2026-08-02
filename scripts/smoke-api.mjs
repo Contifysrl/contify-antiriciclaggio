@@ -423,6 +423,77 @@ let idEsitoScreening;
   verifica('la decisione è nel registro', (log.dati ?? []).some((v) => v.azione === 'VALUTA_SCREENING'));
 }
 
+console.log('\n== Verifica a distanza e registro TE (AR-M8) ==');
+let tokenVerifica;
+let idRichiestaVerifica;
+{
+  // Lo studio crea il collegamento per il cliente.
+  const r = await req('POST', `/fascicoli/${idFascicolo}/verifica-remota`, { richieste: { titolari: true } });
+  verifica('richiesta di verifica a distanza creata', r.stato === 201 && typeof r.dati?.url === 'string' && r.dati.url.includes('#verifica?token='), r.dati);
+  idRichiestaVerifica = r.dati?.id;
+  tokenVerifica = (r.dati?.url ?? '').split('token=')[1];
+
+  const elenco = await req('GET', `/fascicoli/${idFascicolo}/verifiche-remote`);
+  verifica('la richiesta è in elenco, in attesa del cliente', elenco.dati?.[0]?.stato === 'INVIATA', elenco.dati);
+}
+{
+  // Il CLIENTE (nessuna sessione): legge la richiesta e la completa.
+  const rInfo = await fetch(`${BASE}/api/pubblico/verifica/${tokenVerifica}`);
+  const info = await rInfo.json();
+  verifica('pagina pubblica: la richiesta si apre col solo token', rInfo.status === 200 && info?.studio === 'Studio Commercialista Demo', info);
+  verifica('la pagina pubblica non espone dati oltre il necessario', !JSON.stringify(info).includes('password') && !JSON.stringify(info).includes('hash'));
+
+  const rNoToken = await fetch(`${BASE}/api/pubblico/verifica/token-inventato-abbastanza-lungo`);
+  verifica('token inventato respinto', rNoToken.status === 404);
+
+  const form = new FormData();
+  form.set('dati', JSON.stringify({
+    datiIdentificativi: { nome: 'Mario', cognome: 'Bianchi', codiceFiscale: 'BNCMRA80A01H501X', dataNascita: '1980-01-01', luogoNascita: 'Roma', residenza: 'Via Prova 1, Padova', documentoTipo: 'CARTA_IDENTITA', documentoNumero: 'CA00000AA', documentoScadenza: '2030-01-01' },
+    pep: { dichiarato: true, dettagli: 'Sindaco di comune capoluogo dal 2024' },
+    titolari: [{ nominativo: 'Mario Bianchi', codiceFiscale: 'BNCMRA80A01H501X', quota: '60' }],
+    dichiarazione: { accettata: true, nomeDichiarante: 'Mario Bianchi' },
+  }));
+  const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='), (c) => c.charCodeAt(0));
+  form.set('documento0', new File([png], 'carta-identita.png', { type: 'image/png' }));
+  const rInvio = await fetch(`${BASE}/api/pubblico/verifica/${tokenVerifica}`, { method: 'POST', body: form });
+  verifica('il cliente completa la verifica con allegato', rInvio.status === 200, await rInvio.json().catch(() => null));
+
+  const rDopo = await fetch(`${BASE}/api/pubblico/verifica/${tokenVerifica}`);
+  verifica('il collegamento è monouso: riaprirlo dà 410', rDopo.status === 410);
+}
+{
+  // Lo studio esamina e acquisisce.
+  const r = await req('GET', `/verifiche-remote/${idRichiestaVerifica}`);
+  verifica('lo studio legge i dati decifrati', r.stato === 200 && r.dati?.dati?.datiIdentificativi?.nome === 'Mario', r.dati?.dati);
+  verifica('l’allegato è in transito con impronta', r.dati?.allegati?.length === 1 && typeof r.dati.allegati[0].sha256 === 'string', r.dati?.allegati);
+
+  const rAcq = await req('POST', `/verifiche-remote/${idRichiestaVerifica}/acquisisci`, { applicaDatiIdentificativi: true, applicaPep: true, acquisisciDocumenti: true });
+  verifica('acquisizione selettiva riuscita', rAcq.stato === 200 && rAcq.dati?.applicato?.length === 3, rAcq.dati);
+  verifica('i titolari dichiarati tornano al professionista (mai auto-scritti)', rAcq.dati?.titolariDichiarati?.length === 1, rAcq.dati);
+
+  const fasc = await req('GET', `/fascicoli/${idFascicolo}`);
+  verifica('l’allegato è diventato documento del fascicolo', (fasc.dati?.documenti ?? []).some((x) => x.tipo === 'DOCUMENTO_IDENTITA' && x.nome_file === 'carta-identita.png'), fasc.dati?.documenti);
+
+  const log = await req('GET', '/audit');
+  verifica('creazione, completamento, lettura e acquisizione sono nel registro',
+    ['CREA_VERIFICA_REMOTA', 'VERIFICA_REMOTA_COMPLETATA', 'LEGGI_VERIFICA_REMOTA', 'ACQUISISCI_VERIFICA_REMOTA']
+      .every((a) => (log.dati ?? []).some((v) => v.azione === a)));
+}
+{
+  // Registro dei titolari effettivi (D.M. 122/2026).
+  const r = await req('POST', '/studio/registro-accreditamento', { data: new Date().toISOString().slice(0, 10) });
+  verifica('accreditamento biennale registrato', r.stato === 200 && typeof r.dati?.registroTe?.scadeIl === 'string', r.dati);
+  const scr = await req('GET', '/screening');
+  verifica('lo stato dell’accreditamento è nei controlli automatici', scr.dati?.registroTe?.accreditato === true && (scr.dati.registroTe.giorniResidui ?? 0) > 700, scr.dati?.registroTe);
+
+  const rNo = await req('POST', '/clienti/cli_alfa/titolarita/registro', { incongruenza: true, note: '' });
+  verifica('difformità senza descrizione respinta', rNo.stato === 400, rNo.dati);
+  const rSi = await req('POST', '/clienti/cli_alfa/titolarita/registro', { incongruenza: false, note: 'Riscontro coerente con visura.' });
+  verifica('riscontro col registro applicato ai titolari correnti', rSi.stato === 200 && (rSi.dati?.titolariAggiornati ?? 0) >= 1, rSi.dati);
+  const log = await req('GET', '/audit');
+  verifica('il riscontro è tracciato', (log.dati ?? []).some((v) => v.azione === 'RISCONTRO_REGISTRO_TE'));
+}
+
 console.log('\n== Backup, ripristino ed eliminazione archivio (AR-M4) ==');
 let chiaveBackupManuale;
 {

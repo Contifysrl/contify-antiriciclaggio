@@ -70,6 +70,8 @@ export const TABELLE_ARCHIVIO = [
   'clienti',
   'titolari_effettivi',
   'fascicoli',
+  // AR-M8: le richieste di verifica a distanza referenziano fascicoli e clienti.
+  'richieste_verifica',
   'documenti',
   'valutazioni_rischio',
   'operazioni',

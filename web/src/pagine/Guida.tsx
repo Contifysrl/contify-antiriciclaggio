@@ -212,6 +212,22 @@ const SEZIONI: Sezione[] = [
           integrità del registro. Le segnalazioni di operazione sospetta non vi compaiono mai{' '}
           <Norma>artt. 38-39</Norma>.
         </Nota>
+        <P>
+          <K>Adeguata verifica a distanza</K>: dal fascicolo generi un collegamento sicuro e
+          monouso per il cliente, che da casa compila i dati identificativi, carica il documento
+          e dichiara titolarità effettiva e status PEP (con dichiarazione di veridicità ex{' '}
+          <Norma>art. 22</Norma>). I dati arrivano cifrati e <K>nel fascicolo entra solo ciò che
+          esamini e acquisisci tu</K>: la titolarità dichiarata, in particolare, ti viene
+          proposta nel modulo dei titolari effettivi dove scegli criterio e motivazione.
+        </P>
+        <P>
+          <K>Registro dei titolari effettivi</K> (D.M. 122/2026, operativo dal 23.7.2026): in{' '}
+          <K>Controlli automatici</K> registri l'accreditamento biennale dello studio presso la
+          Camera di Commercio (con promemoria al rinnovo); nel fascicolo, dopo la consultazione,
+          registri il <K>riscontro</K> — data, esito, eventuale difformità da comunicare al
+          gestore <Norma>art. 21 co. 4</Norma>. L'esito compare anche nella scheda di adeguata
+          verifica.
+        </P>
       </>
     ),
   },

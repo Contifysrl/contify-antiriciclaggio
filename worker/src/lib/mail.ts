@@ -141,6 +141,8 @@ export async function inviaEmailScadenzario(
     inScadenza: Array<{ cliente: string; codice: string; giorniResidui?: number }>;
     screeningDaEsaminare: number;
     paesiDaRivalutare: number;
+    /** Avviso già formattato sull'accreditamento al registro TE, se serve. */
+    registroTeAvviso?: string | null;
   },
 ): Promise<boolean> {
   const rigaElenco = (testo: string) => `<li style="margin-bottom:4px">${escapeHtml(testo)}</li>`;
@@ -163,6 +165,9 @@ export async function inviaEmailScadenzario(
   if (dati.paesiDaRivalutare > 0) {
     blocchi.push(`<p style="font-size:14px;color:#92400e"><strong>${dati.paesiDaRivalutare}</strong> clienti in paesi terzi ad alto rischio da rivalutare.</p>`);
   }
+  if (dati.registroTeAvviso) {
+    blocchi.push(`<p style="font-size:14px;color:#92400e">${escapeHtml(dati.registroTeAvviso)}</p>`);
+  }
 
   const html = involucro(`
     <p style="font-size:15px;color:#111827">Buongiorno ${escapeHtml(dati.nome.split(' ')[0])},<br>
@@ -173,4 +178,46 @@ export async function inviaEmailScadenzario(
     </p>
     <p style="font-size:12px;color:#9ca3af">Ricevi questo riepilogo ogni lunedì quando c'è qualcosa da fare.</p>`);
   return invia(env, dati.destinatario, `${PRODOTTO} — ${dati.scadute.length ? `${dati.scadute.length} adempimenti scaduti` : 'il punto della settimana'}`, html);
+}
+
+/**
+ * Invito all'adeguata verifica a distanza (AR-M8): il link monouso
+ * arriva al cliente con le istruzioni; scade e non è riutilizzabile.
+ */
+export async function inviaEmailVerificaRemota(
+  env: Env,
+  dati: { destinatario: string; studio: string; cliente: string; url: string; scadeIl: string },
+): Promise<boolean> {
+  const scade = dati.scadeIl.slice(0, 10).split('-').reverse().join('.');
+  const html = involucro(`
+    <p style="font-size:15px;color:#111827">Gentile cliente,<br>
+    lo studio <strong>${escapeHtml(dati.studio)}</strong> le chiede di fornire i dati richiesti
+    dalla normativa antiriciclaggio (DLgs. 231/2007) per <strong>${escapeHtml(dati.cliente)}</strong>.</p>
+    <p style="font-size:14px;color:#374151">Bastano pochi minuti: dati identificativi, un documento
+    d'identità e poche dichiarazioni. I dati viaggiano cifrati e arrivano solo allo studio.</p>
+    <p style="margin:28px 0;text-align:center">
+      <a href="${dati.url}" style="background:#048587;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 24px;border-radius:8px;display:inline-block">Compila in sicurezza</a>
+    </p>
+    <p style="font-size:13px;color:#6b7280">Il collegamento vale fino al <strong>${scade}</strong> e può
+    essere usato una sola volta. Se non è lei il destinatario, ignori questa email.</p>
+    <p style="font-size:12px;color:#9ca3af">Se il pulsante non funziona, copi questo indirizzo nel browser:<br>
+    <span style="word-break:break-all">${dati.url}</span></p>`);
+  return invia(env, dati.destinatario, `${escapeHtml(dati.studio)} — dati per l'adeguata verifica`, html);
+}
+
+/** Avviso allo studio: il cliente ha completato la verifica a distanza. */
+export async function inviaEmailVerificaCompletata(
+  env: Env,
+  dati: { destinatario: string; nome: string; cliente: string; fascicolo: string },
+): Promise<boolean> {
+  const html = involucro(`
+    <p style="font-size:15px;color:#111827">${escapeHtml(dati.nome.split(' ')[0])},<br>
+    il cliente <strong>${escapeHtml(dati.cliente)}</strong> ha completato la verifica a distanza
+    per il fascicolo <strong>${escapeHtml(dati.fascicolo)}</strong>.</p>
+    <p style="font-size:14px;color:#374151">I dati sono in attesa del tuo esame: entra nel fascicolo
+    e acquisisci ciò che ritieni corretto.</p>
+    <p style="margin:28px 0;text-align:center">
+      <a href="${urlApp(env)}" style="background:#048587;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 24px;border-radius:8px;display:inline-block">Apri Contify AR</a>
+    </p>`);
+  return invia(env, dati.destinatario, `${PRODOTTO} — verifica completata da ${dati.cliente}`, html);
 }

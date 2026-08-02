@@ -23,7 +23,16 @@ import {
   soloTitolare,
 } from './lib/auth';
 import { cifra, decifra, generaPasswordTemporanea, hashPassword, nuovoId, nuovoToken, sha256Hex, verificaPassword } from './lib/crypto';
-import { inviaEmailAssistenza, inviaEmailAvvisoCanone, inviaEmailBenvenuto, inviaEmailResetPassword, inviaEmailScadenzario, urlApp } from './lib/mail';
+import {
+  inviaEmailAssistenza,
+  inviaEmailAvvisoCanone,
+  inviaEmailBenvenuto,
+  inviaEmailResetPassword,
+  inviaEmailScadenzario,
+  inviaEmailVerificaCompletata,
+  inviaEmailVerificaRemota,
+  urlApp,
+} from './lib/mail';
 import { scriviAudit, verificaCatenaAudit } from './lib/audit';
 import { backupSchedulato, chiaveDelTenant, prefissoTenant, runBackupTenant, type TipoBackupTenant } from './lib/backup';
 import { eseguiEliminaArchivio, eseguiRipristino, RipristinoError } from './lib/ripristino';
@@ -203,7 +212,7 @@ api.post('/auth/reset-password', async (c) => {
 api.use('/*', async (c, next) => {
   // Rotte pubbliche: login, logout e il reset password via email.
   // Tutto il resto richiede sessione.
-  const pubbliche = ['/api/auth/login', '/api/auth/logout', '/api/auth/password-dimenticata', '/api/auth/reset-password'];
+  const pubbliche = ['/api/auth/login', '/api/auth/logout', '/api/auth/password-dimenticata', '/api/auth/reset-password', '/api/pubblico/'];
   if (pubbliche.some((p) => c.req.path.startsWith(p))) return next();
   return richiediAutenticazione(c, next);
 });
@@ -609,6 +618,16 @@ async function clientiPaesiDaRivalutare(db: D1Database, tenantId: string) {
   });
 }
 
+/** Stato dell'accreditamento biennale al registro dei titolari effettivi (AR-M8). */
+async function statoRegistroTe(db: D1Database, tenantId: string) {
+  const t = await db.prepare('SELECT parametri FROM tenants WHERE id = ?').bind(tenantId).first<any>();
+  let parametri: any = {};
+  try { parametri = JSON.parse(t?.parametri ?? '{}'); } catch { /* parametri illeggibili */ }
+  const reg = parametri.registroTe;
+  if (!reg?.scadeIl) return { accreditato: false, accreditatoIl: null, scadeIl: null, giorniResidui: null };
+  return { accreditato: true, accreditatoIl: reg.accreditatoIl, scadeIl: reg.scadeIl, giorniResidui: giorniAllaScadenza(reg.scadeIl) };
+}
+
 api.get('/screening', async (c) => {
   const tenantId = c.get('tenantId');
   const [esiti, corsa, liste] = await Promise.all([
@@ -625,6 +644,7 @@ api.get('/screening', async (c) => {
     ultimaCorsa: corsa ?? null,
     liste: liste ? { aggiornatoIl: liste.aggiornatoIl, fonti: liste.fonti, voci: liste.voci.length } : null,
     paesiDaRivalutare: await clientiPaesiDaRivalutare(c.env.DB, tenantId),
+    registroTe: await statoRegistroTe(c.env.DB, tenantId),
   });
 });
 
@@ -738,6 +758,338 @@ api.post('/clienti/import', puoScrivere, async (c) => {
     dettaglio: { righe: righe.length, creati, scartate: scartate.length }, ip: c.get('ip'),
   });
   return c.json({ creati, scartate });
+});
+
+// ===========================================================================
+// ADEGUATA VERIFICA A DISTANZA (AR-M8)
+//
+// Lo studio genera un link monouso; il cliente fornisce dati, documento e
+// dichiarazioni dalla pagina pubblica. Tutto atterra in area di transito
+// (cifrato) e nel fascicolo entra SOLO ciò che il professionista esamina
+// e acquisisce: l'adeguata verifica resta un giudizio suo, non un upload.
+// ===========================================================================
+
+const VERIFICA_TTL_GIORNI = 30;
+const MIME_AMMESSI = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+const MAX_FILE = 8 * 1024 * 1024;
+
+api.post('/fascicoli/:id/verifica-remota', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const u = c.get('utente');
+  const fascicoloId = c.req.param('id');
+  const b = await c.req.json<any>().catch(() => ({}));
+
+  const f = await c.env.DB.prepare(
+    'SELECT f.id, f.codice, f.cliente_id, cl.denominazione AS cliente FROM fascicoli f JOIN clienti cl ON cl.id = f.cliente_id WHERE f.id = ? AND f.tenant_id = ?',
+  ).bind(fascicoloId, tenantId).first<any>();
+  if (!f) return c.json({ errore: 'Fascicolo non trovato' }, 404);
+
+  const richieste = {
+    datiIdentificativi: b.richieste?.datiIdentificativi !== false,
+    documento: b.richieste?.documento !== false,
+    titolari: Boolean(b.richieste?.titolari),
+    pep: b.richieste?.pep !== false,
+  };
+
+  const token = nuovoToken();
+  const id = nuovoId('vrf');
+  const scadeIl = new Date(Date.now() + VERIFICA_TTL_GIORNI * 86_400_000).toISOString();
+  const emailCliente = String(b.emailCliente ?? '').trim().toLowerCase() || null;
+
+  await c.env.DB.prepare(
+    `INSERT INTO richieste_verifica (id, tenant_id, fascicolo_id, cliente_id, token_hash, richieste, email_cliente, scade_il, creata_da)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
+  ).bind(id, tenantId, fascicoloId, f.cliente_id, await sha256Hex(token), JSON.stringify(richieste), emailCliente, scadeIl, u.id).run();
+
+  const url = `${urlApp(c.env)}/#verifica?token=${token}`;
+  let emailInviata = false;
+  if (emailCliente) {
+    const studio = await c.env.DB.prepare('SELECT denominazione FROM tenants WHERE id = ?').bind(tenantId).first<any>();
+    emailInviata = await inviaEmailVerificaRemota(c.env, {
+      destinatario: emailCliente, studio: studio?.denominazione ?? 'il tuo studio', cliente: f.cliente, url, scadeIl,
+    });
+  }
+
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: u.id, azione: 'CREA_VERIFICA_REMOTA', entita: 'richieste_verifica', entitaId: id,
+    dettaglio: { fascicoloId, richieste, emailInviata }, ip: c.get('ip'),
+  });
+  // Il token compare SOLO qui: in database ne esiste l'hash.
+  return c.json({ id, url, scadeIl, emailInviata }, 201);
+});
+
+api.get('/fascicoli/:id/verifiche-remote', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, stato, richieste, email_cliente, scade_il, completata_il, acquisita_il, creato_il
+     FROM richieste_verifica WHERE fascicolo_id = ? AND tenant_id = ? ORDER BY creato_il DESC`,
+  ).bind(c.req.param('id'), c.get('tenantId')).all<any>();
+  return c.json(results ?? []);
+});
+
+api.get('/verifiche-remote/:id', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const r = await c.env.DB.prepare('SELECT * FROM richieste_verifica WHERE id = ? AND tenant_id = ?')
+    .bind(c.req.param('id'), tenantId).first<any>();
+  if (!r) return c.json({ errore: 'Richiesta non trovata' }, 404);
+
+  let dati: any = null;
+  if (r.dati_cifrati && r.iv) {
+    try {
+      dati = JSON.parse(await decifra(c.env.MASTER_KEY, tenantId, { contenuto: r.dati_cifrati, iv: r.iv }));
+    } catch {
+      dati = null;
+    }
+  }
+  // La lettura dei dati forniti dal cliente è un accesso che va tracciato.
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: c.get('utente').id, azione: 'LEGGI_VERIFICA_REMOTA', entita: 'richieste_verifica',
+    entitaId: r.id, ip: c.get('ip'),
+  });
+  return c.json({
+    id: r.id, stato: r.stato, richieste: JSON.parse(r.richieste), dati,
+    allegati: JSON.parse(r.allegati ?? '[]').map((a: any, i: number) => ({ indice: i, nome: a.nome, mime: a.mime, dimensione: a.dimensione, sha256: a.sha256 })),
+    completataIl: r.completata_il, scadeIl: r.scade_il,
+  });
+});
+
+/** Anteprima di un allegato in transito (non ancora documento del fascicolo). */
+api.get('/verifiche-remote/:id/allegati/:indice', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const r = await c.env.DB.prepare('SELECT * FROM richieste_verifica WHERE id = ? AND tenant_id = ?')
+    .bind(c.req.param('id'), tenantId).first<any>();
+  if (!r) return c.json({ errore: 'Richiesta non trovata' }, 404);
+  const allegati = JSON.parse(r.allegati ?? '[]');
+  const a = allegati[Number(c.req.param('indice'))];
+  if (!a) return c.json({ errore: 'Allegato non trovato' }, 404);
+  const obj = await c.env.DOCS.get(a.r2Key);
+  if (!obj) return c.json({ errore: 'Contenuto non reperibile' }, 404);
+  return new Response(obj.body, { headers: { 'Content-Type': a.mime, 'Content-Disposition': `inline; filename="${a.nome}"` } });
+});
+
+api.post('/verifiche-remote/:id/annulla', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const r = await c.env.DB.prepare(
+    `UPDATE richieste_verifica SET stato = 'ANNULLATA' WHERE id = ? AND tenant_id = ? AND stato IN ('INVIATA','COMPLETATA')`,
+  ).bind(c.req.param('id'), tenantId).run();
+  if (!r.meta.changes) return c.json({ errore: 'Richiesta non annullabile' }, 404);
+  await scriviAudit(c.env.DB, { tenantId, utenteId: c.get('utente').id, azione: 'ANNULLA_VERIFICA_REMOTA', entita: 'richieste_verifica', entitaId: c.req.param('id'), ip: c.get('ip') });
+  return c.json({ ok: true });
+});
+
+api.post('/verifiche-remote/:id/acquisisci', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+
+  const r = await c.env.DB.prepare("SELECT * FROM richieste_verifica WHERE id = ? AND tenant_id = ? AND stato = 'COMPLETATA'")
+    .bind(c.req.param('id'), tenantId).first<any>();
+  if (!r) return c.json({ errore: 'Richiesta non trovata o non ancora completata' }, 404);
+
+  let dati: any = {};
+  try {
+    dati = JSON.parse(await decifra(c.env.MASTER_KEY, tenantId, { contenuto: r.dati_cifrati, iv: r.iv }));
+  } catch {
+    return c.json({ errore: 'Dati della richiesta non leggibili' }, 500);
+  }
+
+  const applicato: string[] = [];
+
+  if (b.applicaDatiIdentificativi && dati.datiIdentificativi) {
+    const nuovo = await cifra(c.env.MASTER_KEY, tenantId, JSON.stringify(dati.datiIdentificativi));
+    await c.env.DB.prepare('UPDATE clienti SET dati_identificativi = ? WHERE id = ? AND tenant_id = ?')
+      .bind(JSON.stringify(nuovo), r.cliente_id, tenantId).run();
+    const cf = String(dati.datiIdentificativi.codiceFiscale ?? '').trim().toUpperCase();
+    if (cf) {
+      await c.env.DB.prepare('UPDATE clienti SET codice_fiscale = ? WHERE id = ? AND tenant_id = ? AND (codice_fiscale IS NULL OR codice_fiscale = "")')
+        .bind(cf, r.cliente_id, tenantId).run();
+    }
+    applicato.push('dati_identificativi');
+  }
+
+  if (b.applicaPep && dati.pep) {
+    await c.env.DB.prepare('UPDATE clienti SET pep = ? WHERE id = ? AND tenant_id = ?')
+      .bind(dati.pep.dichiarato ? 1 : 0, r.cliente_id, tenantId).run();
+    applicato.push(`pep:${dati.pep.dichiarato ? 'si' : 'no'}`);
+  }
+
+  if (b.acquisisciDocumenti) {
+    const allegati = JSON.parse(r.allegati ?? '[]');
+    const f = await c.env.DB.prepare('SELECT data_cessazione FROM fascicoli WHERE id = ? AND tenant_id = ?').bind(r.fascicolo_id, tenantId).first<any>();
+    const conservaFinoAl = f?.data_cessazione ? aggiungiAnni(f.data_cessazione, TERMINI.CONSERVAZIONE_ANNI.valore) : null;
+    for (const a of allegati) {
+      await c.env.DB.prepare(
+        `INSERT INTO documenti (id, tenant_id, fascicolo_id, cliente_id, tipo, nome_file, mime, dimensione, r2_key, sha256,
+          data_riferimento, data_acquisizione, conserva_fino_al, creato_da)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).bind(
+        nuovoId('doc'), tenantId, r.fascicolo_id, r.cliente_id, 'DOCUMENTO_IDENTITA', a.nome, a.mime, a.dimensione,
+        a.r2Key, a.sha256, oggi(), oggi(), conservaFinoAl, u.id,
+      ).run();
+    }
+    applicato.push(`documenti:${allegati.length}`);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE richieste_verifica SET stato = 'ACQUISITA', acquisita_da = ?, acquisita_il = datetime('now') WHERE id = ?`,
+  ).bind(u.id, r.id).run();
+
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: u.id, azione: 'ACQUISISCI_VERIFICA_REMOTA', entita: 'richieste_verifica', entitaId: r.id,
+    dettaglio: { applicato }, ip: c.get('ip'),
+  });
+  // I titolari effettivi dichiarati NON si scrivono da soli: tornano al
+  // professionista, che li valuta nel modulo della titolarità (artt. 20-22).
+  return c.json({ ok: true, applicato, titolariDichiarati: dati.titolari ?? [] });
+});
+
+// ── Rotte PUBBLICHE del cliente (nessuna sessione) ─────────────
+
+async function richiestaDaToken(env: Env, token: string) {
+  if (!token || token.length < 20) return null;
+  return env.DB.prepare(
+    `SELECT r.*, t.denominazione AS studio, t.logo_url, t.stato AS tenant_stato, cl.denominazione AS cliente
+     FROM richieste_verifica r
+     JOIN tenants t ON t.id = r.tenant_id
+     JOIN clienti cl ON cl.id = r.cliente_id
+     WHERE r.token_hash = ?`,
+  ).bind(await sha256Hex(token)).first<any>();
+}
+
+api.get('/pubblico/verifica/:token', async (c) => {
+  const r = await richiestaDaToken(c.env, c.req.param('token') ?? '');
+  if (!r || statoValido(r.tenant_stato) === 'cessato') return c.json({ errore: 'Collegamento non valido' }, 404);
+  if (r.stato === 'ANNULLATA') return c.json({ errore: 'La richiesta è stata annullata dallo studio' }, 410);
+  if (r.stato !== 'INVIATA') return c.json({ errore: 'Questa richiesta è già stata completata' }, 410);
+  if (r.scade_il <= new Date().toISOString()) return c.json({ errore: 'Il collegamento è scaduto: chiedi allo studio un nuovo invito' }, 410);
+  return c.json({
+    studio: r.studio,
+    logo: logoStudio(r.logo_url)?.dataUrl ?? null,
+    cliente: r.cliente,
+    richieste: JSON.parse(r.richieste),
+    scadeIl: r.scade_il,
+  });
+});
+
+api.post('/pubblico/verifica/:token', async (c) => {
+  const r = await richiestaDaToken(c.env, c.req.param('token') ?? '');
+  if (!r || statoValido(r.tenant_stato) === 'cessato') return c.json({ errore: 'Collegamento non valido' }, 404);
+  if (r.stato !== 'INVIATA') return c.json({ errore: 'Questa richiesta non è più aperta' }, 410);
+  if (r.scade_il <= new Date().toISOString()) return c.json({ errore: 'Il collegamento è scaduto' }, 410);
+
+  const form = await c.req.formData().catch(() => null);
+  if (!form) return c.json({ errore: 'Invio non leggibile' }, 400);
+
+  let dati: any;
+  try {
+    dati = JSON.parse(String(form.get('dati') ?? '{}'));
+  } catch {
+    return c.json({ errore: 'Dati non leggibili' }, 400);
+  }
+  if (dati?.dichiarazione?.accettata !== true) {
+    return c.json({ errore: 'La dichiarazione di veridicità è necessaria per procedere (art. 22 DLgs. 231/2007)' }, 400);
+  }
+  // Tetto complessivo sui testi: nessun campo del cliente deve poter
+  // gonfiare il database.
+  if (JSON.stringify(dati).length > 20_000) return c.json({ errore: 'Dati troppo lunghi' }, 400);
+  dati.dichiarazione.dataOra = new Date().toISOString();
+
+  const allegati: Array<{ r2Key: string; nome: string; mime: string; dimensione: number; sha256: string }> = [];
+  for (const [chiave, valore] of form.entries()) {
+    if (!chiave.startsWith('documento') || typeof valore === 'string') continue;
+    const file = valore as File;
+    if (allegati.length >= 3) return c.json({ errore: 'Massimo 3 allegati' }, 400);
+    if (!MIME_AMMESSI.has(file.type)) return c.json({ errore: 'Formato non ammesso: usa PDF, JPG o PNG' }, 400);
+    if (file.size > MAX_FILE) return c.json({ errore: 'Allegato troppo grande (max 8 MB)' }, 400);
+    const buf = await file.arrayBuffer();
+    const nome = file.name.replace(/[^\w.\- ]/g, '_').slice(0, 120) || 'documento';
+    const r2Key = `verifica/${r.tenant_id}/${r.id}/${allegati.length}-${nome}`;
+    await c.env.DOCS.put(r2Key, buf, { httpMetadata: { contentType: file.type } });
+    allegati.push({ r2Key, nome, mime: file.type, dimensione: buf.byteLength, sha256: await sha256Hex(buf) });
+  }
+  if (JSON.parse(r.richieste).documento && allegati.length === 0) {
+    return c.json({ errore: 'Allega il documento d’identità richiesto' }, 400);
+  }
+
+  const cifrato = await cifra(c.env.MASTER_KEY, r.tenant_id, JSON.stringify(dati));
+  await c.env.DB.prepare(
+    `UPDATE richieste_verifica SET stato = 'COMPLETATA', completata_il = datetime('now'),
+       dati_cifrati = ?, iv = ?, allegati = ? WHERE id = ? AND stato = 'INVIATA'`,
+  ).bind(cifrato.contenuto, cifrato.iv, JSON.stringify(allegati), r.id).run();
+
+  await scriviAudit(c.env.DB, {
+    tenantId: r.tenant_id, utenteId: null, azione: 'VERIFICA_REMOTA_COMPLETATA', entita: 'richieste_verifica',
+    entitaId: r.id, dettaglio: { allegati: allegati.length }, ip: c.req.header('CF-Connecting-IP') ?? null,
+  });
+
+  // Avviso a chi ha creato la richiesta (best effort).
+  try {
+    const [autore, fascicolo] = await Promise.all([
+      c.env.DB.prepare('SELECT nome, email FROM utenti WHERE id = ?').bind(r.creata_da).first<any>(),
+      c.env.DB.prepare('SELECT codice FROM fascicoli WHERE id = ?').bind(r.fascicolo_id).first<any>(),
+    ]);
+    if (autore) {
+      await inviaEmailVerificaCompletata(c.env, {
+        destinatario: autore.email, nome: autore.nome, cliente: r.cliente, fascicolo: fascicolo?.codice ?? '',
+      });
+    }
+  } catch (e) {
+    console.error('avviso verifica completata non inviato:', e);
+  }
+
+  return c.json({ ok: true });
+});
+
+// ===========================================================================
+// REGISTRO DEI TITOLARI EFFETTIVI (AR-M8) — D.M. 122/2026
+// ===========================================================================
+
+/** Accreditamento biennale dello studio presso la Camera di Commercio. */
+api.post('/studio/registro-accreditamento', soloTitolare, async (c) => {
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const data = String(b.data ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return c.json({ errore: 'Data non valida (AAAA-MM-GG)' }, 400);
+
+  const t = await c.env.DB.prepare('SELECT parametri FROM tenants WHERE id = ?').bind(u.tenant_id).first<any>();
+  const parametri = (() => { try { return JSON.parse(t?.parametri ?? '{}'); } catch { return {}; } })();
+  parametri.registroTe = { accreditatoIl: data, scadeIl: aggiungiAnni(data, 2) };
+  await c.env.DB.prepare('UPDATE tenants SET parametri = ? WHERE id = ?').bind(JSON.stringify(parametri), u.tenant_id).run();
+
+  await scriviAudit(c.env.DB, {
+    tenantId: u.tenant_id, utenteId: u.id, azione: 'ACCREDITAMENTO_REGISTRO_TE',
+    dettaglio: parametri.registroTe, ip: c.get('ip'),
+  });
+  return c.json({ ok: true, registroTe: parametri.registroTe });
+});
+
+/**
+ * Riscontro della titolarità effettiva col registro (art. 21-ter):
+ * si applica a TUTTI i titolari correnti del cliente — la consultazione
+ * è una, il suo esito vale per la fotografia intera.
+ */
+api.post('/clienti/:id/titolarita/registro', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const u = c.get('utente');
+  const clienteId = c.req.param('id');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const data = String(b.data ?? oggi()).slice(0, 10);
+  const incongruenza = Boolean(b.incongruenza);
+  const note = String(b.note ?? '').trim() || null;
+  if (incongruenza && !note) {
+    return c.json({ errore: 'Descrivi la difformità rilevata: va comunicata al gestore del registro (art. 21 co. 4)' }, 400);
+  }
+
+  const r = await c.env.DB.prepare(
+    `UPDATE titolari_effettivi SET registro_consultato = 1, registro_data = ?, registro_incongruenza = ?, registro_note = ?
+     WHERE cliente_id = ? AND tenant_id = ? AND valido_al IS NULL`,
+  ).bind(data, incongruenza ? 1 : 0, note, clienteId, tenantId).run();
+  if (!r.meta.changes) return c.json({ errore: 'Nessun titolare effettivo corrente da riscontrare' }, 404);
+
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: u.id, azione: 'RISCONTRO_REGISTRO_TE', entita: 'clienti', entitaId: clienteId,
+    dettaglio: { data, incongruenza, titolari: r.meta.changes }, ip: c.get('ip'),
+  });
+  return c.json({ ok: true, titolariAggiornati: r.meta.changes });
 });
 
 // ===========================================================================
@@ -1733,12 +2085,19 @@ async function riepiloghiSettimanali(env: Env): Promise<void> {
 
   for (const t of tenants) {
     try {
-      const [scadenzario, screening, paesi] = await Promise.all([
+      const [scadenzario, screening, paesi, registroTe] = await Promise.all([
         calcolaScadenzario(env.DB, t.id),
         env.DB.prepare("SELECT COUNT(*) AS n FROM screening_esiti WHERE tenant_id = ? AND stato = 'DA_ESAMINARE'").bind(t.id).first<{ n: number }>(),
         clientiPaesiDaRivalutare(env.DB, t.id),
+        statoRegistroTe(env.DB, t.id),
       ]);
-      const daFare = scadenzario.scadute.length + scadenzario.inScadenza.length + (screening?.n ?? 0) + paesi.length;
+      const registroTeAvviso =
+        registroTe.accreditato && registroTe.giorniResidui !== null && registroTe.giorniResidui <= 60
+          ? registroTe.giorniResidui < 0
+            ? `L'accreditamento al registro dei titolari effettivi è SCADUTO il ${registroTe.scadeIl}: rinnovalo presso la Camera di Commercio.`
+            : `L'accreditamento al registro dei titolari effettivi scade tra ${registroTe.giorniResidui} giorni (${registroTe.scadeIl}).`
+          : null;
+      const daFare = scadenzario.scadute.length + scadenzario.inScadenza.length + (screening?.n ?? 0) + paesi.length + (registroTeAvviso ? 1 : 0);
       if (!daFare) continue;   // niente da fare, niente rumore
 
       const titolari = (
@@ -1753,6 +2112,7 @@ async function riepiloghiSettimanali(env: Env): Promise<void> {
           inScadenza: scadenzario.inScadenza,
           screeningDaEsaminare: screening?.n ?? 0,
           paesiDaRivalutare: paesi.length,
+          registroTeAvviso,
         });
         console.log(`riepilogo settimanale ${t.denominazione} → ${dest.email}: ${inviata ? 'inviato' : 'NON inviato'}`);
       }

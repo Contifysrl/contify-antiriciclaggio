@@ -11,6 +11,7 @@ import {
 import { ElencoVincoli, GruppoFattori, PiedeLegale, PillolaRischio, Riquadro, Tessera } from '../componenti';
 import { HelpLink } from '../components/ui';
 import { ImportClientiModal } from './ImportClienti';
+import { TitolaritaEffettiva, VerificaADistanza } from './TitolaritaVerifica';
 
 // ===========================================================================
 export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
@@ -353,6 +354,7 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
   const [errore, setErrore] = useState('');
   const [astensioni, setAstensioni] = useState<any[]>([]);
   const [formAst, setFormAst] = useState<any>(null); // null = form chiuso
+  const [titolariDichiarati, setTitolariDichiarati] = useState<any[] | null>(null); // dalla verifica a distanza
 
   const carica = () => {
     api.get<any>(`/fascicoli/${id}`).then(setD);
@@ -669,6 +671,20 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
           )}
         </>
       )}
+
+      <TitolaritaEffettiva
+        clienteId={d.fascicolo.cliente_id}
+        titolari={d.titolari ?? []}
+        precompilati={titolariDichiarati}
+        onAggiornato={() => { setTitolariDichiarati(null); carica(); }}
+      />
+
+      <VerificaADistanza
+        fascicoloId={id}
+        clienteId={d.fascicolo.cliente_id}
+        onDatiAcquisiti={carica}
+        onTitolariDichiarati={setTitolariDichiarati}
+      />
 
       <h2>Scadenzario del fascicolo</h2>
       <div className="scheda">

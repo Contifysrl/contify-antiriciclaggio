@@ -11,6 +11,7 @@ import { Contante, Scadenzario, Sos } from './pagine/Presidi';
 import { Controlli } from './pagine/Controlli';
 import { Impostazioni } from './pagine/Impostazioni';
 import { Guida } from './pagine/Guida';
+import { VerificaRemota } from './pagine/VerificaRemota';
 
 type Sessione = SessioneApp;
 
@@ -38,6 +39,9 @@ export default function App() {
 
   const [pagina, query] = percorso.split('?');
   const parametri = new URLSearchParams(query ?? '');
+
+  // ── Rotte pubbliche (anche con sessione: il link del cliente vince) ──
+  if (pagina === 'verifica') return <VerificaRemota token={parametri.get('token') ?? ''} />;
 
   // ── Rotte pubbliche pre-login ────────────────────────────────
   if (!sessione) {
@@ -85,7 +89,7 @@ export default function App() {
       {pagina === 'fascicolo' && <DettaglioFascicolo id={parametri.get('id') ?? ''} vaiA={vaiA} />}
       {pagina === 'scadenzario' && <Scadenzario vaiA={vaiA} />}
       {pagina === 'contante' && <Contante />}
-      {pagina === 'controlli' && <Controlli vaiA={vaiA} />}
+      {pagina === 'controlli' && <Controlli vaiA={vaiA} ruolo={sessione.utente.ruolo} />}
       {pagina === 'sos' && <Sos />}
       {pagina === 'registro' && <Registro />}
       {pagina === 'impostazioni' && <Impostazioni sessione={sessione} onSessioneAggiornata={setSessione} />}

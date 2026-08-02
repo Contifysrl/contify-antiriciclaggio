@@ -28,6 +28,7 @@ interface DatiScreening {
   ultimaCorsa: { eseguito_il: string; soggetti: number; corrispondenze_nuove: number } | null;
   liste: { aggiornatoIl: string; fonti: Record<string, { voci: number }>; voci: number } | null;
   paesiDaRivalutare: Array<{ clienteId: string; denominazione: string; paese: string; fonte: string; vigenteDal: string; ultimaValutazione: string | null }>;
+  registroTe: { accreditato: boolean; accreditatoIl: string | null; scadeIl: string | null; giorniResidui: number | null };
 }
 
 const ETICHETTA_FONTE: Record<string, string> = {
@@ -43,7 +44,7 @@ function dataOraIt(iso?: string | null): string {
     + ' ' + d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
 }
 
-export function Controlli({ vaiA }: { vaiA: (p: string) => void }) {
+export function Controlli({ vaiA, ruolo }: { vaiA: (p: string) => void; ruolo: string }) {
   const [dati, setDati] = useState<DatiScreening | null>(null);
   const [errore, setErrore] = useState('');
   const [inCorso, setInCorso] = useState(false);
@@ -111,6 +112,10 @@ export function Controlli({ vaiA }: { vaiA: (p: string) => void }) {
           </div>
         </div>
       </div>
+
+      {dati && (
+        <RegistroTe registro={dati.registroTe} ruolo={ruolo} onAggiornato={carica} />
+      )}
 
       {dati && dati.paesiDaRivalutare.length > 0 && (
         <div className="scheda">
@@ -184,6 +189,82 @@ export function Controlli({ vaiA }: { vaiA: (p: string) => void }) {
       )}
       <PiedeLegale />
     </>
+  );
+}
+
+// ── Registro dei titolari effettivi (D.M. 122/2026, AR-M8) ─────
+
+function RegistroTe({ registro, ruolo, onAggiornato }: {
+  registro: DatiScreening['registroTe'];
+  ruolo: string;
+  onAggiornato: () => void;
+}) {
+  const [apri, setApri] = useState(false);
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
+  const [errore, setErrore] = useState('');
+  const [invio, setInvio] = useState(false);
+
+  const salva = async (e: FormEvent) => {
+    e.preventDefault();
+    setErrore('');
+    setInvio(true);
+    try {
+      await api.post('/studio/registro-accreditamento', { data });
+      setApri(false);
+      onAggiornato();
+    } catch (err) {
+      setErrore((err as Error).message);
+    } finally {
+      setInvio(false);
+    }
+  };
+
+  const inScadenza = registro.accreditato && registro.giorniResidui !== null && registro.giorniResidui <= 60;
+
+  return (
+    <div className="scheda">
+      <h3 className="!mt-0">Registro dei titolari effettivi (D.M. 122/2026)</h3>
+      <div className="aiuto">
+        Dal 23 luglio 2026 i soggetti obbligati consultano il registro previa richiesta di
+        accreditamento alla Camera di Commercio, valida due anni. Registra qui la data
+        dell’accreditamento: al rinnovo ci pensa il promemoria.
+      </div>
+      {!registro.accreditato && (
+        <Riquadro tipo="avviso">
+          Accreditamento non ancora registrato. Senza accreditamento il riscontro della titolarità
+          effettiva col registro (art. 21-ter) non è possibile.
+        </Riquadro>
+      )}
+      {registro.accreditato && (
+        <p className="text-sm">
+          Accreditamento del <strong>{formattaData(registro.accreditatoIl)}</strong> — valido fino al{' '}
+          <strong>{formattaData(registro.scadeIl)}</strong>{' '}
+          {registro.giorniResidui !== null && (
+            registro.giorniResidui < 0
+              ? <Badge tone="red">scaduto da {-registro.giorniResidui} giorni</Badge>
+              : inScadenza
+                ? <Badge tone="amber">scade tra {registro.giorniResidui} giorni</Badge>
+                : <Badge tone="teal">{registro.giorniResidui} giorni residui</Badge>
+          )}
+        </p>
+      )}
+      {ruolo === 'TITOLARE' && !apri && (
+        <button className="btn btn-secondary btn-sm" onClick={() => setApri(true)}>
+          {registro.accreditato ? 'Registra un rinnovo…' : 'Registra l’accreditamento…'}
+        </button>
+      )}
+      {apri && (
+        <form onSubmit={salva} className="flex items-end gap-2 mt-2">
+          <div>
+            <label className="label">Data dell’accreditamento (o del rinnovo)</label>
+            <input className="input" type="date" value={data} onChange={(e) => setData(e.target.value)} required />
+          </div>
+          <button className="btn btn-primary btn-sm mb-0.5" disabled={invio}>{invio ? 'Salvo…' : 'Salva'}</button>
+          <button type="button" className="btn btn-ghost btn-sm mb-0.5" onClick={() => setApri(false)}>Annulla</button>
+        </form>
+      )}
+      {errore && <div className="errore">{errore}</div>}
+    </div>
   );
 }
 
