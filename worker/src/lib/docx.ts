@@ -231,12 +231,46 @@ function base64ToU8(b64: string): Uint8Array {
  * L'header porta il logo Contify (regola non negoziabile del brand) e la
  * dicitura di riservatezza; il footer la provenienza e la numerazione.
  */
-export function costruisciDocx(corpo: string, opzioni: { etichettaHeader?: string } = {}): Uint8Array {
+export function costruisciDocx(
+  corpo: string,
+  opzioni: {
+    etichettaHeader?: string;
+    /** Logo dello studio (AR-M6): PNG base64 con le dimensioni in pixel. */
+    logoStudio?: { base64: string; larghezzaPx: number; altezzaPx: number };
+  } = {},
+): Uint8Array {
   const etichetta = opzioni.etichettaHeader ?? 'Documento riservato — DLgs. 231/2007';
 
   // Logo: 720x199 px → in EMU a ~40 px/cm di resa: larghezza 4,32 cm.
   const cx = 1555200; // 4.32 cm in EMU
   const cy = 429840; // 1.194 cm (rapporto 3.6:1 rispettato)
+
+  // Logo dello studio a destra: altezza obiettivo 0,9 cm, larghezza in
+  // proporzione ma mai oltre 4,5 cm (un logo molto largo si riduce).
+  let immagineStudio = '';
+  if (opzioni.logoStudio) {
+    const { larghezzaPx, altezzaPx } = opzioni.logoStudio;
+    let sCy = 324000; // 0.9 cm
+    let sCx = Math.round((sCy * larghezzaPx) / Math.max(1, altezzaPx));
+    if (sCx > 1620000) { sCx = 1620000; sCy = Math.round((sCx * altezzaPx) / Math.max(1, larghezzaPx)); }
+    immagineStudio = `<w:r><w:drawing>
+      <wp:inline distT="0" distB="0" distL="0" distR="0">
+        <wp:extent cx="${sCx}" cy="${sCy}"/>
+        <wp:docPr id="2" name="Logo studio"/>
+        <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+          <pic:pic>
+            <pic:nvPicPr><pic:cNvPr id="2" name="logo-studio.png"/><pic:cNvPicPr/></pic:nvPicPr>
+            <pic:blipFill><a:blip r:embed="rIdLogoStudio"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>
+            <pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${sCx}" cy="${sCy}"/></a:xfrm>
+              <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>
+          </pic:pic>
+        </a:graphicData></a:graphic>
+      </wp:inline>
+    </w:drawing></w:r>`;
+  }
+
+  // Con il logo dello studio, l'etichetta di riservatezza scende su una
+  // seconda riga (a destra): la prima riga resta ai due loghi.
   const header = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
   xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -246,8 +280,8 @@ export function costruisciDocx(corpo: string, opzioni: { etichettaHeader?: strin
   <w:p>
     <w:pPr>
       <w:tabs><w:tab w:val="right" w:pos="9640"/></w:tabs>
-      <w:pBdr><w:bottom w:val="single" w:sz="8" w:space="4" w:color="${COLORI.primario}"/></w:pBdr>
-      <w:spacing w:after="240"/>
+      ${immagineStudio ? '' : `<w:pBdr><w:bottom w:val="single" w:sz="8" w:space="4" w:color="${COLORI.primario}"/></w:pBdr>`}
+      <w:spacing w:after="${immagineStudio ? '60' : '240'}"/>
     </w:pPr>
     <w:r><w:drawing>
       <wp:inline distT="0" distB="0" distL="0" distR="0">
@@ -264,8 +298,17 @@ export function costruisciDocx(corpo: string, opzioni: { etichettaHeader?: strin
       </wp:inline>
     </w:drawing></w:r>
     <w:r><w:tab/></w:r>
-    ${run(etichetta, { colore: COLORI.grigio, punti: 8 })}
+    ${immagineStudio || run(etichetta, { colore: COLORI.grigio, punti: 8 })}
   </w:p>
+  ${immagineStudio ? `<w:p>
+    <w:pPr>
+      <w:tabs><w:tab w:val="right" w:pos="9640"/></w:tabs>
+      <w:pBdr><w:bottom w:val="single" w:sz="8" w:space="4" w:color="${COLORI.primario}"/></w:pBdr>
+      <w:spacing w:after="240"/>
+    </w:pPr>
+    <w:r><w:tab/></w:r>
+    ${run(etichetta, { colore: COLORI.grigio, punti: 8 })}
+  </w:p>` : ''}
 </w:hdr>`;
 
   const footer = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -334,6 +377,7 @@ export function costruisciDocx(corpo: string, opzioni: { etichettaHeader?: strin
   const relsHeader = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rIdLogo" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/logo-contify.png"/>
+  ${opzioni.logoStudio ? '<Relationship Id="rIdLogoStudio" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/logo-studio.png"/>' : ''}
 </Relationships>`;
 
   return zipSync({
@@ -347,6 +391,7 @@ export function costruisciDocx(corpo: string, opzioni: { etichettaHeader?: strin
     'word/_rels/document.xml.rels': strToU8(relsDocumento),
     'word/_rels/header1.xml.rels': strToU8(relsHeader),
     'word/media/logo-contify.png': base64ToU8(LOGO_CONTIFY_PNG_BASE64),
+    ...(opzioni.logoStudio ? { 'word/media/logo-studio.png': base64ToU8(opzioni.logoStudio.base64) } : {}),
   });
 }
 

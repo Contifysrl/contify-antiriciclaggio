@@ -23,10 +23,11 @@ import {
   soloTitolare,
 } from './lib/auth';
 import { cifra, decifra, generaPasswordTemporanea, hashPassword, nuovoId, nuovoToken, sha256Hex, verificaPassword } from './lib/crypto';
-import { inviaEmailAssistenza, inviaEmailBenvenuto, inviaEmailResetPassword, urlApp } from './lib/mail';
+import { inviaEmailAssistenza, inviaEmailAvvisoCanone, inviaEmailBenvenuto, inviaEmailResetPassword, urlApp } from './lib/mail';
 import { scriviAudit, verificaCatenaAudit } from './lib/audit';
 import { backupSchedulato, chiaveDelTenant, prefissoTenant, runBackupTenant, type TipoBackupTenant } from './lib/backup';
 import { eseguiEliminaArchivio, eseguiRipristino, RipristinoError } from './lib/ripristino';
+import { SOGLIE_AVVISO_CANONE, bloccoPerStato, giorniAllaScadenza, statoValido } from './lib/licenza';
 import { getCookie } from 'hono/cookie';
 
 import { CNDCEC_2025 } from './domain/rulesets/cndcec-2025';
@@ -110,11 +111,11 @@ api.post('/auth/login', async (c) => {
     ip: c.req.header('CF-Connecting-IP') ?? null,
   });
 
-  const tenant = await c.env.DB.prepare('SELECT id, denominazione, piano, ruleset_default FROM tenants WHERE id = ?')
+  const tenant = await c.env.DB.prepare('SELECT id, denominazione, piano, ruleset_default, stato, logo_url FROM tenants WHERE id = ?')
     .bind(u.tenant_id)
     .first<any>();
 
-  return c.json({ utente: utentePubblico(u), studio: tenant });
+  return c.json({ utente: utentePubblico(u), studio: vistaStudio(tenant) });
 });
 
 api.post('/auth/logout', async (c) => {
@@ -204,6 +205,43 @@ api.use('/*', async (c, next) => {
   return richiediAutenticazione(c, next);
 });
 
+// Blocco per stato commerciale (AR-M6): sospeso = sola lettura (con
+// assistenza e backup manuale ancora possibili), cessato = accesso chiuso.
+// Applicato DOPO l'autenticazione: lo stato viaggia nella query di sessione.
+api.use('/*', async (c, next) => {
+  const stato = c.get('tenantStato');
+  if (!stato) return next(); // rotta pubblica: nessuna sessione
+  const blocco = bloccoPerStato(statoValido(stato), c.req.method, c.req.path);
+  if (blocco) return c.json({ errore: blocco.errore, codice: blocco.codice }, blocco.status);
+  return next();
+});
+
+/** Logo dello studio custodito in tenants.logo_url come JSON {dataUrl, larghezza, altezza}. */
+function logoStudio(logoUrl: string | null | undefined): { dataUrl: string; larghezza: number; altezza: number } | null {
+  if (!logoUrl) return null;
+  try {
+    const l = JSON.parse(logoUrl);
+    if (typeof l?.dataUrl === 'string' && l.dataUrl.startsWith('data:image/png;base64,')) {
+      return { dataUrl: l.dataUrl, larghezza: Number(l.larghezza) || 0, altezza: Number(l.altezza) || 0 };
+    }
+  } catch { /* valore storico non JSON: nessun logo */ }
+  return null;
+}
+
+/** Vista dello studio restituita al client: stato commerciale e logo inclusi. */
+function vistaStudio(t: any) {
+  if (!t) return t;
+  return {
+    id: t.id,
+    denominazione: t.denominazione,
+    piano: t.piano,
+    ruleset_default: t.ruleset_default,
+    ...(t.parametri !== undefined ? { parametri: t.parametri } : {}),
+    stato: statoValido(t.stato),
+    logo: logoStudio(t.logo_url)?.dataUrl ?? null,
+  };
+}
+
 /** Vista dell'utente restituita al client: mai hash o campi interni. */
 function utentePubblico(u: any) {
   return {
@@ -218,10 +256,10 @@ function utentePubblico(u: any) {
 
 api.get('/auth/io', async (c) => {
   const u = c.get('utente');
-  const tenant = await c.env.DB.prepare('SELECT id, denominazione, piano, ruleset_default, parametri FROM tenants WHERE id = ?')
+  const tenant = await c.env.DB.prepare('SELECT id, denominazione, piano, ruleset_default, parametri, stato, logo_url FROM tenants WHERE id = ?')
     .bind(u.tenant_id)
     .first<any>();
-  return c.json({ utente: utentePubblico(u), studio: tenant });
+  return c.json({ utente: utentePubblico(u), studio: vistaStudio(tenant) });
 });
 
 // ---------------------------------------------------------------------------
@@ -396,6 +434,40 @@ api.post('/utenti/:id/reset-password', soloTitolare, async (c) => {
     destinatario: target.email, nome: target.nome, passwordTemporanea, studio: studio?.denominazione ?? 'il tuo studio',
   });
   return c.json({ passwordTemporanea, emailInviata });
+});
+
+// ===========================================================================
+// LOGO DELLO STUDIO (AR-M6) — solo TITOLARE
+// Un PNG piccolo, ridimensionato dal client, custodito in tenants.logo_url
+// come JSON {dataUrl, larghezza, altezza}: compare nella barra laterale e
+// nell'intestazione dei verbali, accanto al logo Contify.
+// ===========================================================================
+
+api.post('/studio/logo', soloTitolare, async (c) => {
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+
+  if (b.logo === null) {
+    await c.env.DB.prepare('UPDATE tenants SET logo_url = NULL WHERE id = ?').bind(u.tenant_id).run();
+    await scriviAudit(c.env.DB, { tenantId: u.tenant_id, utenteId: u.id, azione: 'RIMUOVI_LOGO_STUDIO', ip: c.get('ip') });
+    return c.json({ ok: true, logo: null });
+  }
+
+  const dataUrl = String(b.logo ?? '');
+  const larghezza = Math.round(Number(b.larghezza) || 0);
+  const altezza = Math.round(Number(b.altezza) || 0);
+  if (!dataUrl.startsWith('data:image/png;base64,') || dataUrl.length > 160_000) {
+    return c.json({ errore: 'Immagine non valida: serve un PNG (max ~120 KB dopo il ridimensionamento)' }, 400);
+  }
+  if (larghezza < 1 || altezza < 1 || larghezza > 900 || altezza > 300) {
+    return c.json({ errore: 'Dimensioni del logo non valide' }, 400);
+  }
+
+  await c.env.DB.prepare('UPDATE tenants SET logo_url = ? WHERE id = ?')
+    .bind(JSON.stringify({ dataUrl, larghezza, altezza }), u.tenant_id)
+    .run();
+  await scriviAudit(c.env.DB, { tenantId: u.tenant_id, utenteId: u.id, azione: 'AGGIORNA_LOGO_STUDIO', dettaglio: { larghezza, altezza }, ip: c.get('ip') });
+  return c.json({ ok: true, logo: dataUrl });
 });
 
 // ===========================================================================
@@ -1276,6 +1348,13 @@ async function tenantCorrente(c: Ctx): Promise<any> {
   return c.env.DB.prepare('SELECT * FROM tenants WHERE id = ?').bind(c.get('tenantId')).first();
 }
 
+/** Logo dello studio pronto per il .docx (AR-M6), se presente e valido. */
+function logoStudioDocx(tenant: any): { base64: string; larghezzaPx: number; altezzaPx: number } | undefined {
+  const l = logoStudio(tenant?.logo_url);
+  if (!l || !l.larghezza || !l.altezza) return undefined;
+  return { base64: l.dataUrl.slice('data:image/png;base64,'.length), larghezzaPx: l.larghezza, altezzaPx: l.altezza };
+}
+
 async function nomiUtenti(c: Ctx): Promise<Record<string, string>> {
   const { results } = await c.env.DB.prepare('SELECT id, nome FROM utenti WHERE tenant_id = ?')
     .bind(c.get('tenantId')).all<{ id: string; nome: string }>();
@@ -1289,15 +1368,16 @@ api.get('/studio/autovalutazioni/:id/verbale', async (c) => {
   if (!av) return c.json({ errore: 'Autovalutazione non trovata' }, 404);
 
   const nomi = await nomiUtenti(c);
+  const tenant = await tenantCorrente(c);
   const corpo = corpoVerbaleAutovalutazione({
-    tenant: await tenantCorrente(c),
+    tenant,
     av,
     ruleset: ruleset(av.ruleset_id),
     nomeCreatore: nomi[av.creato_da] ?? '—',
     nomeFirmatario: av.firmata_da ? nomi[av.firmata_da] : null,
   });
   await scriviAudit(c.env.DB, { tenantId, utenteId: c.get('utente').id, azione: 'VERBALE_AUTOVALUTAZIONE', entita: 'autovalutazioni', entitaId: av.id, ip: c.get('ip') });
-  return rispostaDocx(costruisciDocx(corpo), `verbale-autovalutazione-v${av.versione}.docx`);
+  return rispostaDocx(costruisciDocx(corpo, { logoStudio: logoStudioDocx(tenant) }), `verbale-autovalutazione-v${av.versione}.docx`);
 });
 
 /** Carica fascicolo + cliente + dati collegati per scheda e fascicolo completo. */
@@ -1319,8 +1399,9 @@ api.get('/fascicoli/:id/scheda-verifica', async (c) => {
 
   const nomi = await nomiUtenti(c);
   const ultima = d.valutazioni[0] ?? null;
+  const tenant = await tenantCorrente(c);
   const corpo = corpoSchedaVerifica({
-    tenant: await tenantCorrente(c),
+    tenant,
     fascicolo: d.fascicolo,
     cliente: d.cliente,
     valutazione: ultima,
@@ -1330,7 +1411,7 @@ api.get('/fascicoli/:id/scheda-verifica', async (c) => {
     nomeFirmatario: ultima?.firmata_da ? nomi[ultima.firmata_da] : nomi[d.fascicolo.creato_da],
   });
   await scriviAudit(c.env.DB, { tenantId, utenteId: c.get('utente').id, azione: 'VERBALE_SCHEDA_VERIFICA', entita: 'fascicoli', entitaId: d.fascicolo.id, ip: c.get('ip') });
-  return rispostaDocx(costruisciDocx(corpo), `scheda-verifica-${d.fascicolo.codice.replace('/', '-')}.docx`);
+  return rispostaDocx(costruisciDocx(corpo, { logoStudio: logoStudioDocx(tenant) }), `scheda-verifica-${d.fascicolo.codice.replace('/', '-')}.docx`);
 });
 
 api.get('/fascicoli/:id/astensioni/:idAst/verbale', soloTitolare, async (c) => {
@@ -1342,15 +1423,16 @@ api.get('/fascicoli/:id/astensioni/:idAst/verbale', soloTitolare, async (c) => {
   if (!a) return c.json({ errore: 'Astensione non trovata' }, 404);
 
   const nomi = await nomiUtenti(c);
+  const tenant = await tenantCorrente(c);
   const corpo = corpoVerbaleAstensione({
-    tenant: await tenantCorrente(c),
+    tenant,
     fascicolo: d.fascicolo,
     cliente: d.cliente,
     astensione: a,
     nomeDecisore: nomi[a.decisa_da] ?? '—',
   });
   await scriviAudit(c.env.DB, { tenantId, utenteId: c.get('utente').id, azione: 'VERBALE_ASTENSIONE', entita: 'astensioni', entitaId: a.id, ip: c.get('ip') });
-  return rispostaDocx(costruisciDocx(corpo), `verbale-astensione-${d.fascicolo.codice.replace('/', '-')}.docx`);
+  return rispostaDocx(costruisciDocx(corpo, { logoStudio: logoStudioDocx(tenant) }), `verbale-astensione-${d.fascicolo.codice.replace('/', '-')}.docx`);
 });
 
 api.get('/fascicoli/:id/astensioni', async (c) => {
@@ -1372,8 +1454,9 @@ api.get('/fascicoli/:id/fascicolo-ispezione', async (c) => {
 
   const nomi = await nomiUtenti(c);
   const ultima = d.valutazioni[0] ?? null;
+  const tenant = await tenantCorrente(c);
   const corpo = corpoFascicoloIspezione({
-    tenant: await tenantCorrente(c),
+    tenant,
     fascicolo: d.fascicolo,
     cliente: d.cliente,
     valutazioni: d.valutazioni,
@@ -1388,7 +1471,7 @@ api.get('/fascicoli/:id/fascicolo-ispezione', async (c) => {
     nomeFirmatario: ultima?.firmata_da ? nomi[ultima.firmata_da] : nomi[d.fascicolo.creato_da],
   });
   await scriviAudit(c.env.DB, { tenantId, utenteId: c.get('utente').id, azione: 'VERBALE_FASCICOLO_ISPEZIONE', entita: 'fascicoli', entitaId: d.fascicolo.id, ip: c.get('ip') });
-  return rispostaDocx(costruisciDocx(corpo), `fascicolo-ispezione-${d.fascicolo.codice.replace('/', '-')}.docx`);
+  return rispostaDocx(costruisciDocx(corpo, { logoStudio: logoStudioDocx(tenant) }), `fascicolo-ispezione-${d.fascicolo.codice.replace('/', '-')}.docx`);
 });
 
 app.route('/api', api);
@@ -1416,6 +1499,32 @@ export default {
    * modalità di conservazione prevengano qualsiasi perdita dei dati.
    */
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(backupSchedulato(env));
+    ctx.waitUntil(lavoroNotturno(env));
   },
 };
+
+/** Cron notturno: backup (piattaforma + studi) e avvisi canone a Contify. */
+async function lavoroNotturno(env: Env): Promise<void> {
+  // Gli avvisi prima del backup: pochi millisecondi, e un errore nel
+  // backup non deve azzittire i promemoria commerciali (né viceversa:
+  // ogni blocco ha il suo catch, ma il fallimento del backup DEVE
+  // risultare failed in dashboard).
+  try {
+    await avvisiCanone(env);
+  } catch (e) {
+    console.error('avvisi canone falliti:', e);
+  }
+  await backupSchedulato(env);
+}
+
+async function avvisiCanone(env: Env): Promise<void> {
+  const { results } = await env.DB.prepare(
+    "SELECT denominazione, stato, data_scadenza_canone FROM tenants WHERE data_scadenza_canone IS NOT NULL AND stato != 'cessato'",
+  ).all<{ denominazione: string; stato: string; data_scadenza_canone: string }>();
+  for (const t of results ?? []) {
+    const giorni = giorniAllaScadenza(t.data_scadenza_canone);
+    if (giorni === null || !(SOGLIE_AVVISO_CANONE as readonly number[]).includes(giorni)) continue;
+    const inviata = await inviaEmailAvvisoCanone(env, { studio: t.denominazione, scadenza: t.data_scadenza_canone, giorni });
+    console.log(`avviso canone ${t.denominazione} (${giorni} giorni): email ${inviata ? 'inviata' : 'NON inviata'}`);
+  }
+}

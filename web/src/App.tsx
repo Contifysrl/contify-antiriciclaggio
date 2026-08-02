@@ -160,6 +160,13 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
           </button>
           <LogoContify altezza={24} />
           <div className="text-[11px] text-ink-400 font-medium mt-1">per {sessione.studio.denominazione}</div>
+          {sessione.studio.logo && (
+            <img
+              src={sessione.studio.logo}
+              alt={`Logo ${sessione.studio.denominazione}`}
+              className="mt-2 h-8 max-w-[180px] object-contain object-left"
+            />
+          )}
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto flex flex-col">
           {voci.map((v) => (
@@ -208,7 +215,23 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
       </aside>
 
       <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8">
-        <div className="max-w-[1180px]">{children}</div>
+        <div className="max-w-[1180px]">
+          {/* Stato commerciale (AR-M6): il blocco vero è lato server; qui
+              si spiega all'utente perché i salvataggi falliscono. */}
+          {sessione.studio.stato === 'sospeso' && (
+            <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-sm px-4 py-3">
+              <strong>Servizio in sola lettura.</strong> Puoi consultare ed esportare i dati dello studio,
+              ma non modificarli. Per riattivare le modifiche contatta Contify (anche dal modulo di assistenza).
+            </div>
+          )}
+          {sessione.studio.stato === 'cessato' && (
+            <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm px-4 py-3">
+              <strong>Il servizio non è più attivo per questo studio.</strong> Contatta Contify
+              (info@contify.it) per riattivarlo.
+            </div>
+          )}
+          {children}
+        </div>
       </main>
     </div>
   );

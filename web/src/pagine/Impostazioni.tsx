@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { AvatarUtente, Badge, ErrorBanner, HelpLink, Modal } from '../components/ui';
 import { Icona } from '../components/icone';
-import { ridimensionaAvatar } from '../lib/avatar';
+import { ridimensionaAvatar, ridimensionaLogo } from '../lib/avatar';
 import { PiedeLegale } from '../componenti';
 import type { SessioneApp } from './Accessi';
 
@@ -49,6 +49,7 @@ export function Impostazioni({ sessione, onSessioneAggiornata }: {
       <h1>Impostazioni <HelpLink sezione="impostazioni" /></h1>
       <p className="occhiello">Il tuo profilo, la password e — per il titolare — gli utenti dello studio.</p>
       <Profilo sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} />
+      {sessione.utente.ruolo === 'TITOLARE' && <LogoStudio sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} />}
       <CambiaPassword />
       {sessione.utente.ruolo === 'TITOLARE' && <GestioneUtenti ioId={sessione.utente.id} />}
       {sessione.utente.ruolo === 'TITOLARE' && <BackupArchivio />}
@@ -100,6 +101,78 @@ function Profilo({ sessione, onSessioneAggiornata }: {
               {sessione.utente.avatar ? 'Cambia foto' : 'Carica una foto'}
             </button>
             {sessione.utente.avatar && (
+              <button className="btn btn-ghost btn-sm" onClick={rimuovi}>Rimuovi</button>
+            )}
+          </div>
+        </div>
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) carica(f); e.target.value = ''; }}
+      />
+    </div>
+  );
+}
+
+// ── Logo dello studio (AR-M6, solo titolare) ───────────────────
+function LogoStudio({ sessione, onSessioneAggiornata }: {
+  sessione: SessioneApp;
+  onSessioneAggiornata: (s: SessioneApp) => void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [errore, setErrore] = useState('');
+  const [invio, setInvio] = useState(false);
+
+  const carica = async (file: File) => {
+    setErrore('');
+    setInvio(true);
+    try {
+      const { dataUrl, larghezza, altezza } = await ridimensionaLogo(file);
+      await api.post('/studio/logo', { logo: dataUrl, larghezza, altezza });
+      onSessioneAggiornata({ ...sessione, studio: { ...sessione.studio, logo: dataUrl } });
+    } catch (e) {
+      setErrore((e as Error).message);
+    } finally {
+      setInvio(false);
+    }
+  };
+
+  const rimuovi = async () => {
+    setErrore('');
+    try {
+      await api.post('/studio/logo', { logo: null });
+      onSessioneAggiornata({ ...sessione, studio: { ...sessione.studio, logo: null } });
+    } catch (e) {
+      setErrore((e as Error).message);
+    }
+  };
+
+  return (
+    <div className="scheda">
+      <h3 className="!mt-0">Il tuo studio</h3>
+      <div className="aiuto">
+        Il logo compare nella barra laterale e nell’intestazione dei verbali, accanto al logo
+        Contify. Meglio un PNG con sfondo trasparente; viene ridotto automaticamente.
+      </div>
+      {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
+      <div className="flex items-center gap-4">
+        {sessione.studio.logo ? (
+          <img src={sessione.studio.logo} alt={`Logo ${sessione.studio.denominazione}`} className="h-12 max-w-[220px] object-contain rounded bg-ink-50 border border-ink-100 px-2 py-1" />
+        ) : (
+          <div className="h-12 w-40 rounded bg-ink-50 border border-dashed border-ink-200 flex items-center justify-center text-xs text-ink-400">
+            Nessun logo
+          </div>
+        )}
+        <div className="min-w-0">
+          <div className="font-semibold text-ink-800">{sessione.studio.denominazione}</div>
+          <div className="flex gap-2 mt-2">
+            <button className="btn btn-secondary btn-sm" onClick={() => fileRef.current?.click()} disabled={invio}>
+              {invio ? 'Caricamento…' : sessione.studio.logo ? 'Cambia logo' : 'Carica il logo'}
+            </button>
+            {sessione.studio.logo && (
               <button className="btn btn-ghost btn-sm" onClick={rimuovi}>Rimuovi</button>
             )}
           </div>

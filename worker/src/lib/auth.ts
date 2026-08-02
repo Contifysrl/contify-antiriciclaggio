@@ -62,13 +62,17 @@ export async function richiediAutenticazione(
   if (!token) return c.json({ errore: 'Sessione assente' }, 401);
 
   const id = await sha256Hex(token);
+  // Il JOIN su tenants porta lo stato commerciale dentro la stessa query:
+  // nessuna query aggiuntiva per richiesta (blocco sospeso/cessato, AR-M6).
   const riga = await c.env.DB.prepare(
-    `SELECT s.id AS sid, s.scade_il, u.*
-     FROM sessioni s JOIN utenti u ON u.id = s.utente_id
+    `SELECT s.id AS sid, s.scade_il, u.*, t.stato AS tenant_stato
+     FROM sessioni s
+     JOIN utenti u ON u.id = s.utente_id
+     JOIN tenants t ON t.id = u.tenant_id
      WHERE s.id = ? AND u.attivo = 1`,
   )
     .bind(id)
-    .first<Sessione & Utente & { sid: string; scade_il: string }>();
+    .first<Sessione & Utente & { sid: string; scade_il: string; tenant_stato: string | null }>();
 
   if (!riga) return c.json({ errore: 'Sessione non valida' }, 401);
   if (riga.scade_il <= new Date().toISOString()) {
@@ -87,6 +91,7 @@ export async function richiediAutenticazione(
     cambio_password_richiesto: riga.cambio_password_richiesto ?? 0,
   } as Utente);
   c.set('tenantId', riga.tenant_id);
+  c.set('tenantStato', riga.tenant_stato ?? 'attivo');
   c.set('ip', c.req.header('CF-Connecting-IP') ?? null);
   await next();
 }

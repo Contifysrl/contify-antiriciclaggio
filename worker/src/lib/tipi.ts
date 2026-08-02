@@ -33,5 +33,7 @@ export interface Sessione {
 export interface Variabili {
   utente: Utente;
   tenantId: string;
+  /** Stato commerciale del tenant (attivo | sospeso | cessato), dalla sessione. */
+  tenantStato: string;
   ip: string | null;
 }

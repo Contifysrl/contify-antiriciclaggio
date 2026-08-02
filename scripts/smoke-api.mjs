@@ -342,6 +342,31 @@ console.log('\n== Guida, assistenza ed export registro (AR-M5) ==');
   verifica('anche l’esportazione è tracciata', (log.dati ?? []).some((v) => v.azione === 'ESPORTA_REGISTRO'), null);
 }
 
+console.log('\n== Logo dello studio e ciclo commerciale (AR-M6) ==');
+{
+  const PNG_1x1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const rNo = await req('POST', '/studio/logo', { logo: 'data:image/jpeg;base64,xxxx' });
+  verifica('logo non-PNG respinto', rNo.stato === 400, rNo.dati);
+
+  const r = await req('POST', '/studio/logo', { logo: PNG_1x1, larghezza: 1, altezza: 1 });
+  verifica('logo dello studio caricato', r.stato === 200 && r.dati?.ok === true, r.dati);
+  const io = await req('GET', '/auth/io');
+  verifica('il logo torna nella sessione', typeof io.dati?.studio?.logo === 'string', io.dati?.studio);
+  verifica('la sessione riporta lo stato commerciale', io.dati?.studio?.stato === 'attivo', io.dati?.studio);
+
+  // Il verbale ora incorpora il logo dello studio nell'intestazione.
+  const { unzipSync, strFromU8 } = await import('fflate');
+  const doc = await reqDocx(`/studio/autovalutazioni/${idAutoval}/verbale`);
+  const conLogo = unzipSync(doc.bytes);
+  verifica('il verbale incorpora il logo dello studio', 'word/media/logo-studio.png' in conLogo);
+  verifica('l’header referenzia il logo dello studio', strFromU8(conLogo['word/header1.xml']).includes('rIdLogoStudio'));
+
+  const rVia = await req('POST', '/studio/logo', { logo: null });
+  verifica('logo rimosso', rVia.stato === 200 && rVia.dati?.logo === null, rVia.dati);
+  const doc2 = await reqDocx(`/studio/autovalutazioni/${idAutoval}/verbale`);
+  verifica('senza logo il verbale torna alla sola intestazione Contify', !('word/media/logo-studio.png' in unzipSync(doc2.bytes)));
+}
+
 console.log('\n== Backup, ripristino ed eliminazione archivio (AR-M4) ==');
 let chiaveBackupManuale;
 {

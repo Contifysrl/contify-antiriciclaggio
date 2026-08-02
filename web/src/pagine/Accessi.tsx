@@ -9,7 +9,7 @@ import { Icona } from '../components/icone';
 
 export interface SessioneApp {
   utente: { id: string; nome: string; email: string; ruolo: string; avatar?: string | null; cambioPasswordRichiesto?: boolean };
-  studio: { id: string; denominazione: string; piano: string };
+  studio: { id: string; denominazione: string; piano: string; stato?: string; logo?: string | null };
 }
 
 /** Campo password con occhio mostra/nascondi. */

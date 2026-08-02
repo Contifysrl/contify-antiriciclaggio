@@ -104,3 +104,23 @@ export async function inviaEmailAssistenza(
     <p style="font-size:14px;color:#374151;white-space:pre-wrap">${escapeHtml(dati.messaggio)}</p>`);
   return invia(env, destinatario, `${PRODOTTO} — assistenza: ${dati.oggetto}`, html, dati.email);
 }
+
+/**
+ * Avviso a Contify sul canone di uno studio (AR-M6): parte dal cron
+ * notturno quando i giorni alla scadenza toccano una soglia di avviso.
+ */
+export async function inviaEmailAvvisoCanone(
+  env: Env,
+  dati: { studio: string; scadenza: string; giorni: number },
+): Promise<boolean> {
+  const destinatario = env.ASSISTENZA_EMAIL ?? 'info@contify.it';
+  const quando =
+    dati.giorni > 0 ? `scade tra ${dati.giorni} giorni` : dati.giorni === 0 ? 'scade OGGI' : `è scaduto da ${-dati.giorni} giorni`;
+  const html = involucro(`
+    <p style="font-size:14px;color:#111827"><strong>Canone ${PRODOTTO}</strong></p>
+    <p style="font-size:14px;color:#111827">Il canone dello studio <strong>${escapeHtml(dati.studio)}</strong> ${quando}
+    (scadenza: <strong>${dati.scadenza}</strong>).</p>
+    <p style="font-size:13px;color:#6b7280">Promemoria automatico dal controllo notturno. Stato e scadenza si
+    amministrano sul database (tenants.stato, tenants.data_scadenza_canone).</p>`);
+  return invia(env, destinatario, `${PRODOTTO} — canone ${dati.studio}: ${quando}`, html);
+}
