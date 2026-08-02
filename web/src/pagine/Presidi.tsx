@@ -268,6 +268,12 @@ export function Sos() {
             <textarea value={f.motiviSospetto ?? ''} onChange={(e) => setF({ ...f, motiviSospetto: e.target.value })} />
           </div>
 
+          <SuggerimentiIndicatoriAi
+            descrizione={`${f.descrizioneOperazione ?? ''}\n${f.motiviSospetto ?? ''}`}
+            selezionati={f.indicatori}
+            onAggiungi={toggleSubIndice}
+          />
+
           {indicatori && (
             <div className="campo">
               <label>Indicatori di anomalia ricorrenti</label>
@@ -348,5 +354,78 @@ export function Sos() {
       </div>
       <PiedeLegale />
     </>
+  );
+}
+
+// ── Suggeritore di indicatori UIF con l'AI (AR-M9) ─────────────
+// I suggerimenti citano il sub-indice letterale; l'aggiunta passa dallo
+// stesso toggle dei checkbox manuali. Ogni suggerimento è da rivedere.
+
+function SuggerimentiIndicatoriAi({ descrizione, selezionati, onAggiungi }: {
+  descrizione: string;
+  selezionati: Array<number | string>;
+  onAggiungi: (codice: string) => void;
+}) {
+  const [suggerimenti, setSuggerimenti] = useState<any[] | null>(null);
+  const [errore, setErrore] = useState('');
+  const [inCorso, setInCorso] = useState(false);
+
+  const chiedi = async () => {
+    setErrore('');
+    setInCorso(true);
+    setSuggerimenti(null);
+    try {
+      const r = await api.post<{ suggerimenti: any[] }>('/ai/indicatori', { descrizione });
+      setSuggerimenti(r.suggerimenti);
+    } catch (e) {
+      setErrore((e as Error).message);
+    } finally {
+      setInCorso(false);
+    }
+  };
+
+  return (
+    <div className="campo">
+      <div className="aiuto">
+        L’assistente AI può proporre i sub-indici pertinenti fra i 400 del provvedimento UIF,
+        a partire da descrizione e motivi. <strong>Non inserire nominativi nei testi</strong>:
+        descrivi i fatti, non le persone. I suggerimenti vanno sempre verificati.
+      </div>
+      <button type="button" className="azione secondaria" onClick={chiedi} disabled={inCorso || descrizione.trim().length < 30}>
+        {inCorso ? 'L’assistente sta leggendo…' : 'Suggerisci gli indicatori (AI)'}
+      </button>
+      {errore && <div className="errore">{errore}</div>}
+      {suggerimenti && suggerimenti.length === 0 && (
+        <div className="aiuto" style={{ marginTop: 8 }}>Nessun sub-indice è parso pertinente: scegli manualmente dall’elenco sopra.</div>
+      )}
+      {suggerimenti && suggerimenti.length > 0 && (
+        <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
+          {suggerimenti.map((s) => {
+            const aggiunto = selezionati.includes(s.codice);
+            return (
+              <div key={s.codice} className="riquadro info" style={{ margin: 0 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+                  <div style={{ fontSize: 13 }}>
+                    <strong className="mono">{s.codice}</strong> — {s.titoloIndicatore}
+                    <div style={{ marginTop: 4 }}>{s.testo}</div>
+                    {s.motivo && <div style={{ marginTop: 4, fontStyle: 'italic', color: '#41605f' }}>Perché: {s.motivo}</div>}
+                  </div>
+                  <button
+                    type="button"
+                    className="azione secondaria"
+                    style={{ flexShrink: 0 }}
+                    onClick={() => onAggiungi(s.codice)}
+                    disabled={aggiunto}
+                  >
+                    {aggiunto ? 'Aggiunto' : 'Aggiungi'}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          <div className="aiuto">Suggerimenti generati con AI: verifica ogni sub-indice prima di citarlo nella segnalazione.</div>
+        </div>
+      )}
+    </div>
   );
 }

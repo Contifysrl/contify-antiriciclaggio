@@ -40,6 +40,7 @@ import { SOGLIE_AVVISO_CANONE, bloccoPerStato, giorniAllaScadenza, statoValido }
 import { cercaAnagrafica, limiteSuperato } from './lib/lookup';
 import { aggiornaListeSanzioni, caricaListe, eseguiScreeningTenant, listeDaAggiornare, screeningSchedulato } from './lib/sanzioni';
 import { normalizzaPiva } from './lib/lookup/piva';
+import { ErroreAi, MODELLO_DEFAULT, aiAbilitata, generaBozza, suggerisciIndicatori } from './lib/ai';
 import { getCookie } from 'hono/cookie';
 
 import { CNDCEC_2025 } from './domain/rulesets/cndcec-2025';
@@ -1090,6 +1091,110 @@ api.post('/clienti/:id/titolarita/registro', puoScrivere, async (c) => {
     dettaglio: { data, incongruenza, titolari: r.meta.changes }, ip: c.get('ip'),
   });
   return c.json({ ok: true, titolariAggiornati: r.meta.changes });
+});
+
+// ===========================================================================
+// ASSISTENTE AI (AR-M9) — suggerimenti, mai decisioni
+//
+// Disattivato finché il titolare non lo abilita accettando l'informativa.
+// All'API esterna arrivano solo i testi digitati (senza nominativi, come
+// impone l'interfaccia) e i testi normativi candidati; nel registro resta
+// l'uso della funzione, mai il contenuto.
+// ===========================================================================
+
+async function tenantConAiAbilitata(c: Ctx): Promise<boolean> {
+  const t = await c.env.DB.prepare('SELECT parametri FROM tenants WHERE id = ?').bind(c.get('tenantId')).first<any>();
+  return aiAbilitata(t?.parametri);
+}
+
+api.get('/ai/stato', async (c) => {
+  return c.json({
+    abilitata: await tenantConAiAbilitata(c),
+    chiaveConfigurata: Boolean(c.env.ANTHROPIC_API_KEY) || c.env.AI_FIXTURES === '1',
+    modello: c.env.AI_MODEL ?? MODELLO_DEFAULT,
+  });
+});
+
+api.post('/ai/abilita', soloTitolare, async (c) => {
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const abilita = Boolean(b.abilita);
+  if (abilita && b.accetto !== true) {
+    return c.json({ errore: "Per abilitare l'assistente serve l'accettazione esplicita dell'informativa" }, 400);
+  }
+  const t = await c.env.DB.prepare('SELECT parametri FROM tenants WHERE id = ?').bind(u.tenant_id).first<any>();
+  const parametri = (() => { try { return JSON.parse(t?.parametri ?? '{}'); } catch { return {}; } })();
+  parametri.ai = abilita ? { abilitata: true, accettataIl: new Date().toISOString(), da: u.id } : { abilitata: false };
+  await c.env.DB.prepare('UPDATE tenants SET parametri = ? WHERE id = ?').bind(JSON.stringify(parametri), u.tenant_id).run();
+  await scriviAudit(c.env.DB, {
+    tenantId: u.tenant_id, utenteId: u.id, azione: abilita ? 'ABILITA_AI' : 'DISABILITA_AI', ip: c.get('ip'),
+  });
+  return c.json({ ok: true, abilitata: abilita });
+});
+
+/** Suggeritore di indicatori UIF: contenuto pre-SOS → riservato al titolare (art. 38). */
+api.post('/ai/indicatori', puoVedereSos, async (c) => {
+  if (!(await tenantConAiAbilitata(c))) {
+    return c.json({ errore: "L'assistente AI non è abilitato: il titolare può attivarlo dalle Impostazioni", codice: 'ai_disabilitata' }, 403);
+  }
+  const b = await c.req.json<any>().catch(() => ({}));
+  const descrizione = String(b.descrizione ?? '').trim();
+  if (descrizione.length < 30) {
+    return c.json({ errore: 'Descrivi l’operatività con qualche dettaglio in più (senza nominativi): almeno una frase.' }, 400);
+  }
+  try {
+    const suggerimenti = await suggerisciIndicatori(c.env, descrizione);
+    await scriviAudit(c.env.DB, {
+      tenantId: c.get('tenantId'), utenteId: c.get('utente').id, azione: 'USO_AI',
+      dettaglio: { funzione: 'indicatori_uif', suggerimenti: suggerimenti.length }, ip: c.get('ip'),
+    });
+    return c.json({ suggerimenti });
+  } catch (e) {
+    if (e instanceof ErroreAi) return c.json({ errore: e.message }, e.status as 400);
+    throw e;
+  }
+});
+
+api.post('/ai/bozza', puoScrivere, async (c) => {
+  if (!(await tenantConAiAbilitata(c))) {
+    return c.json({ errore: "L'assistente AI non è abilitato: il titolare può attivarlo dalle Impostazioni", codice: 'ai_disabilitata' }, 403);
+  }
+  const tenantId = c.get('tenantId');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const tipo = String(b.tipo ?? '');
+  if (tipo !== 'SCOPO_NATURA' && tipo !== 'MOTIVAZIONE_ASTENSIONE') {
+    return c.json({ errore: 'Tipo di bozza non riconosciuto' }, 400);
+  }
+
+  // Il contesto arriva dal DATABASE, mai dal client: solo campi non
+  // identificativi (prestazione, natura, attività), mai denominazioni.
+  const contesto: any = { appunti: String(b.appunti ?? '').slice(0, 2000) };
+  if (b.fascicoloId) {
+    const f = await c.env.DB.prepare(
+      `SELECT f.prestazione_descrizione, f.tipo_rapporto, f.importo_operazione, cl.tipo AS natura_cliente, cl.attivita_prevalente
+       FROM fascicoli f JOIN clienti cl ON cl.id = f.cliente_id WHERE f.id = ? AND f.tenant_id = ?`,
+    ).bind(String(b.fascicoloId), tenantId).first<any>();
+    if (f) {
+      contesto.prestazione = f.prestazione_descrizione;
+      contesto.tipoRapporto = f.tipo_rapporto;
+      contesto.importo = f.importo_operazione;
+      contesto.naturaCliente = String(f.natura_cliente ?? '').replace(/_/g, ' ').toLowerCase();
+      contesto.attivitaCliente = f.attivita_prevalente ?? undefined;
+    }
+  }
+  if (tipo === 'MOTIVAZIONE_ASTENSIONE') contesto.fondamento = String(b.fondamento ?? '');
+
+  try {
+    const bozza = await generaBozza(c.env, tipo, contesto);
+    await scriviAudit(c.env.DB, {
+      tenantId, utenteId: c.get('utente').id, azione: 'USO_AI',
+      dettaglio: { funzione: tipo.toLowerCase() }, ip: c.get('ip'),
+    });
+    return c.json({ bozza });
+  } catch (e) {
+    if (e instanceof ErroreAi) return c.json({ errore: e.message }, e.status as 400);
+    throw e;
+  }
 });
 
 // ===========================================================================

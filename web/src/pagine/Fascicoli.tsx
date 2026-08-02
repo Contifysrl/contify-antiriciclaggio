@@ -12,6 +12,7 @@ import { ElencoVincoli, GruppoFattori, PiedeLegale, PillolaRischio, Riquadro, Te
 import { HelpLink } from '../components/ui';
 import { ImportClientiModal } from './ImportClienti';
 import { TitolaritaEffettiva, VerificaADistanza } from './TitolaritaVerifica';
+import { BozzaAi } from './BozzaAi';
 
 // ===========================================================================
 export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
@@ -295,6 +296,11 @@ export function Fascicoli({ vaiA }: { vaiA: (p: string) => void }) {
             <label>Scopo e natura della prestazione</label>
             <div className="aiuto">Art. 19 co. 1 lett. c): va acquisita e valutata la compatibilità con quanto lo studio conosce del cliente.</div>
             <textarea value={f.scopoNatura ?? ''} onChange={(e) => setF({ ...f, scopoNatura: e.target.value })} />
+            <BozzaAi
+              tipo="SCOPO_NATURA"
+              contesto={{ appunti: f.scopoNatura ?? '' }}
+              onBozza={(t) => setF({ ...f, scopoNatura: t })}
+            />
           </div>
 
           {prestazioneScelta?.esenteAdeguataVerifica && (
@@ -541,6 +547,11 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
                   value={formAst.motivazione}
                   onChange={(e) => setFormAst({ ...formAst, motivazione: e.target.value })}
                   placeholder="Circostanze di fatto che fondano l’astensione"
+                />
+                <BozzaAi
+                  tipo="MOTIVAZIONE_ASTENSIONE"
+                  contesto={{ fascicoloId: id, fondamento: formAst.fondamento, appunti: formAst.motivazione }}
+                  onBozza={(t) => setFormAst({ ...formAst, motivazione: t })}
                 />
               </div>
               <label style={{ fontWeight: 400 }}>

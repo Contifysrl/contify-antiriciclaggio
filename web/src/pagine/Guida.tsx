@@ -343,6 +343,33 @@ const SEZIONI: Sezione[] = [
     ),
   },
   {
+    id: 'ai',
+    titolo: 'Assistente AI',
+    icona: 'chat',
+    corpo: (
+      <>
+        <P>
+          L'assistente AI produce <K>suggerimenti, mai decisioni</K>. Due funzioni: il{' '}
+          <K>suggeritore di indicatori UIF</K> — descrivi l'operatività sospetta e propone i
+          sub-indici pertinenti fra i 400 testi letterali del provvedimento 12.5.2023, con il
+          motivo — e le <K>bozze</K> dei campi discorsivi (scopo e natura della prestazione,
+          motivazione dell'astensione), sempre da rivedere prima di firmare.
+        </P>
+        <Punti punti={[
+          <>Si attiva in <K>Impostazioni</K> dal titolare, accettando l'informativa: finché è spento, i pulsanti AI non compaiono.</>,
+          <>Regola d'oro: nei testi per l'AI <K>niente nominativi</K>, codici fiscali o dati identificativi — si descrivono i fatti, non le persone.</>,
+          <>Ogni suggerimento cita il sub-indice per codice e testo letterale: il modello non può inventare indicatori, il sistema riscontra ogni codice sul catalogo ufficiale.</>,
+          <>Nel registro resta traccia dell'uso della funzione, mai del contenuto elaborato.</>,
+        ]} />
+        <Attenzione>
+          La responsabilità professionale non si delega: la bozza va letta, corretta e assunta come
+          propria; il sub-indice suggerito va verificato sul caso concreto prima di citarlo nella
+          segnalazione.
+        </Attenzione>
+      </>
+    ),
+  },
+  {
     id: 'verbali',
     titolo: 'Verbali stampabili',
     icona: 'scarica',

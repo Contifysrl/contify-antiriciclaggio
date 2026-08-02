@@ -494,6 +494,52 @@ let idRichiestaVerifica;
   verifica('il riscontro è tracciato', (log.dati ?? []).some((v) => v.azione === 'RISCONTRO_REGISTRO_TE'));
 }
 
+console.log('\n== Assistente AI (AR-M9) ==');
+{
+  // Prima dell'opt-in: tutto spento (l'eventuale opt-in di un giro
+  // precedente si azzera, così il test è ripetibile).
+  await req('POST', '/ai/abilita', { abilita: false });
+  const r = await req('POST', '/ai/indicatori', { descrizione: 'Versamenti ripetuti di contante frazionati in modo artificioso su più giorni.' });
+  verifica('senza opt-in l’AI risponde 403', r.stato === 403 && r.dati?.codice === 'ai_disabilitata', r.dati);
+
+  const rNoAccetto = await req('POST', '/ai/abilita', { abilita: true });
+  verifica('abilitazione senza accettazione respinta', rNoAccetto.stato === 400, rNoAccetto.dati);
+  const rOk = await req('POST', '/ai/abilita', { abilita: true, accetto: true });
+  verifica('il titolare abilita l’assistente accettando l’informativa', rOk.stato === 200, rOk.dati);
+  const stato = await req('GET', '/ai/stato');
+  verifica('lo stato riporta abilitata e modello', stato.dati?.abilitata === true && typeof stato.dati?.modello === 'string', stato.dati);
+}
+{
+  // Suggeritore indicatori (fixtures: primi candidati del prefiltro).
+  const r = await req('POST', '/ai/indicatori', { descrizione: 'Versamenti ripetuti di contante appena sotto soglia, apparentemente frazionati in modo artificioso su più giorni consecutivi presso la stessa banca.' });
+  verifica('il suggeritore propone sub-indici', r.stato === 200 && (r.dati?.suggerimenti?.length ?? 0) >= 1, r.dati);
+  const s0 = r.dati?.suggerimenti?.[0];
+  verifica('ogni suggerimento cita codice e testo letterale', /^\d+\.\d+$/.test(s0?.codice ?? '') && (s0?.testo ?? '').length > 40, s0);
+
+  const rCorta = await req('POST', '/ai/indicatori', { descrizione: 'poco' });
+  verifica('descrizione troppo corta respinta', rCorta.stato === 400, rCorta.dati);
+
+  const log = await req('GET', '/audit');
+  const voce = (log.dati ?? []).find((v) => v.azione === 'USO_AI');
+  verifica('l’uso è tracciato senza contenuto', Boolean(voce) && !JSON.stringify(log.dati).includes('frazionati in modo artificioso'), voce);
+}
+{
+  // Bozze e segregazione ruoli.
+  const r = await req('POST', '/ai/bozza', { tipo: 'SCOPO_NATURA', fascicoloId: idFascicolo, appunti: 'tenuta contabilità ordinaria' });
+  verifica('bozza scopo/natura generata', r.stato === 200 && (r.dati?.bozza ?? '').length > 20, r.dati);
+  const r2 = await req('POST', '/ai/bozza', { tipo: 'QUALCOSA' });
+  verifica('tipo di bozza sconosciuto respinto', r2.stato === 400, r2.dati);
+
+  await req('POST', '/auth/logout');
+  await req('POST', '/auth/login', { email: 'collaboratore@studiodemo.it', password: 'Collab!2026' });
+  const r3 = await req('POST', '/ai/indicatori', { descrizione: 'Versamenti ripetuti di contante frazionati in modo artificioso su più giorni.' });
+  verifica('il suggeritore SOS resta riservato al titolare (art. 38)', r3.stato === 403, r3.dati);
+  const r4 = await req('POST', '/ai/bozza', { tipo: 'SCOPO_NATURA', appunti: 'contabilità e bilancio' });
+  verifica('le bozze non-SOS sono aperte a chi scrive', r4.stato === 200, r4.dati);
+  await req('POST', '/auth/logout');
+  await req('POST', '/auth/login', { email: 'titolare@studiodemo.it', password: 'Antiriciclaggio!2026' });
+}
+
 console.log('\n== Backup, ripristino ed eliminazione archivio (AR-M4) ==');
 let chiaveBackupManuale;
 {

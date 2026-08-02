@@ -35,6 +35,7 @@ AMBIENTE = "produzione" # in locale e' scavalcato da .dev.vars
 MAIL_FROM = "Contify AR <no-reply@contify.it>"
 APP_BASE_URL = "https://antiriciclaggio.contify.it"
 ASSISTENZA_EMAIL = "info@contify.it" # destinatario delle richieste di assistenza in-app
+AI_MODEL = "claude-sonnet-4-5" # modello dell'assistente AI; la chiave e' il secret ANTHROPIC_API_KEY
 
 # Dominio di produzione: contify.it è già una zona Cloudflare, quindi il
 # custom domain si crea da solo al deploy (DNS e certificato inclusi).

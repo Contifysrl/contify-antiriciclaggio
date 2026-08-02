@@ -16,6 +16,12 @@ export interface Env {
   URL_LISTA_UE?: string;
   URL_LISTA_ONU?: string;
   URL_LISTA_OFAC?: string;
+  /** Secret: chiave API Anthropic per l'assistente AI (AR-M9). */
+  ANTHROPIC_API_KEY?: string;
+  /** Modello Claude da usare (default in lib/ai.ts). */
+  AI_MODEL?: string;
+  /** '1' in locale: risposte AI finte, ripetibili (mai in produzione). */
+  AI_FIXTURES?: string;
 }
 
 export interface Utente {

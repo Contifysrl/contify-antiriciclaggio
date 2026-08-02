@@ -52,6 +52,7 @@ export function Impostazioni({ sessione, onSessioneAggiornata }: {
       {sessione.utente.ruolo === 'TITOLARE' && <LogoStudio sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} />}
       <CambiaPassword />
       {sessione.utente.ruolo === 'TITOLARE' && <GestioneUtenti ioId={sessione.utente.id} />}
+      {sessione.utente.ruolo === 'TITOLARE' && <AssistenteAi />}
       {sessione.utente.ruolo === 'TITOLARE' && <BackupArchivio />}
       <PiedeLegale />
     </>
@@ -334,6 +335,78 @@ function GestioneUtenti({ ioId }: { ioId: string }) {
             </div>
           </div>
         </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── Assistente AI (AR-M9, solo titolare) ───────────────────────
+function AssistenteAi() {
+  const [stato, setStato] = useState<{ abilitata: boolean; chiaveConfigurata: boolean; modello: string } | null>(null);
+  const [accetto, setAccetto] = useState(false);
+  const [errore, setErrore] = useState('');
+  const [invio, setInvio] = useState(false);
+
+  const carica = () => api.get<any>('/ai/stato').then(setStato).catch((e) => setErrore(e.message));
+  useEffect(() => { carica(); }, []);
+
+  const imposta = async (abilita: boolean) => {
+    setErrore('');
+    setInvio(true);
+    try {
+      await api.post('/ai/abilita', abilita ? { abilita: true, accetto: true } : { abilita: false });
+      setAccetto(false);
+      carica();
+    } catch (e) {
+      setErrore((e as Error).message);
+    } finally {
+      setInvio(false);
+    }
+  };
+
+  return (
+    <div className="scheda">
+      <h3 className="!mt-0">Assistente AI</h3>
+      <div className="aiuto">
+        Suggerisce gli indicatori di anomalia UIF pertinenti a partire dalla descrizione
+        dell’operatività e prepara bozze dei campi discorsivi (scopo/natura, motivazione
+        dell’astensione). Sono <strong>suggerimenti da rivedere</strong>: ogni valutazione resta
+        del professionista.
+      </div>
+      {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
+      {stato && !stato.chiaveConfigurata && (
+        <div className="riquadro avviso !my-2">
+          Il servizio non è ancora attivo lato Contify (chiave API non configurata): l’abilitazione
+          resta possibile ma le funzioni daranno errore finché l’attivazione non è completata.
+        </div>
+      )}
+      {stato?.abilitata ? (
+        <>
+          <p className="text-sm">
+            <Badge tone="teal">abilitato</Badge>{' '}
+            <span className="text-ink-500">I testi digitati (senza nominativi) vengono elaborati dal modello {stato.modello} via API Anthropic; nel registro resta solo l’uso della funzione.</span>
+          </p>
+          <button className="btn btn-secondary btn-sm" onClick={() => imposta(false)} disabled={invio}>Disabilita</button>
+        </>
+      ) : (
+        <div className="space-y-2 text-sm">
+          <div className="rounded-lg bg-ink-50 border border-ink-100 px-4 py-3 space-y-1">
+            <div className="font-semibold text-ink-800">Informativa per l’abilitazione</div>
+            <ul className="list-disc ml-5 text-ink-600 space-y-1">
+              <li>I testi digitati nelle funzioni AI vengono inviati all’API Anthropic (Claude) per la sola elaborazione, senza conservazione né addestramento sui dati.</li>
+              <li>L’interfaccia richiede di <strong>non inserire mai nominativi</strong>, codici fiscali o altri dati identificativi: descrivere i fatti, non le persone.</li>
+              <li>I dati dell’archivio inviati automaticamente sono solo non identificativi (tipo di prestazione, natura del cliente, attività).</li>
+              <li>Nel registro delle attività resta traccia dell’uso della funzione, mai del contenuto.</li>
+            </ul>
+          </div>
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input type="checkbox" className="!w-4 mt-0.5" checked={accetto} onChange={(e) => setAccetto(e.target.checked)} />
+            <span>Ho letto l’informativa e abilito l’assistente AI per lo studio.</span>
+          </label>
+          <button className="btn btn-primary btn-sm" onClick={() => imposta(true)} disabled={!accetto || invio}>
+            {invio ? 'Attivazione…' : 'Abilita l’assistente'}
+          </button>
+        </div>
       )}
     </div>
   );
