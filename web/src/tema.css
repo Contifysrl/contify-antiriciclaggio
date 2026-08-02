@@ -3,10 +3,10 @@
 @tailwind utilities;
 
 @layer base {
-  /* Variabili del design system Assist portate in AR (AR-M1).
-     Formato "R G B" senza virgole: serve a Tailwind per le trasparenze
-     (bg-teal-600/10). Valori di partenza = palette Contify Pantone 7474 C;
-     il tema colore scelto dall'utente arriverà con AR-M2. */
+  /* Variabili del design system Assist (AR-M1/M2). Formato "R G B" senza
+     virgole: serve a Tailwind per le trasparenze (bg-teal-600/10). Valori di
+     partenza = palette Contify Pantone 7474 C; il tema colore scelto
+     dall'utente arriverà più avanti, come in Assist. */
   :root {
     --c-50: 238 250 250;
     --c-100: 213 242 242;
@@ -44,11 +44,38 @@
     --gr-300: 134 239 172; --gr-400: 74 222 128; --gr-500: 34 197 94;
     --gr-600: 22 163 74; --gr-700: 21 128 61; --gr-800: 22 101 52; --gr-900: 20 83 45;
   }
+
+  html { @apply text-ink-900; }
+  body { @apply bg-ink-50 font-sans antialiased text-[15px]; }
+
+  /* Tipografia dei contenuti: i titoli delle pagine AR usano gli elementi
+     nudi (h1/h2/h3), stile allineato ad Assist. */
+  h1 { @apply text-2xl font-extrabold text-ink-900 mb-1; }
+  h2 { @apply text-lg font-bold text-teal-700 mt-7 mb-2.5; }
+  h3 { @apply text-[15px] font-bold text-ink-800 mt-4 mb-1.5; }
+  a { @apply text-teal-700; }
+
+  /* Form: le pagine AR usano elementi nudi dentro .campo. Stesso aspetto
+     della classe .input di Assist. */
+  label { @apply block text-xs font-semibold text-ink-500 mb-1 uppercase tracking-wide; }
+  input, select, textarea {
+    @apply w-full rounded-lg border border-ink-200 bg-ink-0 px-3 py-2 text-sm text-ink-900;
+  }
+  input:focus, select:focus, textarea:focus {
+    @apply outline-none ring-2 ring-teal-500/30 border-teal-500;
+  }
+  input[type='checkbox'] { @apply w-4 h-4 rounded border-ink-300 text-teal-600 inline-block align-middle; }
+  textarea { min-height: 84px; resize: vertical; }
+
+  /* Tabelle: aspetto .th/.td di Assist applicato agli elementi nudi. */
+  table { @apply w-full border-collapse text-sm; }
+  th { @apply px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wider text-ink-400 bg-ink-50 border-b border-ink-100; }
+  td { @apply px-4 py-2.5 text-sm border-b border-ink-100 align-top; }
+  tbody tr:hover td { @apply bg-ink-50/60; }
 }
 
 @layer components {
-  /* Classi di componente del design system Assist. In AR-M1 le usa il login;
-     dall'AR-M2 tutta l'interfaccia. */
+  /* ── Design system Assist ─────────────────────────────────────── */
   .btn { @apply inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed; }
   .btn-primary { @apply bg-teal-600 text-accento-on hover:bg-teal-700; }
   .btn-secondary { @apply bg-ink-0 border border-ink-200 text-ink-700 hover:border-teal-400 hover:text-teal-700; }
@@ -60,4 +87,53 @@
   .card { @apply bg-ink-0 rounded-xl border border-ink-100 shadow-sm; }
   .th { @apply px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wider text-ink-400 bg-ink-50 border-b border-ink-100; }
   .td { @apply px-4 py-2.5 text-sm border-b border-ink-100; }
+
+  /* ── Classi storiche delle pagine AR, rimappate sullo stile Assist ──
+     Le pagine (Studio, Fascicoli, Presidi) usano questi nomi: mapparli
+     qui dà a tutta l'app l'aspetto Assist senza riscrivere ogni riga di
+     markup. I nomi nuovi (sopra) restano quelli da usare nel codice nuovo. */
+  .occhiello { @apply text-sm text-ink-500 mb-5 max-w-3xl; }
+  .scheda { @apply card p-5 mb-4; }
+
+  .griglia { @apply grid gap-3.5; }
+  .griglia.c2 { @apply grid-cols-1 sm:grid-cols-2; }
+  .griglia.c3 { @apply grid-cols-1 sm:grid-cols-2 lg:grid-cols-3; }
+  .griglia.c4 { @apply grid-cols-2 lg:grid-cols-4; }
+
+  .tessera { @apply card p-4; }
+  .tessera .etichetta { @apply text-xs uppercase tracking-wide text-ink-400 font-semibold; }
+  .tessera .valore { @apply text-[26px] font-bold text-ink-900 font-mono leading-snug; }
+  .tessera .nota { @apply text-xs text-ink-400; }
+
+  .campo { @apply mb-3.5; }
+  .aiuto { @apply text-xs text-ink-400 font-normal mb-1.5 normal-case tracking-normal; }
+  .mono { @apply font-mono text-[13px]; }
+
+  /* button.azione / button.azione.secondaria (markup storico) */
+  button.azione { @apply btn btn-primary; }
+  button.azione.secondaria { @apply btn bg-ink-0 border border-ink-200 text-ink-700 hover:border-teal-400 hover:text-teal-700 hover:bg-ink-0; }
+
+  /* Pillole di rischio: r1 non significativo → r4 molto significativo.
+     Stile Badge di Assist (sfondo tenue, niente bordo). */
+  .pillola { @apply inline-block max-w-full truncate align-middle px-2.5 py-[3px] rounded-full text-[11px] leading-4 font-semibold; }
+  .pillola.r1 { @apply bg-teal-600/10 text-teal-700; }
+  .pillola.r2 { @apply bg-teal-600/20 text-teal-800; }
+  .pillola.r3 { @apply bg-amber-500/15 text-amber-700; }
+  .pillola.r4 { @apply bg-red-500/10 text-red-700; }
+
+  /* Riquadri informativi: stile banner Assist. */
+  .riquadro { @apply rounded-xl border px-4 py-3 text-sm my-3; }
+  .riquadro.info { @apply bg-teal-50 border-teal-200 text-teal-900; }
+  .riquadro.avviso { @apply bg-amber-50 border-amber-200 text-amber-800; }
+  .riquadro.critico { @apply bg-red-50 border-red-200 text-red-700; }
+  .riquadro .norma { @apply font-mono text-xs text-ink-400 block mt-1; }
+
+  /* Selettore punteggi 1-4 delle regole tecniche. */
+  .scala { @apply flex gap-1.5; }
+  .scala button { @apply flex-1 py-1.5 rounded-lg border border-ink-200 bg-ink-0 text-[13px] text-ink-500 transition-colors hover:border-teal-400; }
+  .scala button[aria-pressed='true'] { @apply bg-teal-600 text-accento-on border-teal-600 font-semibold; }
+
+  .errore { @apply text-sm text-red-600 font-semibold mt-2; }
+  .caricamento { @apply text-sm text-ink-400 py-5; }
+  .piede-legale { @apply mt-10 text-xs text-ink-400 border-t border-ink-100 pt-3.5 max-w-3xl; }
 }

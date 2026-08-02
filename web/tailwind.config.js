@@ -3,13 +3,6 @@ export default {
   // NB: percorsi relativi alla cwd (la root del repo, da cui girano gli
   // script npm), non alla posizione di questo file. Stesso schema di Assist.
   content: ['./web/index.html', './web/src/**/*.{ts,tsx}'],
-  corePlugins: {
-    // AR-M1: il preflight (reset globale) resta spento finché convive con il
-    // vecchio stile.css, altrimenti ristilizzerebbe a caso le pagine non
-    // ancora portate al design system. Si accende in AR-M2, quando stile.css
-    // sparisce.
-    preflight: false,
-  },
   theme: {
     extend: {
       colors: {
