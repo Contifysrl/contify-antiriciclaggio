@@ -10,6 +10,7 @@ import { Autovalutazione, Cruscotto, Registro } from './pagine/Studio';
 import { Clienti, DettaglioFascicolo, Fascicoli } from './pagine/Fascicoli';
 import { Contante, Scadenzario, Sos } from './pagine/Presidi';
 import { Controlli } from './pagine/Controlli';
+import { Normativa } from './pagine/Normativa';
 import { Impostazioni } from './pagine/Impostazioni';
 import { Backup } from './pagine/Backup';
 import { Novita } from './pagine/Novita';
@@ -86,6 +87,7 @@ export default function App() {
     { id: 'contante', testo: 'Limiti al contante', icona: 'mano' },
     { id: 'controlli', testo: 'Controlli automatici', icona: 'cerca' },
     { id: 'sos', testo: 'Segnalazioni', icona: 'avviso', ruoli: ['TITOLARE'] },
+    { id: 'normativa', testo: 'Normativa', icona: 'libro' },
     // Blocco di servizio, stesse voci e stesso ordine di Assist (AR-M11).
     { id: 'impostazioni', testo: 'Impostazioni', icona: 'ingranaggio' },
     { id: 'backup', testo: 'Backup', icona: 'database', ruoli: ['TITOLARE'] },
@@ -112,6 +114,7 @@ export default function App() {
       {pagina === 'contante' && <Contante />}
       {pagina === 'controlli' && <Controlli vaiA={vaiA} ruolo={sessione.utente.ruolo} />}
       {pagina === 'sos' && <Sos />}
+      {pagina === 'normativa' && <Normativa />}
       {/* «Attività» è il nuovo nome del registro; il vecchio hash resta valido. */}
       {(pagina === 'attivita' || pagina === 'registro') && <Registro />}
       {pagina === 'impostazioni' && <Impostazioni sessione={sessione} onSessioneAggiornata={setSessione} />}

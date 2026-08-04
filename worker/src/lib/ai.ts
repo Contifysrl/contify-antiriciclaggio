@@ -288,6 +288,7 @@ COME È FATTO IL SOFTWARE (pagine del menu):
 - Limiti al contante: art. 49, soglie storicizzate per data operazione (5.000 € dal 1.1.2023), comunicazione MEF ex art. 51.
 - Controlli automatici: screening notturno su liste sanzioni UE/ONU/OFAC di clienti e titolari effettivi (le corrispondenze si esaminano e si decidono con motivazione), paesi terzi ad alto rischio (Reg. UE 2025/1184), accreditamento biennale al registro TE.
 - Segnalazioni (solo titolare, art. 38): SOS cifrate, 34 indicatori e 400 sub-indici UIF letterali (provv. 12.5.2023), suggeritore AI degli indicatori.
+- Normativa: le fonti ufficiali (DLgs. 231/2007 su Normattiva, regole tecniche e modulistica CNDCEC, indicatori e istruzioni UIF, paesi ad alto rischio, liste sanzioni, registro titolari effettivi) e il pacchetto AML europeo dal 10.7.2027 — solo collegamenti ai testi ufficiali, sempre correnti.
 - Attività: il registro degli accessi e delle operazioni — catena crittografica ex art. 32, verifica di integrità, export CSV.
 - Impostazioni: profilo, password, utenti e ruoli (titolare/collaboratore/lettore/revisore), logo studio, assistente AI.
 - Backup: backup dell'archivio (notturni UE, ripristino self-service, eliminazione a 3 passi) — solo titolare.

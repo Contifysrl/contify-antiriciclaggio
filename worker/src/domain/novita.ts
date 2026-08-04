@@ -15,6 +15,15 @@ export interface VoceNovita {
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-08-04-normativa',
+    data: '2026-08-04',
+    titolo: 'La Normativa a portata di clic',
+    punti: [
+      'Nuova voce «Normativa» nel menu: i testi ufficiali delle regole antiriciclaggio — DLgs. 231/2007, regole tecniche CNDCEC, indicatori e istruzioni UIF, paesi ad alto rischio, liste sanzioni, registro dei titolari effettivi — con i collegamenti alle fonti, sempre nella versione corrente.',
+      'C’è anche il quadro che arriva: il pacchetto antiriciclaggio europeo (regolamento unico, sesta direttiva, autorità AMLA) con le date da segnare in agenda.',
+    ],
+  },
+  {
     id: '2026-08-04-impostazioni',
     data: '2026-08-04',
     titolo: 'Colori, modalità notturna e controllo degli accessi',

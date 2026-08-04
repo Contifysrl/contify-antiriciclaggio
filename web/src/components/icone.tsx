@@ -109,6 +109,13 @@ const PERCORSI: Record<string, ReactNode> = {
       <path d="m9.17 14.83-4.24 4.24" />
     </>
   ),
+  // Libro aperto (stile Lucide "book-open"): voce di menu Normativa.
+  libro: (
+    <>
+      <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+      <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+    </>
+  ),
   // Campana (stile Lucide "bell"): voce di menu Novità.
   campana: (
     <>

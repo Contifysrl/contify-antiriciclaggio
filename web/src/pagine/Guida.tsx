@@ -343,6 +343,26 @@ const SEZIONI: Sezione[] = [
     ),
   },
   {
+    id: 'normativa',
+    titolo: 'Normativa',
+    icona: 'libro',
+    corpo: (
+      <>
+        <P>
+          La pagina <K>Normativa</K> raccoglie le fonti ufficiali dell'antiriciclaggio — il
+          DLgs. 231/2007, le regole tecniche e la modulistica CNDCEC, gli indicatori e le
+          istruzioni UIF, l'elenco dei paesi terzi ad alto rischio, le liste sanzioni, il
+          registro dei titolari effettivi — e il <K>pacchetto europeo</K> che si applicherà
+          dal 10 luglio 2027.
+        </P>
+        <Punti punti={[
+          <>Ogni scheda spiega <K>perché la fonte conta</K> per lo studio e dove l'applicazione la usa già.</>,
+          <>I collegamenti aprono i <K>testi ufficiali</K> presso chi li pubblica (Normattiva, EUR-Lex, UIF, CNDCEC): sono sempre nella versione corrente, senza copie da tenere aggiornate.</>,
+        ]} />
+      </>
+    ),
+  },
+  {
     id: 'ai',
     titolo: 'Assistente AI',
     icona: 'chat',
