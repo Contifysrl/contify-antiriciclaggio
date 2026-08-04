@@ -8,7 +8,11 @@ import { Icona } from '../components/icone';
 // obbligatorio al primo accesso. Tutte sul LayoutAuth di Assist.
 
 export interface SessioneApp {
-  utente: { id: string; nome: string; email: string; ruolo: string; avatar?: string | null; cambioPasswordRichiesto?: boolean };
+  utente: {
+    id: string; nome: string; email: string; ruolo: string;
+    avatar?: string | null; cambioPasswordRichiesto?: boolean;
+    tema?: string | null; modoColore?: string | null;
+  };
   studio: { id: string; denominazione: string; piano: string; stato?: string; logo?: string | null };
 }
 
@@ -45,6 +49,7 @@ function CampoPassword({ valore, onChange, placeholder, autoComplete, autoFocus 
 export function Accesso({ onEntrato }: { onEntrato: (s: SessioneApp) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [ricordami, setRicordami] = useState(false);
   const [errore, setErrore] = useState('');
   const [inCorso, setInCorso] = useState(false);
 
@@ -53,7 +58,7 @@ export function Accesso({ onEntrato }: { onEntrato: (s: SessioneApp) => void }) 
     setErrore('');
     setInCorso(true);
     try {
-      onEntrato(await api.post<SessioneApp>('/auth/login', { email, password }));
+      onEntrato(await api.post<SessioneApp>('/auth/login', { email, password, ricordami }));
     } catch (err) {
       setErrore((err as Error).message);
     } finally {
@@ -84,6 +89,15 @@ export function Accesso({ onEntrato }: { onEntrato: (s: SessioneApp) => void }) 
           <label className="label">Password</label>
           <CampoPassword valore={password} onChange={setPassword} placeholder="Inserisci la tua password" autoComplete="current-password" />
         </div>
+        <label className="flex items-center gap-2 text-sm text-ink-600 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            className="accent-teal-600"
+            checked={ricordami}
+            onChange={(e) => setRicordami(e.target.checked)}
+          />
+          Resta collegato su questo computer
+        </label>
         {errore && <div className="text-sm text-red-600 font-semibold">{errore}</div>}
         <button className="btn btn-primary w-full justify-center py-2.5" disabled={inCorso}>
           {inCorso ? 'Accesso in corso…' : <>Accedi <Icona nome="frecciaDestra" size={15} /></>}

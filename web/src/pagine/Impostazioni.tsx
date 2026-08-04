@@ -3,6 +3,7 @@ import { api } from '../api';
 import { AvatarUtente, Badge, ErrorBanner, HelpLink, Modal } from '../components/ui';
 import { Icona } from '../components/icone';
 import { ridimensionaAvatar, ridimensionaLogo } from '../lib/avatar';
+import { MODI, TEMI, aspettoLocale, impostaAspetto, modoValido, temaValido } from '../lib/tema';
 import { PiedeLegale } from '../componenti';
 import type { SessioneApp } from './Accessi';
 
@@ -44,15 +45,24 @@ export function Impostazioni({ sessione, onSessioneAggiornata }: {
   sessione: SessioneApp;
   onSessioneAggiornata: (s: SessioneApp) => void;
 }) {
+  const titolare = sessione.utente.ruolo === 'TITOLARE';
   return (
     <>
       <h1>Impostazioni <HelpLink sezione="impostazioni" /></h1>
-      <p className="occhiello">Il tuo profilo, la password e — per il titolare — gli utenti dello studio.</p>
-      <Profilo sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} />
-      {sessione.utente.ruolo === 'TITOLARE' && <LogoStudio sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} />}
+      <p className="occhiello">
+        Aspetto, password e dispositivi collegati; per il titolare anche utenti, logo dello
+        studio, assistente AI e zona di sicurezza.
+      </p>
+      {titolare && <LogoStudio sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} />}
+      {titolare && <GestioneUtenti ioId={sessione.utente.id} />}
+      {titolare && <AssistenteAi />}
       <CambiaPassword />
-      {sessione.utente.ruolo === 'TITOLARE' && <GestioneUtenti ioId={sessione.utente.id} />}
-      {sessione.utente.ruolo === 'TITOLARE' && <AssistenteAi />}
+      <AccessiDispositivi />
+      <div className="grid gap-4 lg:grid-cols-3 my-4">
+        <div className="lg:col-span-2"><AspettoInterfaccia sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} /></div>
+        <div><Profilo sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} /></div>
+      </div>
+      {titolare && <ZonaSicurezza />}
       <PiedeLegale />
     </>
   );
@@ -242,8 +252,215 @@ function CambiaPassword() {
         </div>
         <div className="sm:col-span-3">
           <button className="btn btn-primary" disabled={invio}>{invio ? 'Salvataggio…' : 'Aggiorna la password'}</button>
+          <div className="aiuto mt-2">Cambiando la password gli accessi aperti su altri dispositivi vengono chiusi.</div>
         </div>
       </form>
+    </div>
+  );
+}
+
+// ── Accessi e dispositivi (AR-M12) ─────────────────────────────
+
+interface AccessoRiga {
+  rif: string;
+  dispositivo: string;
+  accessoIl: string;
+  ultimoUtilizzo: string;
+  scadeIl: string;
+  ricordami: boolean;
+  corrente: boolean;
+}
+
+/** Le date di D1 sono UTC, con o senza suffisso: normalizza e mostra locale. */
+function dataOraSessione(iso: string): string {
+  let x = iso.includes('T') ? iso : iso.replace(' ', 'T');
+  if (!/Z$|[+-]\d\d:?\d\d$/.test(x)) x += 'Z';
+  const d = new Date(x);
+  return d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    + ', ' + d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+}
+
+function AccessiDispositivi() {
+  const [sessioni, setSessioni] = useState<AccessoRiga[] | null>(null);
+  const [errore, setErrore] = useState('');
+  const [inCorso, setInCorso] = useState(false);
+
+  const carica = () => {
+    api.get<{ sessioni: AccessoRiga[] }>('/auth/sessioni')
+      .then((r) => setSessioni(r.sessioni))
+      .catch((e) => { setErrore((e as Error).message); setSessioni([]); });
+  };
+  useEffect(() => { carica(); }, []);
+
+  const chiudiAltre = async () => {
+    setErrore('');
+    setInCorso(true);
+    try {
+      await api.post('/auth/sessioni/chiudi-altre');
+      carica();
+    } catch (e) {
+      setErrore((e as Error).message);
+    } finally {
+      setInCorso(false);
+    }
+  };
+
+  const chiudiUna = async (rif: string) => {
+    setErrore('');
+    try {
+      const r = await api.post<{ eraCorrente: boolean }>(`/auth/sessioni/${rif}/chiudi`);
+      if (r.eraCorrente) { location.reload(); return; }
+      carica();
+    } catch (e) {
+      setErrore((e as Error).message);
+    }
+  };
+
+  const altre = (sessioni ?? []).filter((s) => !s.corrente).length;
+
+  return (
+    <div className="scheda">
+      <h3 className="!mt-0">Accessi</h3>
+      <div className="aiuto">
+        I dispositivi da cui risulti collegato. Un accesso si chiude da solo dopo un periodo di
+        inattività: 8 ore, oppure 7 giorni se al momento dell’ingresso hai spuntato «Resta
+        collegato su questo computer». Se non riconosci un dispositivo, chiudilo e cambia la password.
+      </div>
+      {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
+      {sessioni === null ? (
+        <div className="text-sm text-ink-400 py-2">Caricamento…</div>
+      ) : (
+        <div className="divide-y divide-ink-100">
+          {sessioni.map((s) => (
+            <div key={s.rif} className="py-3 flex items-start gap-3 flex-wrap">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-ink-800 text-sm">{s.dispositivo}</span>
+                  {s.corrente && <Badge tone="teal">Questo dispositivo</Badge>}
+                  {s.ricordami && <Badge tone="gray">Resta collegato</Badge>}
+                </div>
+                <div className="text-xs text-ink-400 mt-0.5">
+                  Ultimo utilizzo {dataOraSessione(s.ultimoUtilizzo)} · accesso del {dataOraSessione(s.accessoIl)} · scade il {dataOraSessione(s.scadeIl)}
+                </div>
+              </div>
+              {!s.corrente && (
+                <button className="btn btn-ghost btn-sm shrink-0" onClick={() => chiudiUna(s.rif)}>Chiudi</button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {altre > 0 && (
+        <button className="btn btn-secondary btn-sm mt-2" onClick={chiudiAltre} disabled={inCorso}>
+          {inCorso ? 'Chiusura…' : 'Esci da tutti gli altri dispositivi'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Aspetto dell'interfaccia (AR-M12) ──────────────────────────
+
+function AspettoInterfaccia({ sessione, onSessioneAggiornata }: {
+  sessione: SessioneApp;
+  onSessioneAggiornata: (s: SessioneApp) => void;
+}) {
+  const locale = aspettoLocale();
+  const tema = (temaValido(sessione.utente.tema) ? sessione.utente.tema : locale.tema) as string;
+  const modo = (modoValido(sessione.utente.modoColore) ? sessione.utente.modoColore : locale.modo) as string;
+  const [errore, setErrore] = useState('');
+
+  const cambiaTema = async (nome: string) => {
+    setErrore('');
+    impostaAspetto(nome, modo);
+    onSessioneAggiornata({ ...sessione, utente: { ...sessione.utente, tema: nome } });
+    try { await api.post('/auth/tema', { tema: nome }); } catch (e) { setErrore((e as Error).message); }
+  };
+  const cambiaModo = async (nome: string) => {
+    setErrore('');
+    impostaAspetto(tema, nome);
+    onSessioneAggiornata({ ...sessione, utente: { ...sessione.utente, modoColore: nome } });
+    try { await api.post('/auth/modo', { modo: nome }); } catch (e) { setErrore((e as Error).message); }
+  };
+
+  return (
+    <div className="scheda !my-0 h-full">
+      <h3 className="!mt-0">Aspetto dell’interfaccia</h3>
+      <div className="aiuto">
+        La scelta vale solo per te, su qualsiasi computer usi per entrare. Cambiano i colori di
+        pulsanti, collegamenti e grafici; i rossi delle eliminazioni e gli avvisi restano
+        riconoscibili come sono.
+      </div>
+      {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
+
+      <div className="label mt-3">Chiaro o notturna</div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {MODI.map((m) => (
+          <button
+            key={m.nome}
+            type="button"
+            onClick={() => cambiaModo(m.nome)}
+            aria-pressed={modo === m.nome}
+            className={`text-left rounded-lg border px-3.5 py-2.5 transition-colors ${
+              modo === m.nome ? 'border-teal-400 bg-teal-600/5 ring-1 ring-teal-400' : 'border-ink-200 hover:border-ink-300'
+            }`}
+          >
+            <div className="text-sm font-semibold text-ink-800">{modo === m.nome ? '✓ ' : ''}{m.etichetta}</div>
+            <div className="text-xs text-ink-400">{m.descrizione}</div>
+          </button>
+        ))}
+      </div>
+
+      <div className="label mt-4">Colore</div>
+      <div className="grid gap-2 grid-cols-2 sm:grid-cols-4">
+        {TEMI.map((t) => (
+          <button
+            key={t.nome}
+            type="button"
+            onClick={() => cambiaTema(t.nome)}
+            aria-pressed={tema === t.nome}
+            className={`flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors ${
+              tema === t.nome ? 'border-ink-400 bg-ink-100' : 'border-ink-200 hover:border-ink-300'
+            }`}
+          >
+            <span className="w-3.5 h-3.5 rounded-full shrink-0" style={{ backgroundColor: t.campione }} aria-hidden="true" />
+            <span className="text-sm font-semibold text-ink-800 truncate">{t.etichetta}</span>
+          </button>
+        ))}
+      </div>
+      <div className="aiuto mt-3">
+        Contify è il colore predefinito del programma. Ogni tonalità è scelta perché la scritta
+        sui pulsanti resti leggibile: è il motivo per cui i colori caldi sono più profondi di
+        come li si immagina, e per cui il Giallo porta la scritta scura. In modalità notturna
+        ogni colore ha una seconda versione, più chiara, per staccarsi dal fondo.
+      </div>
+    </div>
+  );
+}
+
+// ── Zona di sicurezza (AR-M12): eliminazione dell'archivio ─────
+
+function ZonaSicurezza() {
+  const [aperto, setAperto] = useState(false);
+  return (
+    <div className="scheda border !border-red-200">
+      <h3 className="!mt-0 flex items-center gap-2 text-red-700">
+        <Icona nome="avviso" size={17} />
+        <span>Zona di sicurezza</span>
+      </h3>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="aiuto !mt-0 max-w-2xl">
+          <strong>Elimina Archivio</strong> cancella definitivamente tutti i dati operativi dello
+          studio: clienti, fascicoli, valutazioni, documenti, operazioni, segnalazioni,
+          astensioni, formazione e autovalutazioni. Restano utenti, impostazioni e registro
+          delle attività. Prima della cancellazione viene creato automaticamente un backup.
+          Utile per svuotare i dati di prova prima di caricare quelli reali.
+        </div>
+        <button className="btn bg-red-600 text-white hover:bg-red-700 shrink-0" onClick={() => setAperto(true)}>
+          Elimina Archivio
+        </button>
+      </div>
+      {aperto && <EliminaArchivioModal onChiudi={() => setAperto(false)} />}
     </div>
   );
 }
@@ -537,6 +754,101 @@ function ModificaUtente({ utente, io, onChiudi, onSalvato, onReset }: {
           </div>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// ── Eliminazione dell'archivio (nata in AR-M4, qui dalla Zona di sicurezza) ──
+
+function EliminaArchivioModal({ onChiudi }: { onChiudi: () => void }) {
+  const [passo, setPasso] = useState(1);
+  const [parola, setParola] = useState('');
+  const [errore, setErrore] = useState('');
+  const [invio, setInvio] = useState(false);
+  const [fatto, setFatto] = useState<{ totale: number } | null>(null);
+
+  const elimina = async (e: FormEvent) => {
+    e.preventDefault();
+    setErrore('');
+    setInvio(true);
+    try {
+      const r = await api.post<{ totale: number }>('/backup/elimina-archivio', { conferma: parola.trim().toUpperCase() });
+      setFatto(r);
+    } catch (err) {
+      setErrore((err as Error).message);
+      setInvio(false);
+    }
+  };
+
+  if (fatto) {
+    return (
+      <Modal title="Archivio eliminato" onClose={() => window.location.reload()}>
+        <div className="space-y-3 text-sm">
+          <div className="riquadro info !my-0">
+            Archivio svuotato: <strong>{fatto.totale} righe</strong> rimosse.
+          </div>
+          <p>
+            La fotografia di sicurezza («pre-eliminazione») è nella lista dei backup: da lì
+            l’archivio resta interamente recuperabile con un ripristino.
+          </p>
+          <div className="text-right">
+            <button className="btn btn-primary" onClick={() => window.location.reload()}>Ricarica l’applicazione</button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title={`Elimina l’archivio — passo ${passo} di 3`} onClose={onChiudi}>
+      {passo === 1 && (
+        <div className="space-y-3 text-sm">
+          <p>
+            Questa operazione <strong>svuota l’intero archivio dello studio</strong>: clienti, fascicoli,
+            valutazioni del rischio, documenti, operazioni, segnalazioni, astensioni, formazione e
+            autovalutazioni.
+          </p>
+          <p>Non tocca: gli utenti e le loro password, le impostazioni dello studio, il registro degli accessi.</p>
+          <div className="flex justify-end gap-2 pt-1">
+            <button className="btn btn-secondary" onClick={onChiudi}>Annulla</button>
+            <button className="btn btn-primary" onClick={() => setPasso(2)}>Ho capito, continua</button>
+          </div>
+        </div>
+      )}
+      {passo === 2 && (
+        <div className="space-y-3 text-sm">
+          <div className="riquadro avviso !my-0">
+            Prima dell’eliminazione viene creato <strong>obbligatoriamente</strong> un backup di sicurezza:
+            se il backup non riesce, l’archivio non viene toccato. Dal backup («pre-eliminazione»)
+            tutto resta recuperabile con un ripristino.
+          </div>
+          <p>
+            Ricorda che i documenti acquisiti sono soggetti a conservazione decennale
+            (art. 31 DLgs. 231/2007): eliminali solo se l’obbligo è assolto altrove
+            o se si tratta di dati di prova.
+          </p>
+          <div className="flex justify-end gap-2 pt-1">
+            <button className="btn btn-secondary" onClick={onChiudi}>Annulla</button>
+            <button className="btn btn-primary" onClick={() => setPasso(3)}>Continua</button>
+          </div>
+        </div>
+      )}
+      {passo === 3 && (
+        <form onSubmit={elimina} className="space-y-3 text-sm">
+          <p>Ultimo passaggio: per eliminare davvero l’archivio scrivi la parola di conferma.</p>
+          <div>
+            <label className="label">Per confermare scrivi ELIMINA</label>
+            <input className="input" value={parola} onChange={(e) => setParola(e.target.value)} autoFocus placeholder="ELIMINA" />
+          </div>
+          {errore && <div className="errore">{errore}</div>}
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" className="btn btn-secondary" onClick={onChiudi}>Annulla</button>
+            <button className="btn btn-primary !bg-red-600 hover:!bg-red-700" disabled={invio || parola.trim().toUpperCase() !== 'ELIMINA'}>
+              {invio ? 'Eliminazione in corso…' : 'Elimina l’archivio'}
+            </button>
+          </div>
+        </form>
+      )}
     </Modal>
   );
 }

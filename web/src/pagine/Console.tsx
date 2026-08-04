@@ -146,6 +146,7 @@ function CambioPasswordConsole({ onFatto }: { onFatto: () => void }) {
 }
 
 function TicketConsolePagina({ operatore, apri }: { operatore: Operatore; apri: string | null }) {
+  const [vista, setVista] = useState<'ticket' | 'studi'>('ticket');
   const [ticket, setTicket] = useState<TicketConsole[] | null>(null);
   const [errore, setErrore] = useState('');
   const [apertoId, setApertoId] = useState<string | null>(apri);
@@ -157,12 +158,21 @@ function TicketConsolePagina({ operatore, apri }: { operatore: Operatore; apri: 
   };
   useEffect(() => { carica(); }, []);
 
+  const tabCls = (attiva: boolean) =>
+    `px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+      attiva ? 'bg-teal-600 text-accento-on' : 'text-ink-500 hover:bg-ink-200'
+    }`;
+
   return (
     <div className="min-h-screen bg-ink-100 p-4 sm:p-8">
       <div className="max-w-[1000px] mx-auto">
         <div className="flex items-center gap-3 mb-6 flex-wrap">
           <LogoContify altezza={24} />
           <span className="text-xs text-ink-400 font-semibold">Console assistenza</span>
+          <div className="flex gap-1 ml-4 bg-ink-0 border border-ink-100 rounded-xl p-1">
+            <button type="button" className={tabCls(vista === 'ticket')} onClick={() => setVista('ticket')}>Ticket</button>
+            <button type="button" className={tabCls(vista === 'studi')} onClick={() => setVista('studi')}>Studi</button>
+          </div>
           <span className="ml-auto text-sm text-ink-500">{operatore.nome}</span>
           <button
             className="btn btn-secondary btn-sm"
@@ -174,7 +184,9 @@ function TicketConsolePagina({ operatore, apri }: { operatore: Operatore; apri: 
 
         {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
 
-        {ticket === null ? (
+        {vista === 'studi' && <StudiConsole />}
+
+        {vista === 'ticket' && (ticket === null ? (
           <Spinner />
         ) : ticket.length === 0 ? (
           <div className="card p-8 text-center text-sm text-ink-400">Nessun ticket: tutto tranquillo.</div>
@@ -200,7 +212,7 @@ function TicketConsolePagina({ operatore, apri }: { operatore: Operatore; apri: 
               </tbody>
             </table>
           </div>
-        )}
+        ))}
 
         {apertoId && (
           <ConversazioneConsole id={apertoId} onChiudi={() => { setApertoId(null); carica(); }} />
@@ -298,6 +310,215 @@ function ConversazioneConsole({ id, onChiudi }: { id: string; onChiudi: () => vo
             </button>
           </div>
         </form>
+      )}
+    </Modal>
+  );
+}
+
+// ── Studi: licenza e contratto (AR-M12) ────────────────────────
+// L'equivalente del riquadro «Licenza e contratto» di Assist, dalla
+// console: stato commerciale, date del contratto e note, senza mai
+// entrare negli archivi degli studi.
+
+interface StudioRiga {
+  id: string;
+  denominazione: string;
+  stato: 'attivo' | 'sospeso' | 'cessato';
+  dataAttivazione: string | null;
+  dataScadenzaCanone: string | null;
+  noteContratto: string | null;
+  nUtenti: number;
+  ultimoAccesso: string | null;
+}
+
+const STATO_STUDIO: Record<StudioRiga['stato'], { testo: string; tone: 'teal' | 'gray' | 'amber' }> = {
+  attivo: { testo: 'Attivo', tone: 'teal' },
+  sospeso: { testo: 'Sospeso (sola lettura)', tone: 'amber' },
+  cessato: { testo: 'Cessato', tone: 'gray' },
+};
+
+function dataIt(iso: string | null): string {
+  if (!iso) return '—';
+  const [a, m, g] = iso.slice(0, 10).split('-');
+  return `${g}/${m}/${a}`;
+}
+
+function giorniAScadenza(iso: string | null): number | null {
+  if (!iso) return null;
+  const oggi = new Date(); oggi.setUTCHours(0, 0, 0, 0);
+  return Math.round((Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) - oggi.getTime()) / 86_400_000);
+}
+
+function StudiConsole() {
+  const [studi, setStudi] = useState<StudioRiga[] | null>(null);
+  const [errore, setErrore] = useState('');
+  const [aperto, setAperto] = useState<StudioRiga | null>(null);
+
+  const carica = () => {
+    api.get<{ studi: StudioRiga[] }>('/console/studi')
+      .then((r) => setStudi(r.studi))
+      .catch((e) => { setErrore((e as Error).message); setStudi([]); });
+  };
+  useEffect(() => { carica(); }, []);
+
+  return (
+    <>
+      {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
+      {studi === null ? (
+        <Spinner />
+      ) : (
+        <div className="card p-5">
+          <table>
+            <thead>
+              <tr><th>Studio</th><th>Stato</th><th>Attivazione</th><th>Scadenza canone</th><th>Utenti</th></tr>
+            </thead>
+            <tbody>
+              {studi.map((s) => {
+                const giorni = giorniAScadenza(s.dataScadenzaCanone);
+                return (
+                  <tr key={s.id} className="cursor-pointer hover:bg-ink-50" onClick={() => setAperto(s)}>
+                    <td className="font-semibold">{s.denominazione}</td>
+                    <td><Badge tone={STATO_STUDIO[s.stato].tone}>{STATO_STUDIO[s.stato].testo}</Badge></td>
+                    <td className="whitespace-nowrap">{dataIt(s.dataAttivazione)}</td>
+                    <td className="whitespace-nowrap">
+                      {dataIt(s.dataScadenzaCanone)}
+                      {giorni !== null && (
+                        <span className={`block text-xs ${giorni < 0 ? 'text-red-600 font-semibold' : giorni <= 30 ? 'text-amber-600' : 'text-ink-400'}`}>
+                          {giorni < 0 ? `scaduto da ${-giorni} giorni` : `mancano ${giorni} giorni`}
+                        </span>
+                      )}
+                    </td>
+                    <td>{s.nUtenti}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {aperto && (
+        <StudioModal studio={aperto} onChiudi={(ricarica) => { setAperto(null); if (ricarica) carica(); }} />
+      )}
+    </>
+  );
+}
+
+function StudioModal({ studio, onChiudi }: { studio: StudioRiga; onChiudi: (ricarica: boolean) => void }) {
+  const [attivazione, setAttivazione] = useState(studio.dataAttivazione?.slice(0, 10) ?? '');
+  const [scadenza, setScadenza] = useState(studio.dataScadenzaCanone?.slice(0, 10) ?? '');
+  const [note, setNote] = useState(studio.noteContratto ?? '');
+  const [errore, setErrore] = useState('');
+  const [esito, setEsito] = useState('');
+  const [invio, setInvio] = useState(false);
+  const [confermaStato, setConfermaStato] = useState<'sospeso' | 'cessato' | 'attivo' | null>(null);
+  const [toccato, setToccato] = useState(false);
+
+  const salva = async (e: FormEvent) => {
+    e.preventDefault();
+    setErrore(''); setEsito(''); setInvio(true);
+    try {
+      await api.post(`/console/studi/${studio.id}/contratto`, {
+        dataAttivazione: attivazione || null,
+        dataScadenzaCanone: scadenza || null,
+        noteContratto: note.trim() || null,
+      });
+      setEsito('Contratto salvato.');
+      setToccato(true);
+    } catch (err) {
+      setErrore((err as Error).message);
+    } finally {
+      setInvio(false);
+    }
+  };
+
+  const cambiaStato = async (stato: 'attivo' | 'sospeso' | 'cessato') => {
+    setErrore(''); setEsito('');
+    try {
+      await api.post(`/console/studi/${studio.id}/stato`, { stato });
+      onChiudi(true);
+    } catch (err) {
+      setErrore((err as Error).message);
+      setConfermaStato(null);
+    }
+  };
+
+  const ETICHETTA_CONFERMA: Record<string, { titolo: string; corpo: string; bottone: string }> = {
+    sospeso: {
+      titolo: 'Sospendere lo studio?',
+      corpo: 'Lo studio passa in sola lettura: consultazione, export e backup restano possibili, le modifiche no. Nessuna email parte in automatico.',
+      bottone: 'Sospendi (sola lettura)',
+    },
+    cessato: {
+      titolo: 'Segnare lo studio come cessato?',
+      corpo: 'L\'accesso viene chiuso (restano solo login/logout). I dati NON vengono toccati: per la cancellazione vera serve la procedura concordata col cliente.',
+      bottone: 'Segna cessato',
+    },
+    attivo: {
+      titolo: 'Riattivare lo studio?',
+      corpo: 'Lo studio torna pienamente operativo.',
+      bottone: 'Riattiva',
+    },
+  };
+
+  return (
+    <Modal title={studio.denominazione} onClose={() => onChiudi(toccato)} wide>
+      <div className="flex items-center gap-2 mb-4">
+        <Badge tone={STATO_STUDIO[studio.stato].tone}>{STATO_STUDIO[studio.stato].testo}</Badge>
+        <span className="text-xs text-ink-400">{studio.nUtenti} utenti attivi</span>
+      </div>
+      {esito && <div className="riquadro info !my-2 text-sm">{esito}</div>}
+      {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
+      <form onSubmit={salva} className="space-y-3 text-sm">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="label">Attivazione</label>
+            <input className="input" type="date" value={attivazione} onChange={(e) => setAttivazione(e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Scadenza canone</label>
+            <input className="input" type="date" value={scadenza} onChange={(e) => setScadenza(e.target.value)} />
+          </div>
+        </div>
+        <div>
+          <label className="label">Note contratto (visibili solo a Contify)</label>
+          <textarea className="input min-h-[70px]" value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} placeholder="Numero offerta, referente, condizioni particolari…" />
+        </div>
+        <div className="flex flex-wrap gap-2 pt-1">
+          <button className="btn btn-primary btn-sm" disabled={invio}>{invio ? 'Salvataggio…' : 'Salva contratto'}</button>
+          {studio.stato !== 'sospeso' && studio.stato !== 'cessato' && (
+            <button type="button" className="btn btn-secondary btn-sm !text-amber-700" onClick={() => setConfermaStato('sospeso')}>
+              Sospendi (sola lettura)
+            </button>
+          )}
+          {studio.stato !== 'cessato' && (
+            <button type="button" className="btn btn-secondary btn-sm !text-red-700" onClick={() => setConfermaStato('cessato')}>
+              Segna cessato
+            </button>
+          )}
+          {studio.stato !== 'attivo' && (
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setConfermaStato('attivo')}>
+              Riattiva
+            </button>
+          )}
+        </div>
+        <div className="aiuto">
+          Nessuna sospensione avviene in automatico: alle soglie di scadenza parte solo un
+          promemoria via email a Contify. Gli avvisi del canone restano quelli del lavoro notturno.
+        </div>
+      </form>
+
+      {confermaStato && (
+        <Modal title={ETICHETTA_CONFERMA[confermaStato].titolo} onClose={() => setConfermaStato(null)}>
+          <div className="space-y-3 text-sm">
+            <p>{ETICHETTA_CONFERMA[confermaStato].corpo}</p>
+            <div className="flex justify-end gap-2">
+              <button className="btn btn-secondary" onClick={() => setConfermaStato(null)}>Annulla</button>
+              <button className="btn btn-primary" onClick={() => cambiaStato(confermaStato)}>
+                {ETICHETTA_CONFERMA[confermaStato].bottone}
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </Modal>
   );

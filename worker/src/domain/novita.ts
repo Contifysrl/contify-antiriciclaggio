@@ -15,6 +15,17 @@ export interface VoceNovita {
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-08-04-impostazioni',
+    data: '2026-08-04',
+    titolo: 'Colori, modalità notturna e controllo degli accessi',
+    punti: [
+      'In Impostazioni puoi scegliere il colore dell’interfaccia fra dodici tinte e la modalità Chiaro, Notturna o «Come il computer»: la scelta è personale e ti segue su ogni dispositivo.',
+      'Nel login c’è la casella «Resta collegato su questo computer»: senza, l’accesso si chiude da solo dopo 8 ore di inattività; con la spunta dura fino a 7 giorni.',
+      'Sempre in Impostazioni vedi i dispositivi da cui risulti collegato e puoi scollegarli, uno alla volta o tutti insieme.',
+      'L’eliminazione dell’archivio si è spostata nella «Zona di sicurezza» in fondo a Impostazioni; la pagina Backup resta per backup e ripristini.',
+    ],
+  },
+  {
     id: '2026-08-04-menu-assistenza',
     data: '2026-08-04',
     titolo: 'Nuovo menu, pagina Novità e assistenza con risposte in app',

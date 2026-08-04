@@ -34,6 +34,8 @@ export interface Utente {
   password_hash?: string;
   avatar?: string | null;
   cambio_password_richiesto?: number;
+  tema?: string | null;
+  modo_colore?: string | null;
 }
 
 export interface Sessione {
@@ -45,6 +47,8 @@ export interface Sessione {
 
 export interface Variabili {
   utente: Utente;
+  /** Id (hash) della sessione corrente: serve all'elenco dispositivi. */
+  sessioneId?: string;
   tenantId: string;
   /** Stato commerciale del tenant (attivo | sospeso | cessato), dalla sessione. */
   tenantStato: string;

@@ -14,7 +14,8 @@ export function Backup() {
       <h1>Backup <HelpLink sezione="backup" /></h1>
       <p className="occhiello">
         Le fotografie notturne dell’archivio dello studio: da qui le scarichi, ne fai una al momento,
-        o riporti l’archivio a una data precedente. Qui vive anche l’eliminazione dell’archivio.
+        o riporti l’archivio a una data precedente. L’eliminazione dell’archivio è nella «Zona di
+        sicurezza» in fondo a Impostazioni.
       </p>
       <BackupArchivio />
       <PiedeLegale />
@@ -58,7 +59,6 @@ function BackupArchivio() {
   const [esito, setEsito] = useState('');
   const [inCorso, setInCorso] = useState(false);
   const [daRipristinare, setDaRipristinare] = useState<BackupRiga | null>(null);
-  const [eliminaAperto, setEliminaAperto] = useState(false);
 
   const carica = () => api.get<{ backups: BackupRiga[] }>('/backup').then((r) => setBackups(r.backups)).catch((e) => setErrore(e.message));
   useEffect(() => { carica(); }, []);
@@ -126,26 +126,9 @@ function BackupArchivio() {
         </table>
       )}
 
-      <div className="mt-6 pt-4 border-t border-red-200">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="font-semibold text-red-700 text-sm">Elimina l’archivio</div>
-            <div className="aiuto !mt-0.5">
-              Svuota clienti, fascicoli, valutazioni, documenti e segnalazioni dello studio.
-              Prima viene creato un backup di sicurezza, da cui tutto resta recuperabile.
-            </div>
-          </div>
-          <button className="btn btn-secondary btn-sm !text-red-700 shrink-0" onClick={() => setEliminaAperto(true)}>
-            Elimina archivio…
-          </button>
-        </div>
-      </div>
 
       {daRipristinare && (
         <RipristinaModal backup={daRipristinare} onChiudi={() => setDaRipristinare(null)} />
-      )}
-      {eliminaAperto && (
-        <EliminaArchivioModal onChiudi={() => setEliminaAperto(false)} />
       )}
     </div>
   );
@@ -223,95 +206,3 @@ function RipristinaModal({ backup, onChiudi }: { backup: BackupRiga; onChiudi: (
   );
 }
 
-function EliminaArchivioModal({ onChiudi }: { onChiudi: () => void }) {
-  const [passo, setPasso] = useState(1);
-  const [parola, setParola] = useState('');
-  const [errore, setErrore] = useState('');
-  const [invio, setInvio] = useState(false);
-  const [fatto, setFatto] = useState<{ totale: number } | null>(null);
-
-  const elimina = async (e: FormEvent) => {
-    e.preventDefault();
-    setErrore('');
-    setInvio(true);
-    try {
-      const r = await api.post<{ totale: number }>('/backup/elimina-archivio', { conferma: parola.trim().toUpperCase() });
-      setFatto(r);
-    } catch (err) {
-      setErrore((err as Error).message);
-      setInvio(false);
-    }
-  };
-
-  if (fatto) {
-    return (
-      <Modal title="Archivio eliminato" onClose={() => window.location.reload()}>
-        <div className="space-y-3 text-sm">
-          <div className="riquadro info !my-0">
-            Archivio svuotato: <strong>{fatto.totale} righe</strong> rimosse.
-          </div>
-          <p>
-            La fotografia di sicurezza («pre-eliminazione») è nella lista dei backup: da lì
-            l’archivio resta interamente recuperabile con un ripristino.
-          </p>
-          <div className="text-right">
-            <button className="btn btn-primary" onClick={() => window.location.reload()}>Ricarica l’applicazione</button>
-          </div>
-        </div>
-      </Modal>
-    );
-  }
-
-  return (
-    <Modal title={`Elimina l’archivio — passo ${passo} di 3`} onClose={onChiudi}>
-      {passo === 1 && (
-        <div className="space-y-3 text-sm">
-          <p>
-            Questa operazione <strong>svuota l’intero archivio dello studio</strong>: clienti, fascicoli,
-            valutazioni del rischio, documenti, operazioni, segnalazioni, astensioni, formazione e
-            autovalutazioni.
-          </p>
-          <p>Non tocca: gli utenti e le loro password, le impostazioni dello studio, il registro degli accessi.</p>
-          <div className="flex justify-end gap-2 pt-1">
-            <button className="btn btn-secondary" onClick={onChiudi}>Annulla</button>
-            <button className="btn btn-primary" onClick={() => setPasso(2)}>Ho capito, continua</button>
-          </div>
-        </div>
-      )}
-      {passo === 2 && (
-        <div className="space-y-3 text-sm">
-          <div className="riquadro avviso !my-0">
-            Prima dell’eliminazione viene creato <strong>obbligatoriamente</strong> un backup di sicurezza:
-            se il backup non riesce, l’archivio non viene toccato. Dal backup («pre-eliminazione»)
-            tutto resta recuperabile con un ripristino.
-          </div>
-          <p>
-            Ricorda che i documenti acquisiti sono soggetti a conservazione decennale
-            (art. 31 DLgs. 231/2007): eliminali solo se l’obbligo è assolto altrove
-            o se si tratta di dati di prova.
-          </p>
-          <div className="flex justify-end gap-2 pt-1">
-            <button className="btn btn-secondary" onClick={onChiudi}>Annulla</button>
-            <button className="btn btn-primary" onClick={() => setPasso(3)}>Continua</button>
-          </div>
-        </div>
-      )}
-      {passo === 3 && (
-        <form onSubmit={elimina} className="space-y-3 text-sm">
-          <p>Ultimo passaggio: per eliminare davvero l’archivio scrivi la parola di conferma.</p>
-          <div>
-            <label className="label">Per confermare scrivi ELIMINA</label>
-            <input className="input" value={parola} onChange={(e) => setParola(e.target.value)} autoFocus placeholder="ELIMINA" />
-          </div>
-          {errore && <div className="errore">{errore}</div>}
-          <div className="flex justify-end gap-2 pt-1">
-            <button type="button" className="btn btn-secondary" onClick={onChiudi}>Annulla</button>
-            <button className="btn btn-primary !bg-red-600 hover:!bg-red-700" disabled={invio || parola.trim().toUpperCase() !== 'ELIMINA'}>
-              {invio ? 'Eliminazione in corso…' : 'Elimina l’archivio'}
-            </button>
-          </div>
-        </form>
-      )}
-    </Modal>
-  );
-}

@@ -15,7 +15,9 @@ import type { Env, Variabili } from './lib/tipi';
 import {
   chiudiSessione,
   creaSessione,
+  descriviDispositivo,
   impostaCookieSessione,
+  rifSessione,
   puoScrivere,
   puoVedereSos,
   richiediAutenticazione,
@@ -105,7 +107,7 @@ const api = new Hono<{ Bindings: Env; Variables: Variabili }>();
 // ===========================================================================
 
 api.post('/auth/login', async (c) => {
-  const { email, password } = await c.req.json<{ email?: string; password?: string }>();
+  const { email, password, ricordami } = await c.req.json<{ email?: string; password?: string; ricordami?: boolean }>();
   if (!email || !password) return c.json({ errore: 'Credenziali mancanti' }, 400);
 
   const u = await c.env.DB.prepare('SELECT * FROM utenti WHERE email = ? AND attivo = 1')
@@ -116,8 +118,8 @@ api.post('/auth/login', async (c) => {
   const ok = u ? await verificaPassword(password, u.password_hash) : await verificaPassword(password, await hashPassword('x'));
   if (!u || !ok) return c.json({ errore: 'Credenziali non valide' }, 401);
 
-  const token = await creaSessione(c.env.DB, u, c.req.header('CF-Connecting-IP') ?? null, c.req.header('User-Agent') ?? null);
-  impostaCookieSessione(c, token);
+  const token = await creaSessione(c.env.DB, u, c.req.header('CF-Connecting-IP') ?? null, c.req.header('User-Agent') ?? null, ricordami === true);
+  impostaCookieSessione(c, token, ricordami === true);
   await c.env.DB.prepare('UPDATE utenti SET ultimo_accesso = ? WHERE id = ?').bind(new Date().toISOString(), u.id).run();
   await scriviAudit(c.env.DB, {
     tenantId: u.tenant_id,
@@ -266,6 +268,8 @@ function utentePubblico(u: any) {
     ruolo: u.ruolo,
     avatar: u.avatar ?? null,
     cambioPasswordRichiesto: Boolean(u.cambio_password_richiesto),
+    tema: u.tema ?? null,
+    modoColore: u.modo_colore ?? null,
   };
 }
 
@@ -322,6 +326,95 @@ api.post('/auth/avatar', async (c) => {
   await c.env.DB.prepare('UPDATE utenti SET avatar = ? WHERE id = ?').bind(avatar, u.id).run();
   await scriviAudit(c.env.DB, { tenantId: u.tenant_id, utenteId: u.id, azione: avatar ? 'AGGIORNA_AVATAR' : 'RIMUOVI_AVATAR', ip: c.get('ip') });
   return c.json({ ok: true });
+});
+
+// ===========================================================================
+// ASPETTO DELL'INTERFACCIA (AR-M12) — tema colore e modo chiaro/notturna,
+// scelte personali che seguono l'utente su ogni dispositivo. La lista dei
+// temi è la stessa del frontend (web/src/lib/tema.ts): qui si valida.
+// ===========================================================================
+
+const TEMI_AMMESSI = ['contify', 'blu', 'indaco', 'viola', 'fucsia', 'rosa', 'rosso', 'arancio', 'ambra', 'giallo', 'verde', 'grigio'];
+const MODI_AMMESSI = ['chiaro', 'scuro', 'auto'];
+
+api.post('/auth/tema', async (c) => {
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const tema = b.tema === null ? null : String(b.tema ?? '');
+  if (tema !== null && !TEMI_AMMESSI.includes(tema)) return c.json({ errore: 'Tema sconosciuto' }, 400);
+  await c.env.DB.prepare('UPDATE utenti SET tema = ? WHERE id = ?').bind(tema, u.id).run();
+  return c.json({ ok: true, tema });
+});
+
+api.post('/auth/modo', async (c) => {
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const modo = b.modo === null ? null : String(b.modo ?? '');
+  if (modo !== null && !MODI_AMMESSI.includes(modo)) return c.json({ errore: 'Modo colore sconosciuto' }, 400);
+  await c.env.DB.prepare('UPDATE utenti SET modo_colore = ? WHERE id = ?').bind(modo, u.id).run();
+  return c.json({ ok: true, modo });
+});
+
+// ===========================================================================
+// ACCESSI E DISPOSITIVI (AR-M12) — i dispositivi da cui l'utente risulta
+// collegato. All'esterno viaggia solo un riferimento (hash troncato),
+// mai l'id della sessione.
+// ===========================================================================
+
+api.get('/auth/sessioni', async (c) => {
+  const u = c.get('utente');
+  const corrente = c.get('sessioneId');
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, creato_il, ultimo_utilizzo, scade_il, scade_assoluta, ricordami, user_agent
+     FROM sessioni
+     WHERE utente_id = ? AND scade_il > datetime('now')
+       AND (scade_assoluta IS NULL OR scade_assoluta > datetime('now'))
+     ORDER BY COALESCE(ultimo_utilizzo, creato_il) DESC`,
+  ).bind(u.id).all<any>();
+  const sessioni = await Promise.all((results ?? []).map(async (r: any) => ({
+    rif: await rifSessione(r.id),
+    dispositivo: descriviDispositivo(r.user_agent),
+    accessoIl: r.creato_il,
+    ultimoUtilizzo: r.ultimo_utilizzo ?? r.creato_il,
+    scadeIl: r.scade_il,
+    ricordami: r.ricordami === 1,
+    corrente: r.id === corrente,
+  })));
+  return c.json({ sessioni });
+});
+
+api.post('/auth/sessioni/chiudi-altre', async (c) => {
+  const u = c.get('utente');
+  const corrente = c.get('sessioneId') ?? '';
+  const r = await c.env.DB.prepare('DELETE FROM sessioni WHERE utente_id = ? AND id <> ?').bind(u.id, corrente).run();
+  const chiuse = r.meta.changes ?? 0;
+  if (chiuse > 0) {
+    await scriviAudit(c.env.DB, {
+      tenantId: u.tenant_id, utenteId: u.id, azione: 'SESSIONI_REVOCATE',
+      dettaglio: { chiuse, ambito: 'altri_dispositivi' }, ip: c.get('ip'),
+    });
+  }
+  return c.json({ ok: true, chiuse });
+});
+
+api.post('/auth/sessioni/:rif/chiudi', async (c) => {
+  const u = c.get('utente');
+  const corrente = c.get('sessioneId') ?? '';
+  const rif = c.req.param('rif');
+  if (!/^[0-9a-f]{16}$/.test(rif)) return c.json({ errore: 'Riferimento non valido' }, 400);
+  const { results } = await c.env.DB.prepare('SELECT id FROM sessioni WHERE utente_id = ?').bind(u.id).all<any>();
+  let bersaglio: string | null = null;
+  for (const r of results ?? []) {
+    if ((await rifSessione(r.id)) === rif) { bersaglio = r.id; break; }
+  }
+  if (!bersaglio) return c.json({ errore: 'Accesso non trovato' }, 404);
+  await c.env.DB.prepare('DELETE FROM sessioni WHERE id = ?').bind(bersaglio).run();
+  await scriviAudit(c.env.DB, {
+    tenantId: u.tenant_id, utenteId: u.id, azione: 'SESSIONI_REVOCATE',
+    dettaglio: { chiuse: 1, ambito: bersaglio === corrente ? 'questo_dispositivo' : 'un_dispositivo' }, ip: c.get('ip'),
+  });
+  if (bersaglio === corrente) rimuoviCookieSessione(c);
+  return c.json({ ok: true, chiuse: 1, eraCorrente: bersaglio === corrente });
 });
 
 // ===========================================================================
@@ -2465,6 +2558,67 @@ consoleApp.post('/ticket/:id/chiudi', async (c) => {
   return c.json({ stato: 'chiuso' });
 });
 
+// ── Studi: licenza e contratto (AR-M12) ────────────────────────
+// L'equivalente del riquadro «Licenza e contratto» di Assist, ma nella
+// console: Contify non entra negli archivi degli studi. Lo stato
+// commerciale resta il punto di controllo di AR-M6 (bloccoPerStato);
+// qui cambia solo CHI lo amministra: la console invece del database.
+
+consoleApp.get('/studi', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT t.id, t.denominazione, t.stato, t.data_attivazione AS dataAttivazione,
+            t.data_scadenza_canone AS dataScadenzaCanone, t.note_contratto AS noteContratto,
+            (SELECT COUNT(*) FROM utenti u WHERE u.tenant_id = t.id AND u.attivo = 1) AS nUtenti,
+            (SELECT MAX(ultimo_accesso) FROM utenti u WHERE u.tenant_id = t.id) AS ultimoAccesso
+     FROM tenants t
+     ORDER BY t.denominazione`,
+  ).all<any>();
+  return c.json({ studi: results });
+});
+
+consoleApp.post('/studi/:id/contratto', async (c) => {
+  const o = c.get('operatore');
+  const t = await c.env.DB.prepare('SELECT id, denominazione FROM tenants WHERE id = ?').bind(c.req.param('id')).first<any>();
+  if (!t) return c.json({ errore: 'Studio non trovato' }, 404);
+  const b = await c.req.json<any>().catch(() => ({}));
+  const data = (v: unknown) => {
+    if (v === null || v === undefined || v === '') return null;
+    const s = String(v).slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : undefined;
+  };
+  const attivazione = data(b.dataAttivazione);
+  const scadenza = data(b.dataScadenzaCanone);
+  if (attivazione === undefined || scadenza === undefined) {
+    return c.json({ errore: 'Le date vanno indicate come AAAA-MM-GG' }, 400);
+  }
+  const note = b.noteContratto === null ? null : String(b.noteContratto ?? '').trim().slice(0, 2000) || null;
+  await c.env.DB.prepare(
+    'UPDATE tenants SET data_attivazione = ?, data_scadenza_canone = ?, note_contratto = ? WHERE id = ?',
+  ).bind(attivazione, scadenza, note, t.id).run();
+  await scriviAudit(c.env.DB, {
+    tenantId: t.id, utenteId: null, azione: 'CONTRATTO_AGGIORNATO',
+    entita: 'tenants', entitaId: t.id,
+    dettaglio: { operatore: o.email, dataAttivazione: attivazione, dataScadenzaCanone: scadenza },
+  });
+  return c.json({ ok: true });
+});
+
+consoleApp.post('/studi/:id/stato', async (c) => {
+  const o = c.get('operatore');
+  const t = await c.env.DB.prepare('SELECT id, denominazione, stato FROM tenants WHERE id = ?').bind(c.req.param('id')).first<any>();
+  if (!t) return c.json({ errore: 'Studio non trovato' }, 404);
+  const b = await c.req.json<any>().catch(() => ({}));
+  const stato = String(b.stato ?? '');
+  if (!['attivo', 'sospeso', 'cessato'].includes(stato)) return c.json({ errore: 'Stato non valido' }, 400);
+  if (stato === t.stato) return c.json({ ok: true, stato });
+  await c.env.DB.prepare('UPDATE tenants SET stato = ? WHERE id = ?').bind(stato, t.id).run();
+  await scriviAudit(c.env.DB, {
+    tenantId: t.id, utenteId: null, azione: 'STATO_TENANT',
+    entita: 'tenants', entitaId: t.id, dettaglio: { operatore: o.email, da: t.stato, a: stato },
+  });
+  return c.json({ ok: true, stato });
+});
+
 api.route('/console', consoleApp);
 
 // ===========================================================================
@@ -2641,6 +2795,16 @@ export default {
  * risultare failed in dashboard, quindi resta ultimo e senza catch.
  */
 async function lavoroNotturno(env: Env): Promise<void> {
+  try {
+    // Igiene delle sessioni scadute (AR-M12): il taglio vero lo fa già il
+    // middleware; qui si evita solo l'accumulo di righe morte.
+    await env.DB.prepare(
+      "DELETE FROM sessioni WHERE scade_il <= datetime('now') OR (scade_assoluta IS NOT NULL AND scade_assoluta <= datetime('now'))",
+    ).run();
+    await env.DB.prepare("DELETE FROM sessioni_console WHERE scade_il <= datetime('now')").run();
+  } catch (e) {
+    console.error('pulizia sessioni fallita:', e);
+  }
   try {
     await avvisiCanone(env);
   } catch (e) {

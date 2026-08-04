@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
+import { aspettoLocale, impostaAspetto } from './lib/tema';
 import { LogoContify } from './components/LayoutAuth';
 import { Icona } from './components/icone';
 import { AvatarUtente } from './components/ui';
@@ -39,6 +40,14 @@ export default function App() {
   useEffect(() => {
     api.get<Sessione>('/auth/io').then(setSessione).catch(() => setSessione(null)).finally(() => setCaricando(false));
   }, []);
+
+  // Il tema del profilo segue l'utente su ogni dispositivo (AR-M12):
+  // quello salvato sul server vince su quello locale.
+  useEffect(() => {
+    if (!sessione) return;
+    const locale = aspettoLocale();
+    impostaAspetto(sessione.utente.tema ?? locale.tema, sessione.utente.modoColore ?? locale.modo);
+  }, [sessione?.utente.tema, sessione?.utente.modoColore, sessione !== null]);
 
   if (caricando) return <div className="caricamento" style={{ padding: 40 }}>Caricamento…</div>;
 

@@ -440,6 +440,23 @@ const SEZIONI: Sezione[] = [
           <>La password si recupera in autonomia da <K>Password dimenticata?</K> nella pagina di accesso: arriva un link via email valido 60 minuti.</>,
           <>Disattivazione e reset chiudono subito le sessioni aperte dell'utente.</>,
         ]} />
+        <P>
+          Nella sezione <K>Accessi</K> vedi i dispositivi da cui risulti collegato e puoi
+          scollegarli, uno alla volta o tutti insieme. Un accesso si chiude da solo dopo{' '}
+          <K>8 ore di inattività</K> — oppure dopo <K>7 giorni</K> se nel login hai spuntato{' '}
+          <K>«Resta collegato su questo computer»</K>. Se non riconosci un dispositivo,
+          chiudilo e cambia la password.
+        </P>
+        <P>
+          In <K>Aspetto dell'interfaccia</K> scegli il colore fra dodici tinte e la modalità{' '}
+          <K>Chiaro</K>, <K>Notturna</K> o <K>Come il computer</K>: la scelta è personale e ti
+          segue su ogni dispositivo con cui entri.
+        </P>
+        <P>
+          In fondo alla pagina, solo per il titolare, c'è la <K>Zona di sicurezza</K> con
+          l'eliminazione dell'archivio (tre passaggi e parola di conferma; prima viene creato
+          un backup obbligatorio).
+        </P>
       </>
     ),
   },
@@ -460,7 +477,7 @@ const SEZIONI: Sezione[] = [
         <Punti punti={[
           <>Prima di ogni ripristino viene creata da sola una fotografia <K>pre-ripristino</K>: anche un ripristino sbagliato è reversibile.</>,
           <>Utenti, password e registro degli accessi <K>non vengono mai toccati</K> dal ripristino.</>,
-          <>L'<K>eliminazione dell'archivio</K> (tre passaggi e parola di conferma) crea prima un backup di sicurezza obbligatorio: se il backup non riesce, non viene toccato nulla.</>,
+          <>L'<K>eliminazione dell'archivio</K> vive nella <K>Zona di sicurezza</K> in fondo a Impostazioni: tre passaggi, parola di conferma e un backup di sicurezza obbligatorio — se il backup non riesce, non viene toccato nulla.</>,
         ]} />
       </>
     ),
