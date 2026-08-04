@@ -83,26 +83,49 @@ export async function inviaEmailBenvenuto(
 }
 
 /**
- * Richiesta di assistenza (AR-M5): parte verso Contify con i riferimenti
- * dello studio; reply-to sull'email dell'utente, così la risposta è un
- * semplice "Rispondi". Il contenuto è sanificato (testo semplice in HTML).
+ * Assistenza con ticket (AR-M11): la conversazione vive nell'app, le email
+ * sono solo notifiche con il link giusto. Il contenuto è sanificato
+ * (testo semplice in HTML).
  */
 const escapeHtml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-export async function inviaEmailAssistenza(
+/** Notifica a Contify: nuova richiesta o nuovo messaggio del cliente. */
+export async function inviaEmailTicketAssistenza(
   env: Env,
-  dati: { studio: string; nome: string; email: string; ruolo: string; oggetto: string; messaggio: string },
+  dati: { studio: string; nome: string; email: string; numero: string; oggetto: string; testo: string; nuovaRichiesta: boolean },
 ): Promise<boolean> {
   const destinatario = env.ASSISTENZA_EMAIL ?? 'info@contify.it';
+  const urlConsole = `${urlApp(env)}/#console?apri=${encodeURIComponent(dati.numero)}`;
   const html = involucro(`
-    <p style="font-size:14px;color:#111827"><strong>Richiesta di assistenza da ${PRODOTTO}</strong></p>
+    <p style="font-size:14px;color:#111827"><strong>${dati.nuovaRichiesta ? `Nuova richiesta di assistenza ${dati.numero}` : `Nuovo messaggio sul ticket ${dati.numero}`}</strong></p>
     <p style="font-size:13px;background:#f3f4f6;border-radius:8px;padding:12px 16px;color:#111827">
       Studio: <strong>${escapeHtml(dati.studio)}</strong><br>
-      Utente: <strong>${escapeHtml(dati.nome)}</strong> (${escapeHtml(dati.email)}, ${escapeHtml(dati.ruolo.toLowerCase())})</p>
+      Utente: <strong>${escapeHtml(dati.nome)}</strong> (${escapeHtml(dati.email)})</p>
     <p style="font-size:14px;color:#111827"><strong>${escapeHtml(dati.oggetto)}</strong></p>
-    <p style="font-size:14px;color:#374151;white-space:pre-wrap">${escapeHtml(dati.messaggio)}</p>`);
-  return invia(env, destinatario, `${PRODOTTO} — assistenza: ${dati.oggetto}`, html, dati.email);
+    <p style="font-size:14px;color:#374151;white-space:pre-wrap">${escapeHtml(dati.testo)}</p>
+    <p style="margin:24px 0;text-align:center">
+      <a href="${urlConsole}" style="background:#048587;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 24px;border-radius:8px;display:inline-block">Rispondi dalla console</a>
+    </p>`);
+  return invia(env, destinatario, `${PRODOTTO} — [${dati.numero}] ${dati.oggetto}`, html, dati.email);
+}
+
+/** Notifica all'autore del ticket: c'è una risposta dell'assistenza in app. */
+export async function inviaEmailRispostaTicket(
+  env: Env,
+  destinatario: string,
+  dati: { numero: string; oggetto: string; ticketId: string },
+): Promise<boolean> {
+  const urlTicket = `${urlApp(env)}/#assistenza?apri=${encodeURIComponent(dati.ticketId)}`;
+  const html = involucro(`
+    <p style="font-size:15px;color:#111827">C'è una risposta dell'assistenza alla tua richiesta
+    <strong>${dati.numero}</strong> — «${escapeHtml(dati.oggetto)}».</p>
+    <p style="font-size:13px;color:#6b7280">Per riservatezza il contenuto non viaggia via email:
+    lo trovi nella pagina <strong>Assistenza</strong> dell'applicazione.</p>
+    <p style="margin:28px 0;text-align:center">
+      <a href="${urlTicket}" style="background:#048587;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 24px;border-radius:8px;display:inline-block">Leggi la risposta</a>
+    </p>`);
+  return invia(env, destinatario, `${PRODOTTO} — [${dati.numero}] risposta alla tua richiesta`, html);
 }
 
 /**

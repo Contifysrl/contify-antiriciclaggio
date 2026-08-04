@@ -1,14 +1,13 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
-import { api } from '../api';
+import { ReactNode, useEffect, useMemo, useState } from 'react';
 import { Icona, type NomeIcona } from '../components/icone';
-import { ErrorBanner } from '../components/ui';
 import { PiedeLegale } from '../componenti';
 import type { SessioneApp } from './Accessi';
 
-// ── Guida in-app e assistenza (AR-M5) ──────────────────────────
+// ── Guida in-app (AR-M5) ───────────────────────────────────────
 // Contenuti statici con indice laterale, ricerca e ancore
 // (#guida?sezione=...) usate anche dall'help contestuale (HelpLink).
-// In fondo, la sezione Assistenza con il modulo di contatto.
+// Il modulo di assistenza, che viveva qui, da AR-M11 è la pagina
+// «Assistenza» (con ticket); qui resta la sua sezione di guida.
 
 function P({ children }: { children: ReactNode }) {
   return <p className="text-sm text-ink-600 leading-relaxed mb-3">{children}</p>;
@@ -399,12 +398,13 @@ const SEZIONI: Sezione[] = [
   },
   {
     id: 'registro',
-    titolo: 'Registro accessi',
-    icona: 'database',
+    titolo: 'Attività',
+    icona: 'attivita',
     corpo: (
       <>
         <P>
-          Il <K>registro degli accessi e delle operazioni</K> risponde all'art. 32 co. 2:
+          La pagina <K>Attività</K> è il <K>registro degli accessi e delle operazioni</K> e
+          risponde all'art. 32 co. 2:
           indica chi ha alimentato il sistema e chi vi ha avuto accesso, e ne garantisce
           integrità e non alterabilità. Ogni voce contiene l'impronta crittografica della
           precedente: alterare o rimuovere una riga rompe la catena, e la <K>verifica di
@@ -446,22 +446,60 @@ const SEZIONI: Sezione[] = [
   {
     id: 'backup',
     titolo: 'Backup e ripristino',
-    icona: 'salvagente',
+    icona: 'database',
     soloTitolare: true,
     corpo: (
       <>
         <P>
           Ogni notte l'archivio dello studio viene <K>fotografato automaticamente</K> su server
           nell'Unione Europea: restano gli ultimi 30 backup giornalieri e 12 mensili{' '}
-          <Norma>art. 32 co. 2: prevenire qualsiasi perdita dei dati</Norma>. In{' '}
-          <K>Impostazioni → Backup dell'archivio</K> il titolare può scaricarli, farne uno al
-          momento, o <K>ripristinare</K> l'archivio a una data precedente.
+          <Norma>art. 32 co. 2: prevenire qualsiasi perdita dei dati</Norma>. Nella pagina{' '}
+          <K>Backup</K> il titolare può scaricarli, farne uno al momento, o{' '}
+          <K>ripristinare</K> l'archivio a una data precedente.
         </P>
         <Punti punti={[
           <>Prima di ogni ripristino viene creata da sola una fotografia <K>pre-ripristino</K>: anche un ripristino sbagliato è reversibile.</>,
           <>Utenti, password e registro degli accessi <K>non vengono mai toccati</K> dal ripristino.</>,
           <>L'<K>eliminazione dell'archivio</K> (tre passaggi e parola di conferma) crea prima un backup di sicurezza obbligatorio: se il backup non riesce, non viene toccato nulla.</>,
         ]} />
+      </>
+    ),
+  },
+  {
+    id: 'novita',
+    titolo: 'Novità',
+    icona: 'campana',
+    corpo: (
+      <>
+        <P>
+          Il software viene aggiornato di continuo, senza nulla da installare. La pagina{' '}
+          <K>Novità</K> racconta cosa è cambiato a ogni aggiornamento, dalla novità più
+          recente alla più vecchia; quando c'è qualcosa che non hai ancora letto, sulla voce
+          di menu compare un <K>pallino</K> con il numero delle novità da vedere.
+        </P>
+      </>
+    ),
+  },
+  {
+    id: 'assistenza',
+    titolo: 'Assistenza',
+    icona: 'salvagente',
+    corpo: (
+      <>
+        <P>
+          Dalla pagina <K>Assistenza</K> apri una <K>richiesta</K> verso Contify: la
+          conversazione vive nell'applicazione, e quando arriva una risposta ricevi un avviso
+          via email e un pallino sulla voce di menu. Il titolare vede tutte le richieste dello
+          studio; gli altri utenti le proprie.
+        </P>
+        <Punti punti={[
+          <>Quando il problema è risolto, la richiesta si può <K>chiudere</K> (da entrambe le parti): resta consultabile, ma per un nuovo problema se ne apre una nuova.</>,
+          <>Ogni richiesta ha un numero (es. <K>TCK-2026-0001</K>): citalo se ci scrivi per altre vie.</>,
+        ]} />
+        <Attenzione>
+          Non inserire mai nei messaggi dati di clienti dello studio né contenuti di
+          segnalazioni: per l'assistenza tecnica non servono.
+        </Attenzione>
       </>
     ),
   },
@@ -507,10 +545,10 @@ export function Guida({ sessione, sezione }: { sessione: SessioneApp; sezione: s
 
   return (
     <>
-      <h1>Guida e assistenza</h1>
+      <h1>Guida</h1>
       <p className="occhiello">
-        Come usare Contify AR, sezione per sezione, con i riferimenti normativi. In fondo, il
-        modulo per contattare l'assistenza.
+        Come usare Contify AR, sezione per sezione, con i riferimenti normativi. Per parlare
+        con Contify c'è la pagina <a href="#assistenza">Assistenza</a>.
       </p>
 
       <div className="flex gap-6 items-start">
@@ -532,12 +570,6 @@ export function Guida({ sessione, sezione }: { sessione: SessioneApp; sezione: s
                 <span className="inline-flex items-center gap-2"><Icona nome={s.icona} size={15} /><span>{s.titolo}</span></span>
               </a>
             ))}
-            <a
-              href="#guida?sezione=assistenza"
-              className="block px-3 py-1.5 rounded-lg text-sm font-medium text-ink-500 hover:bg-ink-100 hover:text-ink-800 no-underline"
-            >
-              <span className="inline-flex items-center gap-2"><Icona nome="chat" size={15} /><span>Assistenza</span></span>
-            </a>
             {visibili.length === 0 && <div className="text-xs text-ink-400 px-3 py-2">Nessuna sezione trovata.</div>}
           </div>
         </nav>
@@ -555,75 +587,9 @@ export function Guida({ sessione, sezione }: { sessione: SessioneApp; sezione: s
               Nessun risultato per «{ricerca}». Prova con un'altra parola.
             </div>
           )}
-          <Assistenza sessione={sessione} />
         </div>
       </div>
       <PiedeLegale />
     </>
-  );
-}
-
-// ── Assistenza ─────────────────────────────────────────────────
-// Modulo di contatto: la richiesta parte come email verso Contify con i
-// riferimenti dello studio già compilati; la risposta arriva via email
-// all'indirizzo con cui accedi.
-
-function Assistenza({ sessione }: { sessione: SessioneApp }) {
-  const [oggetto, setOggetto] = useState('');
-  const [messaggio, setMessaggio] = useState('');
-  const [esito, setEsito] = useState<null | { emailInviata: boolean }>(null);
-  const [errore, setErrore] = useState('');
-  const [invio, setInvio] = useState(false);
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setErrore('');
-    setInvio(true);
-    try {
-      const r = await api.post<{ emailInviata: boolean }>('/assistenza', { oggetto, messaggio });
-      setEsito(r);
-      setOggetto('');
-      setMessaggio('');
-    } catch (err) {
-      setErrore((err as Error).message);
-    } finally {
-      setInvio(false);
-    }
-  };
-
-  return (
-    <section id="guida-assistenza" className="scheda !my-0 scroll-mt-6">
-      <h3 className="!mt-0 flex items-center gap-2"><Icona nome="chat" size={18} /><span>Assistenza</span></h3>
-      <P>
-        Hai un dubbio, qualcosa non torna o vuoi proporre un miglioramento? Scrivici da qui:
-        la richiesta arriva a Contify con i riferimenti dello studio già compilati e ti
-        rispondiamo a <K>{sessione.utente.email}</K>.
-      </P>
-      <Attenzione>
-        Non inserire mai nel messaggio dati di clienti dello studio né contenuti di
-        segnalazioni: per l'assistenza tecnica non servono, e la richiesta viaggia via email.
-      </Attenzione>
-      {esito && (
-        <div className={`riquadro ${esito.emailInviata ? 'info' : 'avviso'} !my-2`}>
-          {esito.emailInviata
-            ? 'Richiesta inviata: ti rispondiamo via email il prima possibile.'
-            : <>La richiesta è stata registrata ma l'email non è partita: scrivici direttamente a <strong>info@contify.it</strong> indicando lo studio.</>}
-        </div>
-      )}
-      {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
-      <form onSubmit={submit} className="space-y-3">
-        <div>
-          <label className="label">Oggetto</label>
-          <input className="input" value={oggetto} onChange={(e) => setOggetto(e.target.value)} required maxLength={150} placeholder="Es. Dubbio sul calcolo della Tabella B" />
-        </div>
-        <div>
-          <label className="label">Messaggio</label>
-          <textarea className="input min-h-[120px]" value={messaggio} onChange={(e) => setMessaggio(e.target.value)} required maxLength={4000} placeholder="Descrivi la richiesta…" />
-        </div>
-        <div className="flex justify-end">
-          <button className="btn btn-primary" disabled={invio}>{invio ? 'Invio in corso…' : 'Invia la richiesta'}</button>
-        </div>
-      </form>
-    </section>
   );
 }

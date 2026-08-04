@@ -113,7 +113,7 @@ export type DumpResult = { sql: string; tabelle: number; righe: number };
  * un ripristino si rifà login, che è anche la cosa giusta), e la loro
  * assenza evita di custodire nel backup materiale di autenticazione.
  */
-const TABELLE_NON_DUMP = ['sessioni', 'password_reset_token', 'lookup_piva_cache'];
+const TABELLE_NON_DUMP = ['sessioni', 'password_reset_token', 'lookup_piva_cache', 'sessioni_console'];
 const NON_DUMP_SQL = TABELLE_NON_DUMP.map((t) => `'${t}'`).join(', ');
 
 export async function buildDump(db: D1Database): Promise<DumpResult> {

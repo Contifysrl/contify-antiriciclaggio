@@ -10,7 +10,11 @@ import { Clienti, DettaglioFascicolo, Fascicoli } from './pagine/Fascicoli';
 import { Contante, Scadenzario, Sos } from './pagine/Presidi';
 import { Controlli } from './pagine/Controlli';
 import { Impostazioni } from './pagine/Impostazioni';
+import { Backup } from './pagine/Backup';
+import { Novita } from './pagine/Novita';
 import { Guida } from './pagine/Guida';
+import { Assistenza } from './pagine/Assistenza';
+import { Console } from './pagine/Console';
 import { VerificaRemota } from './pagine/VerificaRemota';
 import { ChatAssistente } from './pagine/ChatAssistente';
 
@@ -43,6 +47,9 @@ export default function App() {
 
   // ── Rotte pubbliche (anche con sessione: il link del cliente vince) ──
   if (pagina === 'verifica') return <VerificaRemota token={parametri.get('token') ?? ''} />;
+  // Console assistenza Contify (AR-M11): autenticazione propria, separata
+  // dalla sessione dello studio. Non compare in nessun menu.
+  if (pagina === 'console') return <Console apri={parametri.get('apri')} />;
 
   // ── Rotte pubbliche pre-login ────────────────────────────────
   if (!sessione) {
@@ -70,9 +77,13 @@ export default function App() {
     { id: 'contante', testo: 'Limiti al contante', icona: 'mano' },
     { id: 'controlli', testo: 'Controlli automatici', icona: 'cerca' },
     { id: 'sos', testo: 'Segnalazioni', icona: 'avviso', ruoli: ['TITOLARE'] },
-    { id: 'registro', testo: 'Registro accessi', icona: 'database' },
+    // Blocco di servizio, stesse voci e stesso ordine di Assist (AR-M11).
     { id: 'impostazioni', testo: 'Impostazioni', icona: 'ingranaggio' },
-    { id: 'guida', testo: 'Guida e assistenza', icona: 'aiuto' },
+    { id: 'backup', testo: 'Backup', icona: 'database', ruoli: ['TITOLARE'] },
+    { id: 'attivita', testo: 'Attività', icona: 'attivita' },
+    { id: 'novita', testo: 'Novità', icona: 'campana' },
+    { id: 'guida', testo: 'Guida', icona: 'aiuto' },
+    { id: 'assistenza', testo: 'Assistenza', icona: 'salvagente' },
   ];
 
   return (
@@ -92,9 +103,13 @@ export default function App() {
       {pagina === 'contante' && <Contante />}
       {pagina === 'controlli' && <Controlli vaiA={vaiA} ruolo={sessione.utente.ruolo} />}
       {pagina === 'sos' && <Sos />}
-      {pagina === 'registro' && <Registro />}
+      {/* «Attività» è il nuovo nome del registro; il vecchio hash resta valido. */}
+      {(pagina === 'attivita' || pagina === 'registro') && <Registro />}
       {pagina === 'impostazioni' && <Impostazioni sessione={sessione} onSessioneAggiornata={setSessione} />}
+      {pagina === 'backup' && sessione.utente.ruolo === 'TITOLARE' && <Backup />}
+      {pagina === 'novita' && <Novita />}
       {pagina === 'guida' && <Guida sessione={sessione} sezione={parametri.get('sezione')} />}
+      {pagina === 'assistenza' && <Assistenza sessione={sessione} apri={parametri.get('apri')} />}
     </Shell>
   );
 }
@@ -116,6 +131,36 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
   const chiudiMenu = () => setMenuAperto(false);
   const fileAvatarRef = useRef<HTMLInputElement>(null);
 
+  // ── Pallini sul menu (AR-M11, come Assist) ───────────────────
+  // «Novità» non ancora viste e messaggi di assistenza non letti.
+  const [nNovita, setNNovita] = useState(0);
+  const [nAssistenza, setNAssistenza] = useState(0);
+  useEffect(() => {
+    let vivo = true;
+    const novita = () => {
+      api.get<{ novita: Array<{ id: string }>; vista: string | null }>('/novita')
+        .then((r) => { if (vivo) setNNovita(r.novita.filter((n) => !r.vista || n.id > r.vista!).length); })
+        .catch(() => { /* pallino assente: nessun danno */ });
+    };
+    const assistenza = () => {
+      api.get<{ n: number }>('/assistenza/non-letti')
+        .then((r) => { if (vivo) setNAssistenza(r.n); })
+        .catch(() => { /* idem */ });
+    };
+    novita();
+    assistenza();
+    const timer = window.setInterval(assistenza, 60_000);
+    window.addEventListener('novita-viste', novita);
+    window.addEventListener('ticket-letti', assistenza);
+    return () => {
+      vivo = false;
+      window.clearInterval(timer);
+      window.removeEventListener('novita-viste', novita);
+      window.removeEventListener('ticket-letti', assistenza);
+    };
+  }, []);
+  const pallini: Record<string, number> = { novita: nNovita, assistenza: nAssistenza };
+
   // Foto profilo caricabile anche dalla sidebar, come in Assist.
   const caricaAvatar = async (file: File) => {
     try {
@@ -131,7 +176,10 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
     `w-full flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors text-left ${
       attiva ? 'bg-teal-600 text-accento-on' : 'text-ink-500 hover:bg-ink-100 hover:text-ink-800'
     }`;
-  const attiva = (id: string) => pagina === id || (id === 'fascicoli' && pagina === 'fascicolo');
+  const attiva = (id: string) =>
+    pagina === id
+    || (id === 'fascicoli' && pagina === 'fascicolo')
+    || (id === 'attivita' && pagina === 'registro');
 
   return (
     <div className="min-h-screen flex flex-col lg:flex-row">
@@ -172,7 +220,7 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
             <img
               src={sessione.studio.logo}
               alt={`Logo ${sessione.studio.denominazione}`}
-              className="mt-2 h-8 max-w-[180px] object-contain object-left"
+              className="mt-3 h-8 max-w-[184px] object-contain object-left"
             />
           )}
         </div>
@@ -187,6 +235,14 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
             >
               <Icona nome={v.icona} size={17} />
               <span>{v.testo}</span>
+              {(pallini[v.id] ?? 0) > 0 && (
+                <span
+                  className="ml-auto min-w-[20px] h-5 px-1.5 rounded-full bg-teal-600 text-accento-on text-[11px] font-bold flex items-center justify-center"
+                  aria-label={`${pallini[v.id]} da leggere`}
+                >
+                  {pallini[v.id]}
+                </span>
+              )}
             </button>
           ))}
         </nav>

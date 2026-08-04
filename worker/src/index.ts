@@ -24,11 +24,12 @@ import {
 } from './lib/auth';
 import { cifra, decifra, generaPasswordTemporanea, hashPassword, nuovoId, nuovoToken, sha256Hex, verificaPassword } from './lib/crypto';
 import {
-  inviaEmailAssistenza,
   inviaEmailAvvisoCanone,
   inviaEmailBenvenuto,
   inviaEmailResetPassword,
+  inviaEmailRispostaTicket,
   inviaEmailScadenzario,
+  inviaEmailTicketAssistenza,
   inviaEmailVerificaCompletata,
   inviaEmailVerificaRemota,
   urlApp,
@@ -41,7 +42,7 @@ import { cercaAnagrafica, limiteSuperato } from './lib/lookup';
 import { aggiornaListeSanzioni, caricaListe, eseguiScreeningTenant, listeDaAggiornare, screeningSchedulato } from './lib/sanzioni';
 import { normalizzaPiva } from './lib/lookup/piva';
 import { ErroreAi, MODELLO_DEFAULT, aiAbilitata, generaBozza, rispostaChat, suggerisciIndicatori } from './lib/ai';
-import { getCookie } from 'hono/cookie';
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 
 import { CNDCEC_2025 } from './domain/rulesets/cndcec-2025';
 import { CATALOGO_PRESTAZIONI_2025, prestazioneObbligatoria, trovaPrestazione } from './domain/prestazioni';
@@ -50,6 +51,7 @@ import { analizzaTitolaritaEffettiva } from './domain/titolare-effettivo';
 import { calcolaScadenzeFascicolo, scadenzaComunicazioneMef, statoScadenze } from './domain/scadenze';
 import { SOGLIE, TERMINI, aggiungiAnni, paeseAltoRischio, verificaContante } from './domain/norme';
 import { AVVISO_INDICATORI, INDICATORI_UIF_2023 } from './domain/indicatori-uif';
+import { NOVITA, idNovitaValido } from './domain/novita';
 import { SUB_INDICI_UIF_2023 } from './domain/sub-indici-uif';
 import { costruisciDocx, rispostaDocx } from './lib/docx';
 import {
@@ -213,7 +215,7 @@ api.post('/auth/reset-password', async (c) => {
 api.use('/*', async (c, next) => {
   // Rotte pubbliche: login, logout e il reset password via email.
   // Tutto il resto richiede sessione.
-  const pubbliche = ['/api/auth/login', '/api/auth/logout', '/api/auth/password-dimenticata', '/api/auth/reset-password', '/api/pubblico/'];
+  const pubbliche = ['/api/auth/login', '/api/auth/logout', '/api/auth/password-dimenticata', '/api/auth/reset-password', '/api/pubblico/', '/api/console/'];
   if (pubbliche.some((p) => c.req.path.startsWith(p))) return next();
   return richiediAutenticazione(c, next);
 });
@@ -2088,28 +2090,382 @@ api.get('/audit/export', async (c) => {
 // l'oggetto: il corpo del messaggio non viene salvato nel database.
 // ===========================================================================
 
+// ===========================================================================
+// ASSISTENZA CON TICKET (AR-M11) — come in Assist: la richiesta apre una
+// conversazione che vive nell'app; le email sono solo notifiche. Tutti i
+// ruoli possono aprire richieste (anche il lettore: "non riesco a
+// entrare/vedere" è assistenza); il titolare vede tutte le richieste dello
+// studio, gli altri le proprie.
+// ===========================================================================
+
+/** Prossimo numero di ticket dello studio: TCK-2026-0001, TCK-2026-0002… */
+async function prossimoNumeroTicket(db: D1Database, tenantId: string): Promise<string> {
+  const anno = new Date().getFullYear();
+  const prefisso = `TCK-${anno}-`;
+  const ultimo = await db
+    .prepare('SELECT numero FROM ticket WHERE tenant_id = ? AND numero LIKE ? ORDER BY numero DESC LIMIT 1')
+    .bind(tenantId, `${prefisso}%`)
+    .first<{ numero: string }>();
+  const n = ultimo ? parseInt(ultimo.numero.slice(prefisso.length), 10) + 1 : 1;
+  return `${prefisso}${String(n).padStart(4, '0')}`;
+}
+
+/** "Non letto" = messaggi altrui oltre quelli già visti (ticket_letture). */
+const SQL_TICKET_NON_LETTO = `
+  (SELECT COUNT(*) FROM ticket_messaggi m
+    WHERE m.ticket_id = t.id AND (m.autore_id IS NULL OR m.autore_id <> ?3))
+  > COALESCE((SELECT l.n_visti FROM ticket_letture l
+    WHERE l.ticket_id = t.id AND l.utente_id = ?3), 0)`;
+
+api.get('/assistenza', async (c) => {
+  const u = c.get('utente');
+  const soloPropri = u.ruolo !== 'TITOLARE' ? 1 : 0;
+  const { results } = await c.env.DB.prepare(
+    `SELECT t.id, t.numero, t.oggetto, t.stato,
+            t.created_at AS createdAt, t.updated_at AS updatedAt,
+            t.autore_id AS autoreId, u.nome AS autoreNome,
+            (SELECT COUNT(*) FROM ticket_messaggi m WHERE m.ticket_id = t.id) AS nMessaggi,
+            (${SQL_TICKET_NON_LETTO}) AS nonLetto
+     FROM ticket t
+     JOIN utenti u ON u.id = t.autore_id
+     WHERE t.tenant_id = ?1 AND (?2 = 0 OR t.autore_id = ?3)
+     ORDER BY (t.stato = 'chiuso'), t.updated_at DESC`,
+  ).bind(u.tenant_id, soloPropri, u.id).all<any>();
+  return c.json({ ticket: results.map((t: any) => ({ ...t, nonLetto: !!t.nonLetto })) });
+});
+
+api.get('/assistenza/non-letti', async (c) => {
+  const u = c.get('utente');
+  const soloPropri = u.ruolo !== 'TITOLARE' ? 1 : 0;
+  const r = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM ticket t
+     WHERE t.tenant_id = ?1 AND (?2 = 0 OR t.autore_id = ?3) AND ${SQL_TICKET_NON_LETTO}`,
+  ).bind(u.tenant_id, soloPropri, u.id).first<{ n: number }>();
+  return c.json({ n: r?.n ?? 0 });
+});
+
 api.post('/assistenza', async (c) => {
   const u = c.get('utente');
   const b = await c.req.json<any>().catch(() => ({}));
-  const oggetto = String(b.oggetto ?? '').trim().slice(0, 150);
-  const messaggio = String(b.messaggio ?? '').trim().slice(0, 4000);
-  if (!oggetto || !messaggio) return c.json({ errore: 'Oggetto e messaggio sono obbligatori' }, 400);
+  const oggetto = String(b.oggetto ?? '').trim().slice(0, 200);
+  const testo = String(b.testo ?? b.messaggio ?? '').trim().slice(0, 5000);
+  if (!oggetto || !testo) return c.json({ errore: 'Oggetto e messaggio sono obbligatori' }, 400);
 
-  const studio = await c.env.DB.prepare('SELECT denominazione FROM tenants WHERE id = ?').bind(u.tenant_id).first<any>();
-  const emailInviata = await inviaEmailAssistenza(c.env, {
-    studio: studio?.denominazione ?? u.tenant_id,
-    nome: u.nome,
-    email: u.email,
-    ruolo: u.ruolo,
-    oggetto,
-    messaggio,
-  });
-  await scriviAudit(c.env.DB, {
-    tenantId: u.tenant_id, utenteId: u.id, azione: 'RICHIESTA_ASSISTENZA',
-    dettaglio: { oggetto, emailInviata }, ip: c.get('ip'),
-  });
-  return c.json({ ok: true, emailInviata });
+  const ticketId = nuovoId('tck');
+  // Due tentativi: il numero progressivo può collidere se due richieste
+  // partono nello stesso istante (UNIQUE tenant_id+numero fa da arbitro).
+  for (let tentativo = 0; tentativo < 2; tentativo++) {
+    const numero = await prossimoNumeroTicket(c.env.DB, u.tenant_id);
+    try {
+      await c.env.DB.batch([
+        c.env.DB.prepare(
+          "INSERT INTO ticket (id, tenant_id, numero, autore_id, oggetto, stato) VALUES (?, ?, ?, ?, ?, 'aperto')",
+        ).bind(ticketId, u.tenant_id, numero, u.id, oggetto),
+        c.env.DB.prepare(
+          'INSERT INTO ticket_messaggi (id, tenant_id, ticket_id, autore_id, testo, da_assistenza) VALUES (?, ?, ?, ?, ?, 0)',
+        ).bind(nuovoId('msg'), u.tenant_id, ticketId, u.id, testo),
+      ]);
+      await scriviAudit(c.env.DB, {
+        tenantId: u.tenant_id, utenteId: u.id, azione: 'TICKET_APERTO',
+        entita: 'ticket', entitaId: ticketId, dettaglio: { numero, oggetto }, ip: c.get('ip'),
+      });
+      const studio = await c.env.DB.prepare('SELECT denominazione FROM tenants WHERE id = ?').bind(u.tenant_id).first<any>();
+      c.executionCtx.waitUntil(
+        inviaEmailTicketAssistenza(c.env, {
+          studio: studio?.denominazione ?? u.tenant_id,
+          nome: u.nome, email: u.email, numero, oggetto, testo, nuovaRichiesta: true,
+        }).catch((e) => console.error('Email ticket fallita', e)),
+      );
+      return c.json({ id: ticketId, numero }, 201);
+    } catch (e) {
+      if (tentativo === 1) throw e;
+    }
+  }
+  return c.json({ errore: 'Impossibile assegnare il numero della richiesta, riprova' }, 500);
 });
+
+async function caricaTicket(db: D1Database, tenantId: string, id: string) {
+  return db.prepare(
+    `SELECT t.id, t.numero, t.oggetto, t.stato,
+            t.created_at AS createdAt, t.updated_at AS updatedAt,
+            t.autore_id AS autoreId, u.nome AS autoreNome, u.email AS autoreEmail
+     FROM ticket t JOIN utenti u ON u.id = t.autore_id
+     WHERE t.id = ? AND t.tenant_id = ?`,
+  ).bind(id, tenantId).first<any>();
+}
+
+function puoVedereTicket(u: { ruolo: string; id: string }, t: { autoreId: string }): boolean {
+  return u.ruolo === 'TITOLARE' || t.autoreId === u.id;
+}
+
+api.get('/assistenza/:id', async (c) => {
+  const u = c.get('utente');
+  const t = await caricaTicket(c.env.DB, u.tenant_id, c.req.param('id'));
+  if (!t || !puoVedereTicket(u, t)) return c.json({ errore: 'Richiesta non trovata' }, 404);
+  const { results: messaggi } = await c.env.DB.prepare(
+    `SELECT m.id, m.testo, m.da_assistenza AS daAssistenza, m.created_at AS createdAt,
+            m.autore_id AS autoreId, u.nome AS autoreNome
+     FROM ticket_messaggi m LEFT JOIN utenti u ON u.id = m.autore_id
+     WHERE m.ticket_id = ? AND m.tenant_id = ?
+     ORDER BY m.created_at, m.rowid`,
+  ).bind(t.id, u.tenant_id).all<any>();
+  // Aprire la conversazione = averla letta fin qui.
+  const nAltrui = messaggi.filter((m: any) => m.autoreId !== u.id).length;
+  await c.env.DB.prepare(
+    `INSERT INTO ticket_letture (tenant_id, ticket_id, utente_id, n_visti, letto_at)
+     VALUES (?1, ?2, ?3, ?4, datetime('now'))
+     ON CONFLICT(ticket_id, utente_id) DO UPDATE SET n_visti = ?4, letto_at = datetime('now')`,
+  ).bind(u.tenant_id, t.id, u.id, nAltrui).run();
+  return c.json({ ticket: t, messaggi: messaggi.map((m: any) => ({ ...m, daAssistenza: !!m.daAssistenza })) });
+});
+
+api.post('/assistenza/:id/messaggi', async (c) => {
+  const u = c.get('utente');
+  const t = await caricaTicket(c.env.DB, u.tenant_id, c.req.param('id'));
+  if (!t || !puoVedereTicket(u, t)) return c.json({ errore: 'Richiesta non trovata' }, 404);
+  if (t.stato === 'chiuso') return c.json({ errore: 'La richiesta è chiusa: per un nuovo problema aprine una nuova' }, 409);
+  const b = await c.req.json<any>().catch(() => ({}));
+  const testo = String(b.testo ?? '').trim().slice(0, 5000);
+  if (!testo) return c.json({ errore: 'Il messaggio è vuoto' }, 400);
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      'INSERT INTO ticket_messaggi (id, tenant_id, ticket_id, autore_id, testo, da_assistenza) VALUES (?, ?, ?, ?, ?, 0)',
+    ).bind(nuovoId('msg'), u.tenant_id, t.id, u.id, testo),
+    c.env.DB.prepare(
+      "UPDATE ticket SET stato = 'aperto', updated_at = datetime('now') WHERE id = ? AND tenant_id = ?",
+    ).bind(t.id, u.tenant_id),
+  ]);
+  await scriviAudit(c.env.DB, {
+    tenantId: u.tenant_id, utenteId: u.id, azione: 'TICKET_MESSAGGIO',
+    entita: 'ticket', entitaId: t.id, dettaglio: { numero: t.numero }, ip: c.get('ip'),
+  });
+  const studio = await c.env.DB.prepare('SELECT denominazione FROM tenants WHERE id = ?').bind(u.tenant_id).first<any>();
+  c.executionCtx.waitUntil(
+    inviaEmailTicketAssistenza(c.env, {
+      studio: studio?.denominazione ?? u.tenant_id,
+      nome: u.nome, email: u.email, numero: t.numero, oggetto: t.oggetto, testo, nuovaRichiesta: false,
+    }).catch((e) => console.error('Email ticket fallita', e)),
+  );
+  return c.json({ ok: true }, 201);
+});
+
+api.post('/assistenza/:id/chiudi', async (c) => {
+  const u = c.get('utente');
+  const t = await caricaTicket(c.env.DB, u.tenant_id, c.req.param('id'));
+  if (!t || !puoVedereTicket(u, t)) return c.json({ errore: 'Richiesta non trovata' }, 404);
+  if (t.stato === 'chiuso') return c.json({ errore: 'La richiesta è già chiusa' }, 409);
+  await c.env.DB.prepare(
+    "UPDATE ticket SET stato = 'chiuso', updated_at = datetime('now') WHERE id = ? AND tenant_id = ?",
+  ).bind(t.id, u.tenant_id).run();
+  await scriviAudit(c.env.DB, {
+    tenantId: u.tenant_id, utenteId: u.id, azione: 'TICKET_CHIUSO',
+    entita: 'ticket', entitaId: t.id, dettaglio: { numero: t.numero }, ip: c.get('ip'),
+  });
+  return c.json({ stato: 'chiuso' });
+});
+
+// ===========================================================================
+// NOVITÀ (AR-M11) — il changelog in-app. L'elenco vive nel dominio
+// (novita.ts); qui solo la vista per utente, per il pallino nel menu.
+// ===========================================================================
+
+api.get('/novita', async (c) => {
+  const u = c.get('utente');
+  const r = await c.env.DB.prepare('SELECT novita_vista AS vista FROM utenti WHERE id = ?').bind(u.id).first<any>();
+  return c.json({ novita: NOVITA, vista: r?.vista ?? null });
+});
+
+api.post('/auth/novita', async (c) => {
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const vista = String(b.vista ?? '');
+  if (!idNovitaValido(vista)) return c.json({ errore: 'Novità sconosciuta' }, 400);
+  await c.env.DB.prepare('UPDATE utenti SET novita_vista = ? WHERE id = ?').bind(vista, u.id).run();
+  return c.json({ ok: true });
+});
+
+// ===========================================================================
+// CONSOLE CONTIFY (AR-M11) — dove l'assistenza risponde ai ticket di TUTTI
+// gli studi. Autenticazione separata dai tenant (operatori_console +
+// sessioni_console, cookie proprio): un operatore non è un utente di
+// studio e non ne eredita nulla. Montata sotto /api/console, esente dal
+// middleware di sessione dei tenant (vedi `pubbliche`).
+// ===========================================================================
+
+const COOKIE_CONSOLE = 'antiriciclaggio_console';
+const DURATA_CONSOLE_ORE = 12;
+
+interface OperatoreConsole {
+  id: string;
+  email: string;
+  nome: string;
+  cambio_password_richiesto: number;
+}
+
+async function leggiSessioneConsole(db: D1Database, token: string | undefined): Promise<OperatoreConsole | null> {
+  if (!token) return null;
+  const riga = await db.prepare(
+    `SELECT s.scade_il, o.id, o.email, o.nome, o.cambio_password_richiesto
+     FROM sessioni_console s JOIN operatori_console o ON o.id = s.operatore_id
+     WHERE s.id = ? AND o.attivo = 1`,
+  ).bind(await sha256Hex(token)).first<any>();
+  if (!riga) return null;
+  if (riga.scade_il <= new Date().toISOString()) {
+    await db.prepare('DELETE FROM sessioni_console WHERE id = ?').bind(await sha256Hex(token)).run();
+    return null;
+  }
+  return riga as OperatoreConsole;
+}
+
+const consoleApp = new Hono<{ Bindings: Env; Variables: Variabili & { operatore: OperatoreConsole } }>();
+
+consoleApp.post('/login', async (c) => {
+  const { email, password } = await c.req.json<any>().catch(() => ({}));
+  if (!email || !password) return c.json({ errore: 'Credenziali mancanti' }, 400);
+  const o = await c.env.DB.prepare('SELECT * FROM operatori_console WHERE email = ? AND attivo = 1')
+    .bind(String(email).toLowerCase().trim())
+    .first<any>();
+  // Tempi uniformi, come il login dei tenant: nessuna enumerazione.
+  const ok = o ? await verificaPassword(String(password), o.password_hash) : await verificaPassword(String(password), await hashPassword('x'));
+  if (!o || !ok) return c.json({ errore: 'Credenziali non valide' }, 401);
+
+  const token = nuovoToken();
+  const scadeIl = new Date(Date.now() + DURATA_CONSOLE_ORE * 3600_000).toISOString();
+  await c.env.DB.batch([
+    c.env.DB.prepare('INSERT INTO sessioni_console (id, operatore_id, scade_il, ip, user_agent) VALUES (?, ?, ?, ?, ?)')
+      .bind(await sha256Hex(token), o.id, scadeIl, c.req.header('CF-Connecting-IP') ?? null, c.req.header('User-Agent') ?? null),
+    c.env.DB.prepare('UPDATE operatori_console SET ultimo_accesso = ? WHERE id = ?').bind(new Date().toISOString(), o.id),
+  ]);
+  setCookie(c, COOKIE_CONSOLE, token, { httpOnly: true, secure: true, sameSite: 'Strict', path: '/', maxAge: DURATA_CONSOLE_ORE * 3600 });
+  return c.json({ operatore: { email: o.email, nome: o.nome, cambioPasswordRichiesto: o.cambio_password_richiesto === 1 } });
+});
+
+consoleApp.post('/logout', async (c) => {
+  const token = getCookie(c, COOKIE_CONSOLE);
+  if (token) await c.env.DB.prepare('DELETE FROM sessioni_console WHERE id = ?').bind(await sha256Hex(token)).run();
+  deleteCookie(c, COOKIE_CONSOLE, { path: '/' });
+  return c.json({ ok: true });
+});
+
+consoleApp.use('/*', async (c, next) => {
+  const operatore = await leggiSessioneConsole(c.env.DB, getCookie(c, COOKIE_CONSOLE));
+  if (!operatore) {
+    deleteCookie(c, COOKIE_CONSOLE, { path: '/' });
+    return c.json({ errore: 'Sessione console non valida' }, 401);
+  }
+  c.set('operatore', operatore);
+  // Password temporanea: prima si cambia, poi si lavora.
+  const path = c.req.path;
+  if (operatore.cambio_password_richiesto === 1 && !path.endsWith('/me') && !path.endsWith('/cambia-password')) {
+    return c.json({ errore: 'Devi impostare una nuova password prima di continuare', codice: 'cambio_password_richiesto' }, 403);
+  }
+  return next();
+});
+
+consoleApp.get('/me', (c) => {
+  const o = c.get('operatore');
+  return c.json({ operatore: { email: o.email, nome: o.nome, cambioPasswordRichiesto: o.cambio_password_richiesto === 1 } });
+});
+
+consoleApp.post('/cambia-password', async (c) => {
+  const o = c.get('operatore');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const attuale = String(b.attuale ?? '');
+  const nuova = String(b.nuova ?? '');
+  if (nuova.length < 10) return c.json({ errore: 'La nuova password deve avere almeno 10 caratteri' }, 400);
+  const riga = await c.env.DB.prepare('SELECT password_hash FROM operatori_console WHERE id = ?').bind(o.id).first<any>();
+  if (!riga || !(await verificaPassword(attuale, riga.password_hash))) {
+    return c.json({ errore: 'La password attuale non è corretta' }, 400);
+  }
+  await c.env.DB.prepare('UPDATE operatori_console SET password_hash = ?, cambio_password_richiesto = 0 WHERE id = ?')
+    .bind(await hashPassword(nuova), o.id).run();
+  const token = getCookie(c, COOKIE_CONSOLE);
+  await c.env.DB.prepare('DELETE FROM sessioni_console WHERE operatore_id = ? AND id <> ?')
+    .bind(o.id, token ? await sha256Hex(token) : '').run();
+  return c.json({ ok: true });
+});
+
+consoleApp.get('/ticket', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT t.id, t.numero, t.oggetto, t.stato,
+            t.created_at AS createdAt, t.updated_at AS updatedAt,
+            te.denominazione AS studio, u.nome AS autoreNome, u.email AS autoreEmail,
+            (SELECT COUNT(*) FROM ticket_messaggi m WHERE m.ticket_id = t.id) AS nMessaggi
+     FROM ticket t
+     JOIN tenants te ON te.id = t.tenant_id
+     JOIN utenti u ON u.id = t.autore_id
+     ORDER BY (t.stato = 'chiuso'), (t.stato = 'risposto'), t.updated_at DESC`,
+  ).all<any>();
+  return c.json({ ticket: results });
+});
+
+async function caricaTicketConsole(db: D1Database, id: string) {
+  return db.prepare(
+    `SELECT t.id, t.tenant_id AS tenantId, t.numero, t.oggetto, t.stato,
+            t.created_at AS createdAt, t.updated_at AS updatedAt,
+            te.denominazione AS studio, u.nome AS autoreNome, u.email AS autoreEmail
+     FROM ticket t
+     JOIN tenants te ON te.id = t.tenant_id
+     JOIN utenti u ON u.id = t.autore_id
+     WHERE t.id = ? OR t.numero = ?`,
+  ).bind(id, id).first<any>();
+}
+
+consoleApp.get('/ticket/:id', async (c) => {
+  const t = await caricaTicketConsole(c.env.DB, c.req.param('id'));
+  if (!t) return c.json({ errore: 'Ticket non trovato' }, 404);
+  const { results: messaggi } = await c.env.DB.prepare(
+    `SELECT m.id, m.testo, m.da_assistenza AS daAssistenza, m.created_at AS createdAt, u.nome AS autoreNome
+     FROM ticket_messaggi m LEFT JOIN utenti u ON u.id = m.autore_id
+     WHERE m.ticket_id = ? ORDER BY m.created_at, m.rowid`,
+  ).bind(t.id).all<any>();
+  return c.json({ ticket: t, messaggi: messaggi.map((m: any) => ({ ...m, daAssistenza: !!m.daAssistenza })) });
+});
+
+consoleApp.post('/ticket/:id/rispondi', async (c) => {
+  const o = c.get('operatore');
+  const t = await caricaTicketConsole(c.env.DB, c.req.param('id'));
+  if (!t) return c.json({ errore: 'Ticket non trovato' }, 404);
+  if (t.stato === 'chiuso') return c.json({ errore: 'Il ticket è chiuso' }, 409);
+  const b = await c.req.json<any>().catch(() => ({}));
+  const testo = String(b.testo ?? '').trim().slice(0, 5000);
+  if (!testo) return c.json({ errore: 'Il messaggio è vuoto' }, 400);
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      'INSERT INTO ticket_messaggi (id, tenant_id, ticket_id, autore_id, testo, da_assistenza) VALUES (?, ?, ?, NULL, ?, 1)',
+    ).bind(nuovoId('msg'), t.tenantId, t.id, testo),
+    c.env.DB.prepare(
+      "UPDATE ticket SET stato = 'risposto', updated_at = datetime('now') WHERE id = ?",
+    ).bind(t.id),
+  ]);
+  // Nel registro dello studio resta la traccia della risposta (senza contenuto).
+  await scriviAudit(c.env.DB, {
+    tenantId: t.tenantId, utenteId: null, azione: 'TICKET_RISPOSTA_ASSISTENZA',
+    entita: 'ticket', entitaId: t.id, dettaglio: { numero: t.numero, operatore: o.email },
+  });
+  c.executionCtx.waitUntil(
+    inviaEmailRispostaTicket(c.env, t.autoreEmail, { numero: t.numero, oggetto: t.oggetto, ticketId: t.id })
+      .catch((e) => console.error('Email risposta ticket fallita', e)),
+  );
+  return c.json({ ok: true }, 201);
+});
+
+consoleApp.post('/ticket/:id/chiudi', async (c) => {
+  const o = c.get('operatore');
+  const t = await caricaTicketConsole(c.env.DB, c.req.param('id'));
+  if (!t) return c.json({ errore: 'Ticket non trovato' }, 404);
+  if (t.stato === 'chiuso') return c.json({ errore: 'Il ticket è già chiuso' }, 409);
+  await c.env.DB.prepare("UPDATE ticket SET stato = 'chiuso', updated_at = datetime('now') WHERE id = ?").bind(t.id).run();
+  await scriviAudit(c.env.DB, {
+    tenantId: t.tenantId, utenteId: null, azione: 'TICKET_CHIUSO',
+    entita: 'ticket', entitaId: t.id, dettaglio: { numero: t.numero, operatore: o.email },
+  });
+  return c.json({ stato: 'chiuso' });
+});
+
+api.route('/console', consoleApp);
 
 // ===========================================================================
 // VERBALI STAMPABILI (.docx) — ciò che lo studio esibisce all'ispezione.

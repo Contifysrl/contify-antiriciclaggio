@@ -265,7 +265,7 @@ export function Registro() {
   return (
     <>
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <h1>Registro degli accessi e delle operazioni <HelpLink sezione="registro" /></h1>
+        <h1>Attività <HelpLink sezione="registro" /></h1>
         <button
           className="btn btn-secondary btn-sm shrink-0 mt-1"
           title="Scarica l'intero registro in CSV (con le impronte della catena), pronto per Excel"
@@ -275,9 +275,10 @@ export function Registro() {
         </button>
       </div>
       <p className="occhiello">
-        L’art. 32 co. 2 impone di indicare i soggetti legittimati ad alimentare il sistema di conservazione e ad
-        accedervi, e di garantire integrità e non alterabilità dei dati. Ogni voce contiene l’impronta della
-        precedente: alterare o rimuovere una riga rompe la catena, e la verifica lo rileva.
+        Il registro degli accessi e delle operazioni. L’art. 32 co. 2 impone di indicare i soggetti legittimati
+        ad alimentare il sistema di conservazione e ad accedervi, e di garantire integrità e non alterabilità dei
+        dati. Ogni voce contiene l’impronta della precedente: alterare o rimuovere una riga rompe la catena, e la
+        verifica lo rileva.
       </p>
 
       {verifica && (

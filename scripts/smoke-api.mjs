@@ -317,14 +317,15 @@ console.log('\n== Integrità del registro (art. 32) ==');
 
 console.log('\n== Guida, assistenza ed export registro (AR-M5) ==');
 {
-  // Assistenza: campi obbligatori, invio registrato (senza corpo nel registro).
+  // Assistenza (dal AR-M11 con ticket): campi obbligatori, apertura
+  // registrata (senza corpo nel registro). La suite completa dei ticket
+  // è in smoke-api-m11.mjs.
   const rNo = await req('POST', '/assistenza', { oggetto: '', messaggio: '' });
   verifica('assistenza senza oggetto respinta', rNo.stato === 400, rNo.dati);
   const r = await req('POST', '/assistenza', { oggetto: 'Prova collaudo', messaggio: 'Messaggio di prova del collaudo automatico.' });
-  verifica('richiesta di assistenza accettata', r.stato === 200 && r.dati?.ok === true, r.dati);
-  verifica('la risposta dice se l’email è partita', typeof r.dati?.emailInviata === 'boolean', r.dati);
+  verifica('richiesta di assistenza accettata', r.stato === 201 && typeof r.dati?.numero === 'string', r.dati);
   const log = await req('GET', '/audit');
-  const voce = (log.dati ?? []).find((v) => v.azione === 'RICHIESTA_ASSISTENZA');
+  const voce = (log.dati ?? []).find((v) => v.azione === 'TICKET_APERTO');
   verifica('l’assistenza è tracciata nel registro', Boolean(voce), voce);
   verifica('il corpo del messaggio NON è nel registro', !JSON.stringify(log.dati).includes('Messaggio di prova del collaudo'));
 }
