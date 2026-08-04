@@ -49,6 +49,137 @@ export function dataOraTicket(iso: string): string {
 }
 const dataOraIt = dataOraTicket;
 
+// ── Domande frequenti (come in Assist) ─────────────────────────
+// Le risposte rapide prima del ticket: la maggior parte delle richieste
+// trova risposta qui o nella Guida. Ogni risposta collega la sezione
+// giusta della Guida.
+
+function LinkGuida({ sezione, children }: { sezione: string; children: React.ReactNode }) {
+  return (
+    <a href={`#guida?sezione=${sezione}`} className="text-teal-700 font-semibold hover:underline">
+      {children}
+    </a>
+  );
+}
+
+const FAQ: Array<{ domanda: string; risposta: React.ReactNode }> = [
+  {
+    domanda: 'Da dove comincio? In che ordine inserisco i dati?',
+    risposta: (
+      <>
+        L'ordine giusto è: <strong>autovalutazione dello studio → clienti (con i titolari
+        effettivi) → fascicoli con la valutazione del rischio</strong>; da lì in poi lavora lo
+        scadenzario. Nel <strong>Cruscotto</strong> trovi il percorso «Per iniziare», che si
+        spunta da solo man mano che procedi; i dettagli sono nell'{' '}
+        <LinkGuida sezione="introduzione">Introduzione della Guida</LinkGuida>.
+      </>
+    ),
+  },
+  {
+    domanda: 'Come porto dentro i clienti dal gestionale?',
+    risposta: (
+      <>
+        Nella pagina Clienti ci sono due acceleratori: <strong>«Importa da CSV»</strong> per
+        caricare l'elenco completo esportato dal gestionale, e <strong>«Compila dai
+        registri»</strong> che propone denominazione e natura giuridica a partire dalla partita
+        IVA (archivio IVA europeo). I dettagli sono nella{' '}
+        <LinkGuida sezione="clienti">sezione Clienti della Guida</LinkGuida>.
+      </>
+    ),
+  },
+  {
+    domanda: 'Quando devo rifare l’adeguata verifica di un cliente?',
+    risposta: (
+      <>
+        Lo dice lo <strong>Scadenzario</strong>, in base alla classe di rischio dell'ultima
+        valutazione firmata: 36 mesi per il rischio non significativo e poco significativo,
+        24 per l'abbastanza significativo, 12 per il molto significativo. I fascicoli scaduti
+        o in scadenza compaiono in cima; vedi la{' '}
+        <LinkGuida sezione="scadenzario">sezione Scadenzario della Guida</LinkGuida>.
+      </>
+    ),
+  },
+  {
+    domanda: 'Ho dimenticato la password, come rientro?',
+    risposta: (
+      <>
+        Dalla pagina di accesso scegli <strong>«Password dimenticata?»</strong>: arriva
+        un'email con un link valido 60 minuti per impostarne una nuova. Se non arriva,
+        controlla la posta indesiderata o chiedi al titolare dello studio un reset da
+        Impostazioni; vedi la{' '}
+        <LinkGuida sezione="impostazioni">sezione Impostazioni e utenti della Guida</LinkGuida>.
+      </>
+    ),
+  },
+  {
+    domanda: 'Che differenza c’è tra titolare, collaboratore, lettore e revisore?',
+    risposta: (
+      <>
+        Il <strong>titolare</strong> firma valutazioni e autovalutazioni, accede alle
+        segnalazioni (art. 38) e gestisce utenti e backup; il <strong>collaboratore</strong>{' '}
+        inserisce e istruisce clienti e fascicoli ma non firma e non vede le segnalazioni; il{' '}
+        <strong>lettore</strong> consulta soltanto; il <strong>revisore</strong> svolge la
+        funzione di revisione indipendente (art. 16 co. 2). I dettagli sono nell'{' '}
+        <LinkGuida sezione="introduzione">Introduzione della Guida</LinkGuida>.
+      </>
+    ),
+  },
+  {
+    domanda: 'I miei dati sono al sicuro? Come funzionano i backup?',
+    risposta: (
+      <>
+        I dati stanno su server nell'<strong>Unione Europea</strong> e le informazioni più
+        sensibili (dati identificativi di dettaglio, segnalazioni) sono <strong>cifrate</strong>.
+        Ogni notte l'archivio viene fotografato da solo: restano 30 backup giornalieri e 12
+        mensili, e il titolare può scaricarli o ripristinarli dalla pagina{' '}
+        <strong>Backup</strong>; vedi la{' '}
+        <LinkGuida sezione="backup">sezione Backup e ripristino della Guida</LinkGuida>.
+      </>
+    ),
+  },
+];
+
+function DomandaFrequente({ domanda, risposta }: { domanda: string; risposta: React.ReactNode }) {
+  const [aperta, setAperta] = useState(false);
+  return (
+    <div className="border border-ink-100 rounded-lg overflow-hidden">
+      <button
+        type="button"
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left text-sm font-semibold text-ink-800 hover:bg-ink-50"
+        onClick={() => setAperta((a) => !a)}
+      >
+        <span>{domanda}</span>
+        <span className={`text-ink-400 transition-transform ${aperta ? 'rotate-180' : ''}`}>▾</span>
+      </button>
+      {aperta && <div className="px-4 pb-4 text-sm text-ink-600 leading-relaxed">{risposta}</div>}
+    </div>
+  );
+}
+
+function PrimaDiAprire() {
+  return (
+    <div className="scheda">
+      <h3 className="!mt-0 flex items-center gap-2">
+        <Icona nome="aiuto" size={18} />
+        <span>Prima di aprire una richiesta</span>
+      </h3>
+      <p className="text-sm text-ink-600 mb-4">
+        La <strong>Guida</strong> risponde già alla maggior parte delle domande: come impostare
+        autovalutazione e fascicoli, importare i clienti, leggere lo scadenzario, gestire backup,
+        utenti e password. Ogni pagina ha anche il pulsante <strong>?</strong> accanto al titolo,
+        che apre direttamente la sezione giusta.
+      </p>
+      <div className="space-y-2 mb-4">
+        {FAQ.map((f) => <DomandaFrequente key={f.domanda} {...f} />)}
+      </div>
+      <a href="#guida" className="btn btn-secondary inline-flex items-center gap-2 no-underline">
+        <Icona nome="aiuto" size={16} />
+        <span>Apri la Guida</span>
+      </a>
+    </div>
+  );
+}
+
 export function Assistenza({ sessione, apri }: { sessione: SessioneApp; apri: string | null }) {
   const [ticket, setTicket] = useState<TicketRiga[] | null>(null);
   const [errore, setErrore] = useState('');
@@ -72,9 +203,11 @@ export function Assistenza({ sessione, apri }: { sessione: SessioneApp; apri: st
         </button>
       </div>
       <p className="occhiello">
-        Hai un dubbio, qualcosa non torna o vuoi proporre un miglioramento? Apri una richiesta:
-        ti rispondiamo direttamente qui, e un avviso email ti dice quando c’è una risposta da leggere.
+        Le risposte rapide alle domande più comuni e, se non bastano, le tue richieste di
+        assistenza: ogni richiesta resta qui con tutta la conversazione.
       </p>
+
+      <PrimaDiAprire />
 
       {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
 
