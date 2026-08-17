@@ -16,6 +16,8 @@ async function chiamata<T>(metodo: string, percorso: string, corpo?: unknown): P
 export const api = {
   get: <T,>(p: string) => chiamata<T>('GET', p),
   post: <T,>(p: string, corpo?: unknown) => chiamata<T>('POST', p, corpo),
+  patch: <T,>(p: string, corpo?: unknown) => chiamata<T>('PATCH', p, corpo),
+  elimina: <T,>(p: string) => chiamata<T>('DELETE', p),
   /** Scarica un file generato dal server (verbali .docx) rispettando gli errori JSON. */
   scarica: async (p: string) => {
     const r = await fetch(`/api${p}`, { credentials: 'same-origin' });

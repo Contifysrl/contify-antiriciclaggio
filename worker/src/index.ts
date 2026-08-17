@@ -1414,11 +1414,44 @@ api.post('/studio/autovalutazioni/:id/firma', soloTitolare, async (c) => {
 // CLIENTI E TITOLARITÀ EFFETTIVA
 // ===========================================================================
 
+/** Nature giuridiche ammesse: la stessa lista del CHECK sulla tabella clienti. */
+const TIPI_CLIENTE = ['PERSONA_FISICA', 'SOCIETA_CAPITALI', 'SOCIETA_PERSONE', 'ENTE_NON_PROFIT', 'TRUST', 'ALTRO'];
+
+/**
+ * Che cosa resta appeso a un cliente (AR-M14). Serve a decidere se può essere
+ * cancellato davvero o solo archiviato: dove c'è un fascicolo, un documento,
+ * una SOS o una verifica a distanza, l'art. 31 impone la conservazione
+ * decennale e la cancellazione fisica non è un'opzione.
+ */
+async function collegamentiCliente(db: D1Database, tenantId: string, clienteId: string) {
+  const conta = async (tabella: string) =>
+    (await db.prepare(`SELECT COUNT(*) AS n FROM ${tabella} WHERE cliente_id = ? AND tenant_id = ?`)
+      .bind(clienteId, tenantId)
+      .first<{ n: number }>())?.n ?? 0;
+  const [fascicoli, documenti, segnalazioni, verifiche] = await Promise.all([
+    conta('fascicoli'),
+    conta('documenti'),
+    conta('segnalazioni_sospette'),
+    conta('richieste_verifica'),
+  ]);
+  return {
+    fascicoli,
+    documenti,
+    segnalazioni,
+    verifiche,
+    eliminabile: fascicoli + documenti + segnalazioni + verifiche === 0,
+  };
+}
+
 api.get('/clienti', async (c) => {
+  // ?archiviati=1 mostra anche i clienti archiviati (attivo = 0), altrimenti
+  // l'archiviazione sarebbe un vicolo cieco: si nasconde e non si ritrova più.
+  const conArchiviati = c.req.query('archiviati') === '1';
   const { results } = await c.env.DB.prepare(
     `SELECT c.id, c.tipo, c.denominazione, c.codice_fiscale, c.partita_iva, c.paese_residenza, c.pep, c.attivo,
             (SELECT COUNT(*) FROM fascicoli f WHERE f.cliente_id = c.id) AS fascicoli
-     FROM clienti c WHERE c.tenant_id = ? AND c.attivo = 1 ORDER BY c.denominazione`,
+     FROM clienti c WHERE c.tenant_id = ?${conArchiviati ? '' : ' AND c.attivo = 1'}
+     ORDER BY c.attivo DESC, c.denominazione`,
   )
     .bind(c.get('tenantId'))
     .all();
@@ -1473,8 +1506,147 @@ api.get('/clienti/:id', async (c) => {
     'SELECT id, codice, prestazione_descrizione, data_conferimento, stato FROM fascicoli WHERE cliente_id = ? AND tenant_id = ?',
   ).bind(id, tenantId).all();
 
+  const collegamenti = await collegamentiCliente(c.env.DB, tenantId, id);
+
   await scriviAudit(c.env.DB, { tenantId, utenteId: c.get('utente').id, azione: 'LEGGI_CLIENTE', entita: 'clienti', entitaId: id, ip: c.get('ip') });
-  return c.json({ cliente, titolariEffettivi: titolari ?? [], fascicoli: fascicoli ?? [] });
+  return c.json({ cliente, titolariEffettivi: titolari ?? [], fascicoli: fascicoli ?? [], collegamenti });
+});
+
+/**
+ * Modifica dell'anagrafica (AR-M14). Aggiorna solo i campi presenti nel corpo:
+ * l'import deduce la natura giuridica dalla denominazione e va corretta a mano
+ * quando sbaglia, come la finestra di import promette.
+ */
+api.patch('/clienti/:id', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const u = c.get('utente');
+  const id = c.req.param('id');
+  const b = await c.req.json<any>();
+
+  const esistente = await c.env.DB.prepare('SELECT id FROM clienti WHERE id = ? AND tenant_id = ?')
+    .bind(id, tenantId).first<any>();
+  if (!esistente) return c.json({ errore: 'Cliente non trovato' }, 404);
+
+  if (b.denominazione !== undefined && !String(b.denominazione).trim()) {
+    return c.json({ errore: 'La denominazione non può restare vuota.' }, 400);
+  }
+  if (b.tipo !== undefined && !TIPI_CLIENTE.includes(b.tipo)) {
+    return c.json({ errore: 'Natura giuridica non ammessa.' }, 400);
+  }
+
+  const set: string[] = [];
+  const valori: unknown[] = [];
+  const testo = (chiave: string, colonna: string) => {
+    if (b[chiave] === undefined) return;
+    const v = typeof b[chiave] === 'string' ? b[chiave].trim() : b[chiave];
+    set.push(`${colonna} = ?`);
+    valori.push(v === '' ? null : v);
+  };
+  testo('tipo', 'tipo');
+  testo('denominazione', 'denominazione');
+  testo('codiceFiscale', 'codice_fiscale');
+  testo('partitaIva', 'partita_iva');
+  testo('attivitaPrevalente', 'attivita_prevalente');
+  testo('ateco', 'ateco');
+  testo('note', 'note');
+  // paese_residenza è NOT NULL: svuotarlo significa tornare al default.
+  if (b.paeseResidenza !== undefined) {
+    set.push('paese_residenza = ?');
+    valori.push(String(b.paeseResidenza).trim().toUpperCase() || 'IT');
+  }
+  if (b.pep !== undefined) { set.push('pep = ?'); valori.push(b.pep ? 1 : 0); }
+  if (b.pepOrganoPubblico !== undefined) { set.push('pep_organo_pubblico = ?'); valori.push(b.pepOrganoPubblico ? 1 : 0); }
+  if (b.datiIdentificativi !== undefined) {
+    const dati = b.datiIdentificativi
+      ? await cifra(c.env.MASTER_KEY, tenantId, JSON.stringify(b.datiIdentificativi))
+      : null;
+    set.push('dati_identificativi = ?');
+    valori.push(dati ? JSON.stringify(dati) : null);
+  }
+  if (set.length === 0) return c.json({ errore: 'Nessun campo da aggiornare.' }, 400);
+
+  set.push("aggiornato_il = datetime('now')");
+  await c.env.DB.prepare(`UPDATE clienti SET ${set.join(', ')} WHERE id = ? AND tenant_id = ?`)
+    .bind(...valori, id, tenantId)
+    .run();
+
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: u.id, azione: 'AGGIORNA_CLIENTE', entita: 'clienti', entitaId: id,
+    dettaglio: { campi: Object.keys(b) }, ip: c.get('ip'),
+  });
+  return c.json({ ok: true });
+});
+
+/**
+ * Archiviazione e ripristino (AR-M14). L'archiviazione toglie il cliente dagli
+ * elenchi senza toccare un byte di quanto è stato registrato: è la via
+ * compatibile con la conservazione decennale dell'art. 31.
+ */
+api.post('/clienti/:id/archiviazione', soloTitolare, async (c) => {
+  const tenantId = c.get('tenantId');
+  const u = c.get('utente');
+  const id = c.req.param('id');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const archivia = b.archivia !== false;
+
+  const esito = await c.env.DB.prepare(
+    "UPDATE clienti SET attivo = ?, aggiornato_il = datetime('now') WHERE id = ? AND tenant_id = ?",
+  ).bind(archivia ? 0 : 1, id, tenantId).run();
+  if (!esito.meta.changes) return c.json({ errore: 'Cliente non trovato' }, 404);
+
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: u.id, azione: archivia ? 'ARCHIVIA_CLIENTE' : 'RIPRISTINA_CLIENTE',
+    entita: 'clienti', entitaId: id, ip: c.get('ip'),
+  });
+  return c.json({ ok: true, attivo: archivia ? 0 : 1 });
+});
+
+/**
+ * Cancellazione definitiva (AR-M14). Consentita al solo titolare e solo se al
+ * cliente non è appeso nulla di conservabile: serve a rimediare a un
+ * inserimento sbagliato o a un import di prova, non a ripulire la storia.
+ */
+api.delete('/clienti/:id', soloTitolare, async (c) => {
+  const tenantId = c.get('tenantId');
+  const u = c.get('utente');
+  const id = c.req.param('id');
+
+  const cliente = await c.env.DB.prepare(
+    'SELECT id, denominazione, codice_fiscale, partita_iva FROM clienti WHERE id = ? AND tenant_id = ?',
+  ).bind(id, tenantId).first<any>();
+  if (!cliente) return c.json({ errore: 'Cliente non trovato' }, 404);
+  const clienteId = String(cliente.id);
+
+  const collegamenti = await collegamentiCliente(c.env.DB, tenantId, clienteId);
+  if (!collegamenti.eliminabile) {
+    return c.json({
+      codice: 'cliente_collegato',
+      errore:
+        'Il cliente ha già documentazione registrata (fascicoli, documenti, segnalazioni o verifiche a distanza): '
+        + 'l’art. 31 ne impone la conservazione per dieci anni. Puoi archiviarlo, così sparisce dagli elenchi '
+        + 'senza perdere nulla di quanto registrato.',
+      collegamenti,
+    }, 409);
+  }
+
+  // L'audit precede la cancellazione: dopo, il riferimento non sarebbe più
+  // risolvibile e nel registro resterebbe un id muto.
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: u.id, azione: 'ELIMINA_CLIENTE', entita: 'clienti', entitaId: id,
+    dettaglio: {
+      denominazione: cliente.denominazione,
+      codiceFiscale: cliente.codice_fiscale,
+      partitaIva: cliente.partita_iva,
+    },
+    ip: c.get('ip'),
+  });
+
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM titolari_effettivi WHERE cliente_id = ? AND tenant_id = ?').bind(id, tenantId),
+    c.env.DB.prepare('DELETE FROM clienti WHERE id = ? AND tenant_id = ?').bind(id, tenantId),
+  ]);
+
+  return c.json({ ok: true });
 });
 
 /**

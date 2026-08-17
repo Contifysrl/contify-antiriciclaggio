@@ -15,6 +15,17 @@ export interface VoceNovita {
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-08-19-scheda-cliente',
+    data: '2026-08-19',
+    titolo: 'La scheda del cliente: si apre, si modifica, si cancella',
+    punti: [
+      'Cliccando un cliente nell’elenco si apre la sua scheda, con anagrafica, titolari effettivi e fascicoli. Prima il click portava alla pagina Fascicoli.',
+      'L’anagrafica si modifica: utile soprattutto dopo un import dal gestionale, quando la natura giuridica dedotta dalla denominazione va corretta.',
+      'Un cliente che non segui più si archivia: sparisce dagli elenchi e dalle scelte per i nuovi fascicoli, senza perdere nulla di quanto registrato. La spunta «Mostra anche i clienti archiviati» lo fa riapparire.',
+      'Un cliente inserito per errore, a cui non è ancora collegato nulla, il titolare può cancellarlo definitivamente. Dove invece c’è già un fascicolo, un documento o una segnalazione, resta solo l’archiviazione: l’art. 31 impone di conservare per dieci anni.',
+    ],
+  },
+  {
     id: '2026-08-04-normativa',
     data: '2026-08-04',
     titolo: 'La Normativa a portata di clic',

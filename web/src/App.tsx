@@ -8,6 +8,7 @@ import { ridimensionaAvatar } from './lib/avatar';
 import { Accesso, CambioPasswordObbligatorio, PasswordDimenticata, ResetPassword, type SessioneApp } from './pagine/Accessi';
 import { Autovalutazione, Cruscotto, Registro } from './pagine/Studio';
 import { Clienti, DettaglioFascicolo, Fascicoli } from './pagine/Fascicoli';
+import { DettaglioCliente } from './pagine/Cliente';
 import { Contante, Scadenzario, Sos } from './pagine/Presidi';
 import { Controlli } from './pagine/Controlli';
 import { Normativa } from './pagine/Normativa';
@@ -108,7 +109,8 @@ export default function App() {
       {pagina === 'cruscotto' && <Cruscotto vaiA={vaiA} />}
       {pagina === 'autovalutazione' && <Autovalutazione />}
       {pagina === 'clienti' && <Clienti vaiA={vaiA} />}
-      {pagina === 'fascicoli' && <Fascicoli vaiA={vaiA} />}
+      {pagina === 'cliente' && <DettaglioCliente id={parametri.get('id') ?? ''} ruolo={sessione.utente.ruolo} vaiA={vaiA} />}
+      {pagina === 'fascicoli' && <Fascicoli vaiA={vaiA} cliente={parametri.get('cliente')} />}
       {pagina === 'fascicolo' && <DettaglioFascicolo id={parametri.get('id') ?? ''} vaiA={vaiA} />}
       {pagina === 'scadenzario' && <Scadenzario vaiA={vaiA} />}
       {pagina === 'contante' && <Contante />}
@@ -190,6 +192,7 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
     }`;
   const attiva = (id: string) =>
     pagina === id
+    || (id === 'clienti' && pagina === 'cliente')
     || (id === 'fascicoli' && pagina === 'fascicolo')
     || (id === 'attivita' && pagina === 'registro');
 

@@ -10,6 +10,7 @@ import {
 } from '../api';
 import { ElencoVincoli, GruppoFattori, PiedeLegale, PillolaRischio, Riquadro, Tessera } from '../componenti';
 import { HelpLink } from '../components/ui';
+import { CampiCliente, etichettaTipo } from './Cliente';
 import { ImportClientiModal } from './ImportClienti';
 import { TitolaritaEffettiva, VerificaADistanza } from './TitolaritaVerifica';
 import { BozzaAi } from './BozzaAi';
@@ -23,9 +24,10 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
   const [importa, setImporta] = useState(false);
   const [cercaInCorso, setCercaInCorso] = useState(false);
   const [avvisiLookup, setAvvisiLookup] = useState<string[]>([]);
+  const [conArchiviati, setConArchiviati] = useState(false);
 
-  const carica = () => api.get<any[]>('/clienti').then(setLista);
-  useEffect(() => { carica(); }, []);
+  const carica = () => api.get<any[]>(`/clienti${conArchiviati ? '?archiviati=1' : ''}`).then(setLista);
+  useEffect(() => { carica(); /* eslint-disable-next-line */ }, [conArchiviati]);
 
   // AR-M7: compilazione dell'anagrafica dalla partita IVA (VIES).
   const compilaDaPiva = async () => {
@@ -81,79 +83,7 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
 
       {nuovo && (
         <div className="scheda" style={{ marginTop: 14 }}>
-          <div className="griglia c2">
-            <div className="campo">
-              <label>Denominazione o nominativo</label>
-              <input value={f.denominazione ?? ''} onChange={(e) => setF({ ...f, denominazione: e.target.value })} />
-            </div>
-            <div className="campo">
-              <label>Natura giuridica</label>
-              <select value={f.tipo} onChange={(e) => setF({ ...f, tipo: e.target.value })}>
-                <option value="PERSONA_FISICA">Persona fisica</option>
-                <option value="SOCIETA_CAPITALI">Società di capitali</option>
-                <option value="SOCIETA_PERSONE">Società di persone</option>
-                <option value="ENTE_NON_PROFIT">Ente non profit</option>
-                <option value="TRUST">Trust o istituto affine</option>
-                <option value="ALTRO">Altro</option>
-              </select>
-            </div>
-            <div className="campo">
-              <label>Codice fiscale</label>
-              <input value={f.codiceFiscale ?? ''} onChange={(e) => setF({ ...f, codiceFiscale: e.target.value })} />
-            </div>
-            <div className="campo">
-              <label>Partita IVA</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input value={f.partitaIva ?? ''} onChange={(e) => setF({ ...f, partitaIva: e.target.value })} style={{ flex: 1 }} />
-                <button
-                  type="button"
-                  className="azione secondaria"
-                  onClick={compilaDaPiva}
-                  disabled={cercaInCorso || !(f.partitaIva ?? '').trim()}
-                  title="Compila denominazione e natura giuridica dall'archivio IVA europeo (VIES)"
-                >
-                  {cercaInCorso ? 'Cerco…' : 'Compila dai registri'}
-                </button>
-              </div>
-            </div>
-            <div className="campo">
-              <label>Paese di residenza o sede</label>
-              <input value={f.paeseResidenza} onChange={(e) => setF({ ...f, paeseResidenza: e.target.value })} />
-            </div>
-            <div className="campo">
-              <label>Attività prevalente</label>
-              <input value={f.attivitaPrevalente ?? ''} onChange={(e) => setF({ ...f, attivitaPrevalente: e.target.value })} />
-            </div>
-          </div>
-          <div className="campo">
-            <label>
-              <input
-                type="checkbox"
-                style={{ width: 'auto', marginRight: 8 }}
-                checked={Boolean(f.pep)}
-                onChange={(e) => setF({ ...f, pep: e.target.checked })}
-              />
-              Persona politicamente esposta
-            </label>
-            {f.pep && (
-              <>
-                <label style={{ marginTop: 8 }}>
-                  <input
-                    type="checkbox"
-                    style={{ width: 'auto', marginRight: 8 }}
-                    checked={Boolean(f.pepOrganoPubblico)}
-                    onChange={(e) => setF({ ...f, pepOrganoPubblico: e.target.checked })}
-                  />
-                  Agisce in veste di organo della pubblica amministrazione
-                </label>
-                <Riquadro tipo="avviso">
-                  L’art. 24 co. 5 lett. c) impone la verifica rafforzata per le persone politicamente esposte, salvo
-                  che agiscano come organi della pubblica amministrazione: in quel caso le misure sono commisurate al
-                  rischio rilevato in concreto e la scelta va motivata nel fascicolo.
-                </Riquadro>
-              </>
-            )}
-          </div>
+          <CampiCliente f={f} setF={setF} onCompilaDaPiva={compilaDaPiva} cercaInCorso={cercaInCorso} />
           {avvisiLookup.length > 0 && (
             <Riquadro tipo="avviso">
               {avvisiLookup.map((a, i) => <div key={i}>{a}</div>)}
@@ -169,13 +99,30 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
       )}
 
       <div className="scheda" style={{ marginTop: 16 }}>
+        <label style={{ fontWeight: 400, marginBottom: 10, display: 'block' }}>
+          <input
+            type="checkbox"
+            style={{ width: 'auto', marginRight: 8 }}
+            checked={conArchiviati}
+            onChange={(e) => setConArchiviati(e.target.checked)}
+          />
+          Mostra anche i clienti archiviati
+        </label>
         <table>
           <thead><tr><th>Denominazione</th><th>Natura</th><th>CF / P.IVA</th><th>Paese</th><th>PEP</th><th>Fascicoli</th></tr></thead>
           <tbody>
             {lista.map((c) => (
-              <tr key={c.id} style={{ cursor: 'pointer' }} onClick={() => vaiA(`fascicoli?cliente=${c.id}`)}>
-                <td><strong>{c.denominazione}</strong></td>
-                <td>{c.tipo.replace(/_/g, ' ').toLowerCase()}</td>
+              <tr
+                key={c.id}
+                style={{ cursor: 'pointer', opacity: c.attivo ? 1 : 0.55 }}
+                title="Apri la scheda del cliente"
+                onClick={() => vaiA(`cliente?id=${c.id}`)}
+              >
+                <td>
+                  <strong>{c.denominazione}</strong>
+                  {!c.attivo && <span className="pillola r3" style={{ marginLeft: 8 }}>archiviato</span>}
+                </td>
+                <td>{etichettaTipo(c.tipo)}</td>
                 <td className="mono">{c.codice_fiscale ?? c.partita_iva ?? '—'}</td>
                 <td className="mono">{c.paese_residenza}</td>
                 <td>{c.pep ? <span className="pillola r3">PEP</span> : '—'}</td>
@@ -192,7 +139,7 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
 }
 
 // ===========================================================================
-export function Fascicoli({ vaiA }: { vaiA: (p: string) => void }) {
+export function Fascicoli({ vaiA, cliente }: { vaiA: (p: string) => void; cliente?: string | null }) {
   const [lista, setLista] = useState<any[]>([]);
   const [clienti, setClienti] = useState<any[]>([]);
   const [prestazioni, setPrestazioni] = useState<Prestazione[]>([]);
@@ -209,6 +156,10 @@ export function Fascicoli({ vaiA }: { vaiA: (p: string) => void }) {
   }, []);
 
   const prestazioneScelta = prestazioni.find((p) => p.codice === f.prestazioneCodice);
+  // Filtro per cliente: onorato anche quando arriva da un link vecchio
+  // (#fascicoli?cliente=…), che fino a M13 veniva ignorato.
+  const visibili = cliente ? lista.filter((x) => x.cliente_id === cliente) : lista;
+  const clienteFiltrato = cliente ? clienti.find((x) => x.id === cliente) : undefined;
 
   async function salva() {
     setErrore('');
@@ -230,6 +181,14 @@ export function Fascicoli({ vaiA }: { vaiA: (p: string) => void }) {
       </p>
 
       {avvisi.map((a, i) => <Riquadro key={i} tipo="avviso">{a}</Riquadro>)}
+
+      {cliente && (
+        <Riquadro tipo="info">
+          Sono mostrati i soli fascicoli di <strong>{clienteFiltrato?.denominazione ?? 'un cliente'}</strong>.{' '}
+          <a href="#fascicoli">Mostra tutti i fascicoli</a>
+          {clienteFiltrato && <> · <a href={`#cliente?id=${cliente}`}>apri la scheda del cliente</a></>}
+        </Riquadro>
+      )}
 
       <button className="azione" onClick={() => setNuovo(!nuovo)}>{nuovo ? 'Annulla' : 'Nuovo fascicolo'}</button>
 
@@ -328,7 +287,7 @@ export function Fascicoli({ vaiA }: { vaiA: (p: string) => void }) {
             <tr><th>Codice</th><th>Cliente</th><th>Prestazione</th><th>Conferimento</th><th>Rischio</th><th>Verifica</th><th>Stato</th></tr>
           </thead>
           <tbody>
-            {lista.map((x) => (
+            {visibili.map((x) => (
               <tr key={x.id} style={{ cursor: 'pointer' }} onClick={() => vaiA(`fascicolo?id=${x.id}`)}>
                 <td className="mono">{x.codice}</td>
                 <td><strong>{x.cliente}</strong></td>
@@ -341,7 +300,9 @@ export function Fascicoli({ vaiA }: { vaiA: (p: string) => void }) {
             ))}
           </tbody>
         </table>
-        {lista.length === 0 && <p className="caricamento">Nessun fascicolo aperto.</p>}
+        {visibili.length === 0 && (
+          <p className="caricamento">{cliente ? 'Nessun fascicolo per questo cliente.' : 'Nessun fascicolo aperto.'}</p>
+        )}
       </div>
       <PiedeLegale />
     </>
