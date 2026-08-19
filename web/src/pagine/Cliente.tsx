@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, formattaData } from '../api';
 import { PiedeLegale, Riquadro } from '../componenti';
 import { ConfermaEliminazione, HelpLink } from '../components/ui';
+import { CampoProfessionista, useProfessionisti } from '../lib/professionisti';
 
 // ── Scheda del cliente (AR-M14) ─────────────────────────────────
 // Fino a M13 l'anagrafica si poteva creare e non si poteva più aprire:
@@ -125,15 +126,19 @@ function daRecord(c: any) {
     note: c.note ?? '',
     pep: Boolean(c.pep),
     pepOrganoPubblico: Boolean(c.pep_organo_pubblico),
+    professionistaId: c.professionista_id ?? '',
   };
 }
 
-export function DettaglioCliente({ id, ruolo, vaiA }: { id: string; ruolo: string; vaiA: (p: string) => void }) {
+export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
+  id: string; ruolo: string; amministratore?: boolean; vaiA: (p: string) => void;
+}) {
   const [d, setD] = useState<any>(null);
   const [modifica, setModifica] = useState(false);
   const [f, setF] = useState<any>({});
   const [errore, setErrore] = useState('');
   const [confermaElimina, setConfermaElimina] = useState(false);
+  const professionisti = useProfessionisti();
   const [inCorso, setInCorso] = useState(false);
 
   const carica = () =>
@@ -150,6 +155,8 @@ export function DettaglioCliente({ id, ruolo, vaiA }: { id: string; ruolo: strin
   const coll = d.collegamenti ?? { fascicoli: 0, documenti: 0, segnalazioni: 0, verifiche: 0, eliminabile: false };
   const archiviato = !c.attivo;
   const titolare = ruolo === 'TITOLARE';
+  // AR-M15: archiviare è del professionista, cancellare dell'amministratore.
+  const puoCancellare = amministratore === true;
 
   async function salva() {
     setErrore('');
@@ -196,6 +203,15 @@ export function DettaglioCliente({ id, ruolo, vaiA }: { id: string; ruolo: strin
         {modifica ? (
           <>
             <CampiCliente f={f} setF={setF} />
+            {professionisti.filter((p) => p.attivo).length > 1 && (
+              <CampoProfessionista
+                elenco={professionisti}
+                valore={f.professionistaId}
+                onCambia={(v) => setF({ ...f, professionistaId: v })}
+                etichetta="Professionista di riferimento"
+                aiuto="Chi segue il cliente nello studio associato: compare negli elenchi e nei filtri."
+              />
+            )}
             <button className="azione" onClick={salva} disabled={inCorso || !f.denominazione?.trim()}>
               {inCorso ? 'Salvataggio…' : 'Salva le modifiche'}
             </button>
@@ -218,6 +234,9 @@ export function DettaglioCliente({ id, ruolo, vaiA }: { id: string; ruolo: strin
                   <th>Persona politicamente esposta</th>
                   <td>{c.pep ? (c.pep_organo_pubblico ? 'Sì, come organo della pubblica amministrazione' : 'Sì') : 'No'}</td>
                 </tr>
+                {professionisti.filter((p) => p.attivo).length > 1 && (
+                  <tr><th>Professionista di riferimento</th><td>{c.professionista || '—'}</td></tr>
+                )}
                 <tr><th>Note</th><td style={{ whiteSpace: 'pre-wrap' }}>{c.note || '—'}</td></tr>
                 <tr>
                   <th>Inserito il</th>
@@ -337,9 +356,9 @@ export function DettaglioCliente({ id, ruolo, vaiA }: { id: string; ruolo: strin
             </>
           )}
 
-          <hr style={{ margin: '18px 0', border: 0, borderTop: '1px solid var(--c-bordo, #e5e7eb)' }} />
+          {puoCancellare && <hr style={{ margin: '18px 0', border: 0, borderTop: '1px solid var(--c-bordo, #e5e7eb)' }} />}
 
-          {coll.eliminabile ? (
+          {!puoCancellare ? null : coll.eliminabile ? (
             <>
               <p>
                 Al cliente non è collegato nulla: nessun fascicolo, documento, segnalazione o verifica a distanza.

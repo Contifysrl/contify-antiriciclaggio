@@ -7,10 +7,12 @@ import { HelpLink } from '../components/ui';
 export function Cruscotto({ vaiA }: { vaiA: (p: string) => void }) {
   const [d, setD] = useState<any>(null);
   const [scad, setScad] = useState<any>(null);
+  const [portafoglio, setPortafoglio] = useState<any>(null);
 
   useEffect(() => {
     api.get('/cruscotto').then(setD).catch(() => setD({ errore: true }));
     api.get('/scadenzario').then(setScad).catch(() => {});
+    api.get('/studio/indicatori').then(setPortafoglio).catch(() => {});
   }, []);
 
   if (!d) return <div className="caricamento">Caricamento…</div>;
@@ -71,6 +73,24 @@ export function Cruscotto({ vaiA }: { vaiA: (p: string) => void }) {
               disposizione delle autorità e dell’organismo di autoregolamentazione.
             </Riquadro>
           )}
+          {/* AR-M15: l'autovalutazione si nutre dei clienti caricati. Quando i
+              dati si muovono abbastanza da cambiare un punteggio, lo si dice
+              qui — senza toccare la versione firmata, che è immutabile. */}
+          {portafoglio?.scostamenti?.length > 0 && (
+            <Riquadro tipo="avviso">
+              I dati dello studio si sono mossi rispetto alla valutazione firmata:{' '}
+              {portafoglio.scostamenti.map((s: any) => s.etichetta.toLowerCase()).join(', ')}. Conviene emettere una
+              nuova versione.
+              <button className="azione" style={{ marginTop: 10 }} onClick={() => vaiA('autovalutazione')}>
+                Vedi i dati e proponi la nuova versione
+              </button>
+            </Riquadro>
+          )}
+          {portafoglio?.scadutaPerTempo && (
+            <Riquadro tipo="avviso">
+              L’ultima autovalutazione firmata ha più di tre anni: l’art. 15 ne vuole l’aggiornamento periodico.
+            </Riquadro>
+          )}
         </div>
       ) : (
         <Riquadro tipo="critico">
@@ -109,6 +129,85 @@ export function Cruscotto({ vaiA }: { vaiA: (p: string) => void }) {
 }
 
 // ===========================================================================
+// AUTOVALUTAZIONE DELLO STUDIO (AR-M15)
+//
+// Il collaudo chiedeva che si compilasse da sola man mano che i clienti
+// vengono caricati. Il programma calcola quello che il Modello AV.0 rende
+// calcolabile — tre fattori su quattro del rischio inerente sono percentuali
+// del portafoglio — e propone il resto con la sua evidenza. Conferma e firma
+// restano del professionista: il rischio residuo pesa la vulnerabilità al
+// 60%, e la vulnerabilità non si deduce dai clienti.
+// ===========================================================================
+
+interface Indicatore {
+  codice: string;
+  etichetta: string;
+  percentuale: number | null;
+  numeratore: number;
+  denominatore: number;
+  punteggio: number | null;
+  spiegazione: string;
+  indicativo?: boolean;
+}
+
+interface DatiPortafoglio {
+  indicatori: {
+    calcolatoIl: string;
+    significativo: boolean;
+    minimoSignificativo: number;
+    clientiAttivi: number;
+    fascicoliAttivi: number;
+    inerente: Indicatore[];
+    vulnerabilita: Indicatore[];
+    proposta: { inerente: Record<string, number>; vulnerabilita: Record<string, number> };
+  };
+  versioneFirmata: { id: string; versione: number; data: string; classe: string } | null;
+  scostamenti: Array<{ fattore: string; etichetta: string; punteggioFirmato: number; punteggioAttuale: number; spiegazione: string }>;
+  scadutaPerTempo: boolean;
+  daAggiornare: boolean;
+}
+
+function TabellaIndicatori({ titolo, righe, scelti }: {
+  titolo: string;
+  righe: Indicatore[];
+  scelti: Record<string, number>;
+}) {
+  return (
+    <>
+      <h3>{titolo}</h3>
+      <table>
+        <thead>
+          <tr><th>Fattore</th><th>Dato rilevato</th><th style={{ width: 90 }}>Proposto</th><th style={{ width: 90 }}>Scelto</th></tr>
+        </thead>
+        <tbody>
+          {righe.map((i) => {
+            const scelto = scelti[i.codice];
+            const scostato = i.punteggio !== null && !i.indicativo && scelto !== undefined && scelto !== i.punteggio;
+            return (
+              <tr key={i.codice}>
+                <td><strong>{i.etichetta}</strong></td>
+                <td>
+                  {i.spiegazione}
+                  {i.percentuale !== null && (
+                    <div className="mono" style={{ color: 'var(--c-grey)' }}>
+                      {i.numeratore} / {i.denominatore} = {i.percentuale}%
+                    </div>
+                  )}
+                </td>
+                <td className="mono">{i.punteggio ?? '—'}</td>
+                <td className="mono">
+                  {scelto ?? '—'}
+                  {scostato && <span className="pillola r3" style={{ marginLeft: 6 }}>scostamento</span>}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
 export function Autovalutazione() {
   const [rs, setRs] = useState<Ruleset | null>(null);
   const [storico, setStorico] = useState<any[]>([]);
@@ -117,10 +216,15 @@ export function Autovalutazione() {
   const [note, setNote] = useState('');
   const [esito, setEsito] = useState<EsitoAutovalutazione | null>(null);
   const [errore, setErrore] = useState('');
+  const [dati, setDati] = useState<DatiPortafoglio | null>(null);
+  const [motivazioni, setMotivazioni] = useState<Record<string, string>>({});
+
+  const caricaDati = () => api.get<DatiPortafoglio>('/studio/indicatori').then(setDati).catch(() => setDati(null));
 
   useEffect(() => {
     api.get<Ruleset>('/catalogo/ruleset').then(setRs);
     api.get<any[]>('/studio/autovalutazioni').then(setStorico);
+    caricaDati();
   }, []);
 
   if (!rs) return <div className="caricamento">Caricamento…</div>;
@@ -129,6 +233,21 @@ export function Autovalutazione() {
     rs.autovalutazione.fattoriInerente.every((f) => inerente[f.codice]) &&
     rs.autovalutazione.fattoriVulnerabilita.every((f) => vuln[f.codice]);
 
+  const tutti = [...(dati?.indicatori.inerente ?? []), ...(dati?.indicatori.vulnerabilita ?? [])];
+  const scelti = { ...inerente, ...vuln };
+  // Lo scostamento si motiva solo quando il dato ha un fondamento: archivio
+  // significativo e denominatore reale. Le stesse condizioni del server.
+  const daMotivare = (dati?.indicatori.significativo ? tutti : []).filter(
+    (i) => i.punteggio !== null && !i.indicativo && i.denominatore > 0 &&
+      scelti[i.codice] !== undefined && scelti[i.codice] !== i.punteggio,
+  );
+
+  function applicaProposta() {
+    if (!dati) return;
+    setInerente((s) => ({ ...s, ...dati.indicatori.proposta.inerente }));
+    setVuln((s) => ({ ...s, ...dati.indicatori.proposta.vulnerabilita }));
+  }
+
   async function salva() {
     setErrore('');
     try {
@@ -136,9 +255,11 @@ export function Autovalutazione() {
         inerente,
         vulnerabilita: vuln,
         note,
+        motivazioniScostamento: motivazioni,
       });
       setEsito(r.esito);
       setStorico(await api.get<any[]>('/studio/autovalutazioni'));
+      await caricaDati();
     } catch (e) {
       setErrore((e as Error).message);
     }
@@ -153,6 +274,74 @@ export function Autovalutazione() {
         media dei quattro fattori di vulnerabilità ponderata al {rs.autovalutazione.pesi.vulnerabilita * 100}%. La
         vulnerabilità pesa di più perché è la sola variabile su cui lo studio può intervenire.
       </p>
+
+      {dati && (
+        <div className="scheda">
+          <h2 style={{ marginTop: 0 }}>Dati dello studio</h2>
+          <p className="occhiello">
+            Rilevazione del {formattaData(dati.indicatori.calcolatoIl)} su {dati.indicatori.fascicoliAttivi} prestazioni
+            in corso e {dati.indicatori.clientiAttivi} clienti attivi. Il Modello AV.0 (Informativa CNDCEC 57/2026)
+            àncora tre dei quattro fattori del rischio inerente a percentuali del portafoglio: sono queste. La
+            vulnerabilità non si deduce dai clienti — quella che segue è la fotografia dei presidi che il programma
+            conosce di sé, non un giudizio.
+          </p>
+
+          {!dati.indicatori.significativo && (
+            <Riquadro tipo="info">
+              L’archivio contiene meno di {dati.indicatori.minimoSignificativo} prestazioni: le percentuali sono
+              riportate come dato di fatto, ma non fondano una proposta di punteggio. Una manciata di clienti non
+              basta a qualificare il rischio dello studio.
+            </Riquadro>
+          )}
+
+          {dati.versioneFirmata && dati.scostamenti.length > 0 && (
+            <Riquadro tipo="avviso">
+              <strong>I dati si sono mossi rispetto alla versione firmata n. {dati.versioneFirmata.versione}</strong> del{' '}
+              {formattaData(dati.versioneFirmata.data)}:
+              <ul style={{ margin: '8px 0 0 18px' }}>
+                {dati.scostamenti.map((s) => (
+                  <li key={s.fattore}>
+                    {s.etichetta}: da {s.punteggioFirmato} a {s.punteggioAttuale} — {s.spiegazione}
+                  </li>
+                ))}
+              </ul>
+              <div style={{ marginTop: 8 }}>
+                La versione firmata non si modifica (art. 32 co. 2 lett. c): se ne emette una nuova.
+              </div>
+              <button className="azione" style={{ marginTop: 10 }} onClick={applicaProposta}>
+                Prepara una nuova versione con i punteggi calcolati
+              </button>
+            </Riquadro>
+          )}
+          {dati.scadutaPerTempo && (
+            <Riquadro tipo="avviso">
+              L’ultima autovalutazione firmata ha più di tre anni: l’art. 15 ne vuole l’aggiornamento periodico.
+            </Riquadro>
+          )}
+
+          <TabellaIndicatori titolo="Rischio inerente" righe={dati.indicatori.inerente} scelti={inerente} />
+          <TabellaIndicatori titolo="Vulnerabilità dei presidi" righe={dati.indicatori.vulnerabilita} scelti={vuln} />
+
+          {/* Anche in uno studio ai primi clienti la vulnerabilità ha proposte
+              utili (formazione, conservazione): il pulsante si spegne solo se
+              non c'è proprio nulla da proporre. */}
+          <button
+            className="azione"
+            onClick={applicaProposta}
+            disabled={
+              Object.keys(dati.indicatori.proposta.inerente).length +
+                Object.keys(dati.indicatori.proposta.vulnerabilita).length === 0
+            }
+          >
+            Compila con i punteggi calcolati
+          </button>
+          <div className="aiuto" style={{ marginTop: 8 }}>
+            I punteggi restano modificabili uno per uno qui sotto. Dove ti discosti dal calcolo, il programma ti
+            chiede il perché: è la stessa cosa che chiede la Regola tecnica, che ammette «un’altra valutazione
+            motivata».
+          </div>
+        </div>
+      )}
 
       <GruppoFattori
         titolo="Rischio inerente"
@@ -169,6 +358,29 @@ export function Autovalutazione() {
         onChange={(c, v) => setVuln((s) => ({ ...s, [c]: v }))}
       />
 
+      {daMotivare.length > 0 && (
+        <div className="scheda">
+          <h3>Motivazione degli scostamenti</h3>
+          <div className="aiuto">
+            Il punteggio scelto si discosta da quello calcolato sui dati dello studio. La motivazione finisce nel
+            verbale accanto al numero: è ciò che rende difendibile la scelta in sede di controllo.
+          </div>
+          {daMotivare.map((i) => (
+            <div className="campo" key={i.codice}>
+              <label>
+                {i.etichetta} — calcolato {i.punteggio}, scelto {scelti[i.codice]}
+              </label>
+              <div className="aiuto">{i.spiegazione}</div>
+              <input
+                value={motivazioni[i.codice] ?? ''}
+                onChange={(e) => setMotivazioni((s) => ({ ...s, [i.codice]: e.target.value }))}
+                placeholder="Perché il punteggio adottato è diverso da quello calcolato"
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="scheda">
         <div className="campo">
           <label>Presidi adottati e note (art. 16)</label>
@@ -177,7 +389,11 @@ export function Autovalutazione() {
           </div>
           <textarea value={note} onChange={(e) => setNote(e.target.value)} />
         </div>
-        <button className="azione" disabled={!completo} onClick={salva}>
+        <button
+          className="azione"
+          disabled={!completo || daMotivare.some((i) => (motivazioni[i.codice] ?? '').trim().length < 3)}
+          onClick={salva}
+        >
           Calcola e registra la valutazione
         </button>
         {!completo && <div className="aiuto" style={{ marginTop: 8 }}>Valorizza tutti e otto i fattori.</div>}
@@ -197,8 +413,9 @@ export function Autovalutazione() {
           </p>
           <p className="mono" style={{ color: 'var(--c-grey)' }}>{esito.formula}</p>
           <Riquadro tipo="info">
-            La valutazione va firmata dal titolare per essere opponibile. Una volta firmata non è più modificabile:
-            eventuali correzioni si fanno emettendo una nuova versione, come richiede l’art. 32 co. 2 lett. c) e d).
+            La valutazione va firmata da un professionista per essere opponibile. Una volta firmata non è più
+            modificabile: eventuali correzioni si fanno emettendo una nuova versione, come richiede l’art. 32 co. 2
+            lett. c) e d).
           </Riquadro>
         </div>
       )}
@@ -226,6 +443,7 @@ export function Autovalutazione() {
                           onClick={async () => {
                             await api.post(`/studio/autovalutazioni/${a.id}/firma`);
                             setStorico(await api.get<any[]>('/studio/autovalutazioni'));
+                            await caricaDati();
                           }}
                         >
                           Firma

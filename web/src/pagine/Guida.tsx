@@ -51,7 +51,7 @@ function Norma({ children }: { children: ReactNode }) {
   return <span className="text-ink-400">({children})</span>;
 }
 
-type Sezione = { id: string; titolo: string; icona: NomeIcona; soloTitolare?: boolean; corpo: ReactNode };
+type Sezione = { id: string; titolo: string; icona: NomeIcona; soloTitolare?: boolean; soloAmministratore?: boolean; corpo: ReactNode };
 
 const SEZIONI: Sezione[] = [
   {
@@ -125,7 +125,7 @@ const SEZIONI: Sezione[] = [
           <>Assegna i punteggi: accanto a ogni fattore trovi i criteri e gli ancoraggi ufficiali dei punteggi.</>,
           <>Annota nelle <K>note</K> le ragioni delle scelte e nei <K>presìdi</K> le misure di mitigazione adottate.</>,
           <>Salva: il calcolo (con la formula per esteso) resta documentato.</>,
-          <>Il titolare <K>firma</K>: da quel momento la versione è congelata <Norma>art. 32 co. 2</Norma> e correggere significa emettere una nuova versione.</>,
+          <>Un <K>professionista firma</K>: da quel momento la versione è congelata <Norma>art. 32 co. 2</Norma> e correggere significa emettere una nuova versione.</>,
         ]} />
         <Nota>
           Dal pulsante del verbale scarichi il <K>verbale di autovalutazione</K> in Word, già
@@ -200,7 +200,7 @@ const SEZIONI: Sezione[] = [
           l'esito lo dice espressamente con la norma di riferimento.
         </P>
         <Passi passi={[
-          <>Completa la valutazione e falla <K>firmare</K> al titolare: la versione si congela, correggere significa emettere una nuova versione.</>,
+          <>Completa la valutazione e falla <K>firmare</K> al professionista incaricato: la versione si congela, correggere significa emettere una nuova versione.</>,
           <>Carica nella sezione <K>Documenti</K> ciò che hai acquisito (documento d'identità, visura, autocertificazione del titolare effettivo, incarico): per ogni file l'applicazione calcola l'impronta di integrità e la scadenza di conservazione decennale <Norma>art. 31</Norma>.</>,
           <>Registra le <K>operazioni</K> rilevanti, comprese quelle in contante (vedi la sezione dedicata).</>,
           <>Se decidi di non eseguire la prestazione, registra l'<K>astensione</K> <Norma>art. 42</Norma> con il suo fondamento: il verbale documenta la decisione.</>,
@@ -326,7 +326,7 @@ const SEZIONI: Sezione[] = [
           La <K>segnalazione di operazione sospetta</K> <Norma>art. 35</Norma> va inviata alla
           UIF <K>prima</K> di compiere l'operazione, quando sai, sospetti o hai motivi
           ragionevoli per sospettare operazioni di riciclaggio o finanziamento del terrorismo.
-          Questa sezione è visibile <K>solo al titolare</K>: l'art. 38 impone di limitare la
+          Questa sezione è visibile <K>solo ai professionisti</K>: l'art. 38 impone di limitare la
           conoscibilità del segnalante e del contenuto.
         </P>
         <Passi passi={[
@@ -382,7 +382,7 @@ const SEZIONI: Sezione[] = [
           <K>non viene conservata</K>.
         </P>
         <Punti punti={[
-          <>Si attiva in <K>Impostazioni</K> dal titolare, accettando l'informativa: finché è spento, i pulsanti AI non compaiono.</>,
+          <>Si attiva in <K>Impostazioni</K> da chi amministra lo studio, accettando l'informativa: finché è spento, i pulsanti AI non compaiono.</>,
           <>Regola d'oro: nei testi per l'AI <K>niente nominativi</K>, codici fiscali o dati identificativi — si descrivono i fatti, non le persone.</>,
           <>Ogni suggerimento cita il sub-indice per codice e testo letterale: il modello non può inventare indicatori, il sistema riscontra ogni codice sul catalogo ufficiale.</>,
           <>Nel registro resta traccia dell'uso della funzione, mai del contenuto elaborato.</>,
@@ -450,13 +450,20 @@ const SEZIONI: Sezione[] = [
       <>
         <P>
           In <K>Impostazioni</K> ognuno gestisce la propria foto profilo e la propria password.
-          Il titolare, in più, gestisce gli <K>utenti dello studio</K>: creazione con password
+          Chi <K>amministra lo studio</K>, in più, gestisce gli <K>utenti</K>: creazione con password
           temporanea (mostrata una sola volta e inviata via email, se l'invio è configurato),
           cambio ruolo, disattivazione, reset amministrativo. Al primo accesso la password
           temporanea va sostituita.
         </P>
+        <P>
+          Il ruolo <K>Professionista</K> dice chi identifica i clienti e firma; l'<K>amministrazione</K>{' '}
+          dello studio è un permesso separato. In uno studio associato i professionisti sono più d'uno e
+          ciascuno segue i propri clienti, ma non serve che tutti abbiano in mano licenza, backup e
+          archivio. Per ciascun professionista si registrano i <K>dati d'albo</K> — qualifica, ODCEC,
+          numero di iscrizione — che compaiono nell'intestazione dei verbali.
+        </P>
         <Punti punti={[
-          <>Lo studio deve avere sempre <K>almeno un titolare attivo</K>: l'applicazione impedisce di rimuovere l'ultimo.</>,
+          <>Lo studio deve avere sempre <K>almeno un professionista attivo</K> e <K>almeno un amministratore attivo</K>: l'applicazione impedisce di rimuovere l'ultimo.</>,
           <>La password si recupera in autonomia da <K>Password dimenticata?</K> nella pagina di accesso: arriva un link via email valido 60 minuti.</>,
           <>Disattivazione e reset chiudono subito le sessioni aperte dell'utente.</>,
         ]} />
@@ -473,7 +480,7 @@ const SEZIONI: Sezione[] = [
           segue su ogni dispositivo con cui entri.
         </P>
         <P>
-          In fondo alla pagina, solo per il titolare, c'è la <K>Zona di sicurezza</K> con
+          In fondo alla pagina, solo per chi amministra lo studio, c'è la <K>Zona di sicurezza</K> con
           l'eliminazione dell'archivio (tre passaggi e parola di conferma; prima viene creato
           un backup obbligatorio).
         </P>
@@ -484,14 +491,14 @@ const SEZIONI: Sezione[] = [
     id: 'backup',
     titolo: 'Backup e ripristino',
     icona: 'database',
-    soloTitolare: true,
+    soloAmministratore: true,
     corpo: (
       <>
         <P>
           Ogni notte l'archivio dello studio viene <K>fotografato automaticamente</K> su server
           nell'Unione Europea: restano gli ultimi 30 backup giornalieri e 12 mensili{' '}
           <Norma>art. 32 co. 2: prevenire qualsiasi perdita dei dati</Norma>. Nella pagina{' '}
-          <K>Backup</K> il titolare può scaricarli, farne uno al momento, o{' '}
+          <K>Backup</K> chi amministra lo studio può scaricarli, farne uno al momento, o{' '}
           <K>ripristinare</K> l'archivio a una data precedente.
         </P>
         <Punti punti={[
@@ -558,7 +565,9 @@ export function Guida({ sessione, sezione }: { sessione: SessioneApp; sezione: s
   const [ricerca, setRicerca] = useState('');
 
   const sezioni = useMemo(
-    () => SEZIONI.filter((s) => !s.soloTitolare || sessione.utente.ruolo === 'TITOLARE'),
+    () => SEZIONI.filter((s) =>
+      (!s.soloTitolare || sessione.utente.ruolo === 'TITOLARE') &&
+      (!s.soloAmministratore || sessione.utente.amministratore === true)),
     [sessione.utente.ruolo],
   );
 

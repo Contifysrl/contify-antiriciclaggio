@@ -79,7 +79,9 @@ export default function App() {
     );
   }
 
-  const voci: Array<{ id: string; testo: string; icona: string; ruoli?: string[] }> = [
+  // AR-M15: alcune voci dipendono dal ruolo (chi firma), altre
+  // dall'amministrazione dello studio (chi tiene la licenza e l'archivio).
+  const voci: Array<{ id: string; testo: string; icona: string; ruoli?: string[]; soloAmministratore?: boolean }> = [
     { id: 'cruscotto', testo: 'Cruscotto', icona: 'dashboard' },
     { id: 'autovalutazione', testo: 'Autovalutazione studio', icona: 'grafico' },
     { id: 'clienti', testo: 'Clienti', icona: 'edificio' },
@@ -91,7 +93,7 @@ export default function App() {
     { id: 'normativa', testo: 'Normativa', icona: 'libro' },
     // Blocco di servizio, stesse voci e stesso ordine di Assist (AR-M11).
     { id: 'impostazioni', testo: 'Impostazioni', icona: 'ingranaggio' },
-    { id: 'backup', testo: 'Backup', icona: 'database', ruoli: ['TITOLARE'] },
+    { id: 'backup', testo: 'Backup', icona: 'database', soloAmministratore: true },
     { id: 'attivita', testo: 'Attività', icona: 'attivita' },
     { id: 'novita', testo: 'Novità', icona: 'campana' },
     { id: 'guida', testo: 'Guida', icona: 'aiuto' },
@@ -102,14 +104,16 @@ export default function App() {
     <Shell
       sessione={sessione}
       onSessioneAggiornata={setSessione}
-      voci={voci.filter((v) => !v.ruoli || v.ruoli.includes(sessione.utente.ruolo))}
+      voci={voci.filter((v) =>
+        (!v.ruoli || v.ruoli.includes(sessione.utente.ruolo)) &&
+        (!v.soloAmministratore || sessione.utente.amministratore === true))}
       pagina={pagina}
       vaiA={vaiA}
     >
       {pagina === 'cruscotto' && <Cruscotto vaiA={vaiA} />}
       {pagina === 'autovalutazione' && <Autovalutazione />}
       {pagina === 'clienti' && <Clienti vaiA={vaiA} />}
-      {pagina === 'cliente' && <DettaglioCliente id={parametri.get('id') ?? ''} ruolo={sessione.utente.ruolo} vaiA={vaiA} />}
+      {pagina === 'cliente' && <DettaglioCliente id={parametri.get('id') ?? ''} ruolo={sessione.utente.ruolo} amministratore={sessione.utente.amministratore === true} vaiA={vaiA} />}
       {pagina === 'fascicoli' && <Fascicoli vaiA={vaiA} cliente={parametri.get('cliente')} />}
       {pagina === 'fascicolo' && <DettaglioFascicolo id={parametri.get('id') ?? ''} vaiA={vaiA} />}
       {pagina === 'scadenzario' && <Scadenzario vaiA={vaiA} />}
@@ -120,7 +124,7 @@ export default function App() {
       {/* «Attività» è il nuovo nome del registro; il vecchio hash resta valido. */}
       {(pagina === 'attivita' || pagina === 'registro') && <Registro />}
       {pagina === 'impostazioni' && <Impostazioni sessione={sessione} onSessioneAggiornata={setSessione} />}
-      {pagina === 'backup' && sessione.utente.ruolo === 'TITOLARE' && <Backup />}
+      {pagina === 'backup' && sessione.utente.amministratore === true && <Backup />}
       {pagina === 'novita' && <Novita />}
       {pagina === 'guida' && <Guida sessione={sessione} sezione={parametri.get('sezione')} />}
       {pagina === 'assistenza' && <Assistenza sessione={sessione} apri={parametri.get('apri')} />}
@@ -274,7 +278,13 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
             </button>
             <div className="min-w-0">
               <div className="font-semibold text-ink-800 truncate">{sessione.utente.nome}</div>
-              <div className="text-xs text-ink-400 truncate capitalize">{sessione.utente.ruolo.toLowerCase()}</div>
+              {/* AR-M15: «Titolare» era il ruolo di chi firma; negli studi
+                  associati sono più d'uno e si chiamano professionisti.
+                  L'amministrazione è un attributo a parte. */}
+              <div className="text-xs text-ink-400 truncate">
+                {sessione.utente.ruolo === 'TITOLARE' ? 'Professionista' : sessione.utente.ruolo.charAt(0) + sessione.utente.ruolo.slice(1).toLowerCase()}
+                {sessione.utente.amministratore === true && ' · amministratore'}
+              </div>
             </div>
           </div>
           <input

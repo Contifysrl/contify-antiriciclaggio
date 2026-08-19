@@ -31,6 +31,18 @@ export interface Utente {
   nome: string;
   ruolo: 'TITOLARE' | 'COLLABORATORE' | 'LETTORE' | 'REVISORE';
   attivo: number;
+  /**
+   * AR-M15. Il ruolo TITOLARE dice che l'utente è un professionista e può
+   * firmare; questo flag dice che amministra lo studio (utenti, licenza,
+   * logo, backup, eliminazione dell'archivio). In uno studio associato i
+   * due insiemi non coincidono: gli associati firmano, uno solo amministra.
+   */
+  amministratore?: number;
+  /** Dati d'albo, per l'intestazione dei verbali. */
+  codice_fiscale?: string | null;
+  ordine?: string | null;
+  numero_iscrizione?: string | null;
+  qualifica?: string | null;
   password_hash?: string;
   avatar?: string | null;
   cambio_password_richiesto?: number;

@@ -105,18 +105,20 @@ const FAQ: Array<{ domanda: string; risposta: React.ReactNode }> = [
       <>
         Dalla pagina di accesso scegli <strong>«Password dimenticata?»</strong>: arriva
         un'email con un link valido 60 minuti per impostarne una nuova. Se non arriva,
-        controlla la posta indesiderata o chiedi al titolare dello studio un reset da
+        controlla la posta indesiderata o chiedi a chi amministra lo studio un reset da
         Impostazioni; vedi la{' '}
         <LinkGuida sezione="impostazioni">sezione Impostazioni e utenti della Guida</LinkGuida>.
       </>
     ),
   },
   {
-    domanda: 'Che differenza c’è tra titolare, collaboratore, lettore e revisore?',
+    domanda: 'Che differenza c’è tra professionista, collaboratore, lettore e revisore?',
     risposta: (
       <>
-        Il <strong>titolare</strong> firma valutazioni e autovalutazioni, accede alle
-        segnalazioni (art. 38) e gestisce utenti e backup; il <strong>collaboratore</strong>{' '}
+        Il <strong>professionista</strong> identifica i clienti, firma valutazioni e autovalutazione
+        e accede alle segnalazioni (art. 38) — in uno studio associato sono più d’uno, ciascuno per i
+        propri clienti; utenti, licenza e backup restano invece a chi <strong>amministra lo
+        studio</strong>, che è un permesso a parte. Il <strong>collaboratore</strong>{' '}
         inserisce e istruisce clienti e fascicoli ma non firma e non vede le segnalazioni; il{' '}
         <strong>lettore</strong> consulta soltanto; il <strong>revisore</strong> svolge la
         funzione di revisione indipendente (art. 16 co. 2). I dettagli sono nell'{' '}
@@ -131,7 +133,7 @@ const FAQ: Array<{ domanda: string; risposta: React.ReactNode }> = [
         I dati stanno su server nell'<strong>Unione Europea</strong> e le informazioni più
         sensibili (dati identificativi di dettaglio, segnalazioni) sono <strong>cifrate</strong>.
         Ogni notte l'archivio viene fotografato da solo: restano 30 backup giornalieri e 12
-        mensili, e il titolare può scaricarli o ripristinarli dalla pagina{' '}
+        mensili, e chi amministra lo studio può scaricarli o ripristinarli dalla pagina{' '}
         <strong>Backup</strong>; vedi la{' '}
         <LinkGuida sezione="backup">sezione Backup e ripristino della Guida</LinkGuida>.
       </>

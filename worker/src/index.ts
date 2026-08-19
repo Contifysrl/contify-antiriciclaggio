@@ -22,6 +22,7 @@ import {
   puoVedereSos,
   richiediAutenticazione,
   rimuoviCookieSessione,
+  soloAmministratore,
   soloTitolare,
 } from './lib/auth';
 import { cifra, decifra, generaPasswordTemporanea, hashPassword, nuovoId, nuovoToken, sha256Hex, verificaPassword } from './lib/crypto';
@@ -47,6 +48,12 @@ import { ErroreAi, MODELLO_DEFAULT, aiAbilitata, generaBozza, rispostaChat, sugg
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 
 import { CNDCEC_2025 } from './domain/rulesets/cndcec-2025';
+import {
+  calcolaIndicatori,
+  calcolaScostamenti,
+  type RigaFascicolo,
+  type RigheVulnerabilita,
+} from './domain/autoval-dati';
 import { CATALOGO_PRESTAZIONI_2025, prestazioneObbligatoria, trovaPrestazione } from './domain/prestazioni';
 import { calcolaAutovalutazione, calcolaProfiloCliente, ErroreDominio } from './domain/risk';
 import { analizzaTitolaritaEffettiva } from './domain/titolare-effettivo';
@@ -61,6 +68,7 @@ import {
   corpoSchedaVerifica,
   corpoVerbaleAstensione,
   corpoVerbaleAutovalutazione,
+  type Professionista,
 } from './verbali';
 import type { Ruleset } from './domain/types';
 
@@ -270,6 +278,13 @@ function utentePubblico(u: any) {
     cambioPasswordRichiesto: Boolean(u.cambio_password_richiesto),
     tema: u.tema ?? null,
     modoColore: u.modo_colore ?? null,
+    // AR-M15: il ruolo dice se firma, il flag dice se amministra.
+    amministratore: u.amministratore === 1,
+    professionista: u.ruolo === 'TITOLARE',
+    codiceFiscale: u.codice_fiscale ?? null,
+    ordine: u.ordine ?? null,
+    numeroIscrizione: u.numero_iscrizione ?? null,
+    qualifica: u.qualifica ?? null,
   };
 }
 
@@ -418,17 +433,21 @@ api.post('/auth/sessioni/:rif/chiudi', async (c) => {
 });
 
 // ===========================================================================
-// GESTIONE UTENTI DELLO STUDIO — solo TITOLARE
+// GESTIONE UTENTI DELLO STUDIO — solo l'AMMINISTRATORE (AR-M15)
 //
 // Regole di sicurezza (stesse di Assist):
-// - la password iniziale è generata dal server, mostrata al titolare UNA
-//   SOLA volta e mai salvata in chiaro né scritta nell'audit;
+// - la password iniziale è generata dal server, mostrata all'amministratore
+//   UNA SOLA volta e mai salvata in chiaro né scritta nell'audit;
 // - gli utenti creati (e quelli resettati) devono cambiare password al
 //   primo accesso;
-// - il titolare non può disattivare o degradare se stesso se è l'ultimo
-//   titolare attivo dello studio (l'art. 38 vuole sempre qualcuno che
-//   possa accedere alle SOS);
+// - lo studio non può restare senza un professionista attivo (l'art. 38
+//   vuole sempre qualcuno che possa accedere alle SOS) né senza un
+//   amministratore attivo (nessuno potrebbe più gestire gli utenti);
 // - disattivazione e reset amministrativo revocano le sessioni aperte.
+//
+// AR-M15: in uno studio associato i professionisti sono più d'uno e ciascuno
+// identifica e firma per i propri clienti. L'amministrazione è un flag a
+// parte proprio per non regalare a ogni associato backup ed Elimina Archivio.
 // ===========================================================================
 
 const RUOLI_VALIDI = ['TITOLARE', 'COLLABORATORE', 'LETTORE', 'REVISORE'];
@@ -440,20 +459,83 @@ async function altriTitolariAttivi(db: D1Database, tenantId: string, escludiId: 
   return r?.n ?? 0;
 }
 
-api.get('/utenti', soloTitolare, async (c) => {
+async function altriAmministratoriAttivi(db: D1Database, tenantId: string, escludiId: string): Promise<number> {
+  const r = await db.prepare(
+    'SELECT COUNT(*) AS n FROM utenti WHERE tenant_id = ? AND amministratore = 1 AND attivo = 1 AND id <> ?',
+  ).bind(tenantId, escludiId).first<{ n: number }>();
+  return r?.n ?? 0;
+}
+
+/** Dati d'albo: compaiono nell'intestazione dei verbali del professionista. */
+function datiAlbo(b: any, base: any = {}) {
+  const testo = (v: unknown, attuale: unknown) =>
+    v === undefined ? (attuale ?? null) : (String(v ?? '').trim().slice(0, 120) || null);
+  return {
+    codiceFiscale: testo(b.codiceFiscale, base.codice_fiscale),
+    ordine: testo(b.ordine, base.ordine),
+    numeroIscrizione: testo(b.numeroIscrizione, base.numero_iscrizione),
+    qualifica: testo(b.qualifica, base.qualifica),
+  };
+}
+
+/**
+ * I professionisti dello studio: chi può essere indicato come incaricato di
+ * una prestazione o come autore materiale dell'identificazione. Serve alle
+ * tendine dell'interfaccia ed è leggibile da chiunque abbia accesso —
+ * non è un dato riservato, è l'organigramma dello studio.
+ */
+api.get('/studio/professionisti', async (c) => {
   const { results } = await c.env.DB.prepare(
-    `SELECT id, email, nome, ruolo, attivo, cambio_password_richiesto, ultimo_accesso, creato_il
+    `SELECT id, nome, email, amministratore, codice_fiscale, ordine, numero_iscrizione, qualifica, attivo
+     FROM utenti WHERE tenant_id = ? AND ruolo = 'TITOLARE'
+     ORDER BY attivo DESC, nome COLLATE NOCASE`,
+  ).bind(c.get('tenantId')).all<any>();
+  return c.json((results ?? []).map((u) => ({
+    id: u.id, nome: u.nome, email: u.email,
+    amministratore: u.amministratore === 1, attivo: Boolean(u.attivo),
+    codiceFiscale: u.codice_fiscale, ordine: u.ordine,
+    numeroIscrizione: u.numero_iscrizione, qualifica: u.qualifica,
+  })));
+});
+
+/**
+ * Il professionista indicato esiste, è attivo ed è dello studio?
+ * Se non è indicato nulla si usa l'utente corrente quando è professionista:
+ * è il caso normale (il professionista carica i propri clienti).
+ */
+async function risolviProfessionista(
+  db: D1Database, tenantId: string, indicato: unknown, utente: any,
+): Promise<{ id: string } | { errore: string }> {
+  const id = indicato === undefined || indicato === null || indicato === '' ? null : String(indicato);
+  if (!id) {
+    if (utente.ruolo === 'TITOLARE') return { id: utente.id };
+    return { errore: 'Indicare il professionista incaricato: chi inserisce non firma.' };
+  }
+  const r = await db.prepare(
+    "SELECT id FROM utenti WHERE id = ? AND tenant_id = ? AND ruolo = 'TITOLARE' AND attivo = 1",
+  ).bind(id, tenantId).first<any>();
+  if (!r) return { errore: 'Il professionista indicato non esiste, non è attivo o non appartiene allo studio.' };
+  return { id: String(r.id) };
+}
+
+api.get('/utenti', soloAmministratore, async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, email, nome, ruolo, attivo, amministratore, cambio_password_richiesto, ultimo_accesso, creato_il,
+            codice_fiscale, ordine, numero_iscrizione, qualifica
      FROM utenti WHERE tenant_id = ?
      ORDER BY attivo DESC, ruolo = 'TITOLARE' DESC, nome COLLATE NOCASE`,
   ).bind(c.get('tenantId')).all<any>();
   return c.json((results ?? []).map((u) => ({
     id: u.id, email: u.email, nome: u.nome, ruolo: u.ruolo,
-    attivo: Boolean(u.attivo), cambioPasswordRichiesto: Boolean(u.cambio_password_richiesto),
+    attivo: Boolean(u.attivo), amministratore: u.amministratore === 1,
+    cambioPasswordRichiesto: Boolean(u.cambio_password_richiesto),
     ultimoAccesso: u.ultimo_accesso, creatoIl: u.creato_il,
+    codiceFiscale: u.codice_fiscale, ordine: u.ordine,
+    numeroIscrizione: u.numero_iscrizione, qualifica: u.qualifica,
   })));
 });
 
-api.post('/utenti', soloTitolare, async (c) => {
+api.post('/utenti', soloAmministratore, async (c) => {
   const tenantId = c.get('tenantId');
   const autore = c.get('utente');
   const b = await c.req.json<any>().catch(() => ({}));
@@ -467,14 +549,23 @@ api.post('/utenti', soloTitolare, async (c) => {
   const esiste = await c.env.DB.prepare('SELECT id FROM utenti WHERE email = ?').bind(email).first();
   if (esiste) return c.json({ errore: 'Esiste già un utente con questa email' }, 409);
 
+  // Solo un professionista può amministrare: chi gestisce utenti e archivio
+  // deve poter rispondere di ciò che nell'archivio c'è.
+  const amministratore = Boolean(b.amministratore) && ruolo === 'TITOLARE';
+  const albo = datiAlbo(b);
+
   const passwordTemporanea = generaPasswordTemporanea();
   const id = nuovoId('usr');
   await c.env.DB.prepare(
-    `INSERT INTO utenti (id, tenant_id, email, nome, password_hash, ruolo, cambio_password_richiesto)
-     VALUES (?,?,?,?,?,?,1)`,
-  ).bind(id, tenantId, email, nome, await hashPassword(passwordTemporanea), ruolo).run();
+    `INSERT INTO utenti (id, tenant_id, email, nome, password_hash, ruolo, cambio_password_richiesto,
+      amministratore, codice_fiscale, ordine, numero_iscrizione, qualifica)
+     VALUES (?,?,?,?,?,?,1,?,?,?,?,?)`,
+  ).bind(
+    id, tenantId, email, nome, await hashPassword(passwordTemporanea), ruolo,
+    amministratore ? 1 : 0, albo.codiceFiscale, albo.ordine, albo.numeroIscrizione, albo.qualifica,
+  ).run();
 
-  await scriviAudit(c.env.DB, { tenantId, utenteId: autore.id, azione: 'CREA_UTENTE', entita: 'utenti', entitaId: id, dettaglio: { email, nome, ruolo }, ip: c.get('ip') });
+  await scriviAudit(c.env.DB, { tenantId, utenteId: autore.id, azione: 'CREA_UTENTE', entita: 'utenti', entitaId: id, dettaglio: { email, nome, ruolo, amministratore }, ip: c.get('ip') });
 
   const studio = await c.env.DB.prepare('SELECT denominazione FROM tenants WHERE id = ?').bind(tenantId).first<any>();
   // Attesa inline: la risposta dice al titolare se la mail è partita davvero;
@@ -488,7 +579,7 @@ api.post('/utenti', soloTitolare, async (c) => {
   return c.json({ id, passwordTemporanea, emailInviata }, 201);
 });
 
-api.post('/utenti/:id', soloTitolare, async (c) => {
+api.post('/utenti/:id', soloAmministratore, async (c) => {
   const tenantId = c.get('tenantId');
   const autore = c.get('utente');
   const id = c.req.param('id');
@@ -503,27 +594,43 @@ api.post('/utenti/:id', soloTitolare, async (c) => {
   if (!nuovoNome) return c.json({ errore: 'Il nome è obbligatorio' }, 400);
   if (!RUOLI_VALIDI.includes(nuovoRuolo)) return c.json({ errore: 'Ruolo non valido' }, 400);
 
-  // Lo studio non può restare senza un titolare attivo: le SOS (art. 38)
-  // sarebbero inaccessibili a chiunque.
+  // Lo studio non può restare senza un professionista attivo: le SOS
+  // (art. 38) sarebbero inaccessibili a chiunque.
   const perdeTitolare = target.ruolo === 'TITOLARE' && (nuovoRuolo !== 'TITOLARE' || !nuovoAttivo);
   if (perdeTitolare && (await altriTitolariAttivi(c.env.DB, tenantId, target.id)) === 0) {
-    return c.json({ errore: 'Lo studio deve avere sempre almeno un titolare attivo' }, 409);
+    return c.json({ errore: 'Lo studio deve avere sempre almeno un professionista attivo' }, 409);
   }
 
-  await c.env.DB.prepare('UPDATE utenti SET nome = ?, ruolo = ?, attivo = ? WHERE id = ?')
-    .bind(nuovoNome, nuovoRuolo, nuovoAttivo ? 1 : 0, id)
+  // …né senza amministratore: nessuno potrebbe più gestire utenti, backup
+  // e licenza, e non esiste un modo di rimediare da dentro il programma.
+  const eraAmministratore = target.amministratore === 1;
+  let nuovoAmministratore = b.amministratore !== undefined ? Boolean(b.amministratore) : eraAmministratore;
+  if (nuovoRuolo !== 'TITOLARE' || !nuovoAttivo) nuovoAmministratore = false;
+  if (eraAmministratore && !nuovoAmministratore && (await altriAmministratoriAttivi(c.env.DB, tenantId, target.id)) === 0) {
+    return c.json({ errore: 'Lo studio deve avere sempre almeno un amministratore attivo' }, 409);
+  }
+
+  const albo = datiAlbo(b, target);
+  await c.env.DB.prepare(
+    `UPDATE utenti SET nome = ?, ruolo = ?, attivo = ?, amministratore = ?,
+       codice_fiscale = ?, ordine = ?, numero_iscrizione = ?, qualifica = ? WHERE id = ?`,
+  )
+    .bind(
+      nuovoNome, nuovoRuolo, nuovoAttivo ? 1 : 0, nuovoAmministratore ? 1 : 0,
+      albo.codiceFiscale, albo.ordine, albo.numeroIscrizione, albo.qualifica, id,
+    )
     .run();
   if (!nuovoAttivo) {
     await c.env.DB.prepare('DELETE FROM sessioni WHERE utente_id = ?').bind(id).run();
   }
   await scriviAudit(c.env.DB, {
     tenantId, utenteId: autore.id, azione: 'MODIFICA_UTENTE', entita: 'utenti', entitaId: id,
-    dettaglio: { ruolo: nuovoRuolo, attivo: nuovoAttivo }, ip: c.get('ip'),
+    dettaglio: { ruolo: nuovoRuolo, attivo: nuovoAttivo, amministratore: nuovoAmministratore }, ip: c.get('ip'),
   });
   return c.json({ ok: true });
 });
 
-api.post('/utenti/:id/reset-password', soloTitolare, async (c) => {
+api.post('/utenti/:id/reset-password', soloAmministratore, async (c) => {
   const tenantId = c.get('tenantId');
   const autore = c.get('utente');
   const id = c.req.param('id');
@@ -551,7 +658,7 @@ api.post('/utenti/:id/reset-password', soloTitolare, async (c) => {
 // nell'intestazione dei verbali, accanto al logo Contify.
 // ===========================================================================
 
-api.post('/studio/logo', soloTitolare, async (c) => {
+api.post('/studio/logo', soloAmministratore, async (c) => {
   const u = c.get('utente');
   const b = await c.req.json<any>().catch(() => ({}));
 
@@ -591,12 +698,12 @@ api.post('/studio/logo', soloTitolare, async (c) => {
 // i tre passaggi della UI non proteggono da una chiamata API diretta.
 // ===========================================================================
 
-api.post('/backup', soloTitolare, async (c) => {
+api.post('/backup', soloAmministratore, async (c) => {
   const r = await runBackupTenant(c.env, c.get('tenantId'), 'manuale', c.get('utente').id);
   return c.json(r, 201);
 });
 
-api.get('/backup', soloTitolare, async (c) => {
+api.get('/backup', soloAmministratore, async (c) => {
   const tenantId = c.get('tenantId');
   const backups: Array<{ key: string; tipo: TipoBackupTenant; bytes: number; caricatoIl: string; righe: number | null; trigger: string | null }> = [];
   for (const tipo of ['daily', 'monthly', 'pre-ripristino', 'pre-eliminazione'] as const) {
@@ -621,7 +728,7 @@ api.get('/backup', soloTitolare, async (c) => {
   return c.json({ backups });
 });
 
-api.get('/backup/scarica', soloTitolare, async (c) => {
+api.get('/backup/scarica', soloAmministratore, async (c) => {
   const tenantId = c.get('tenantId');
   const key = c.req.query('key') ?? '';
   if (!chiaveDelTenant(tenantId, key)) return c.json({ errore: 'Chiave di backup non valida' }, 400);
@@ -637,7 +744,7 @@ api.get('/backup/scarica', soloTitolare, async (c) => {
   });
 });
 
-api.post('/backup/ripristina', soloTitolare, async (c) => {
+api.post('/backup/ripristina', soloAmministratore, async (c) => {
   const b = await c.req.json<any>().catch(() => ({}));
   if (String(b.conferma ?? '') !== 'RIPRISTINA') {
     return c.json({ errore: 'Conferma non valida: per procedere scrivi RIPRISTINA' }, 400);
@@ -654,7 +761,7 @@ api.post('/backup/ripristina', soloTitolare, async (c) => {
   }
 });
 
-api.post('/backup/elimina-archivio', soloTitolare, async (c) => {
+api.post('/backup/elimina-archivio', soloAmministratore, async (c) => {
   const b = await c.req.json<any>().catch(() => ({}));
   if (String(b.conferma ?? '') !== 'ELIMINA') {
     return c.json({ errore: 'Conferma non valida: per procedere scrivi ELIMINA' }, 400);
@@ -799,6 +906,18 @@ api.post('/clienti/import', puoScrivere, async (c) => {
   if (!righe.length) return c.json({ errore: 'Nessuna riga da importare' }, 400);
   if (righe.length > 500) return c.json({ errore: 'Massimo 500 righe per volta' }, 400);
 
+  // AR-M15. Il professionista di riferimento dell'intera importazione:
+  // in uno studio associato si importa «il pacchetto di clienti di X».
+  // Si può indicare per riga (colonna `professionista`, email o nome), ma
+  // il caso normale è uno solo per file.
+  const predefinito = await risolviProfessionista(c.env.DB, tenantId, b.professionistaId, u);
+  if ('errore' in predefinito) return c.json({ errore: predefinito.errore }, 400);
+  const { results: elencoProf } = await c.env.DB.prepare(
+    "SELECT id, nome, email FROM utenti WHERE tenant_id = ? AND ruolo = 'TITOLARE' AND attivo = 1",
+  ).bind(tenantId).all<any>();
+  const perEmail = new Map((elencoProf ?? []).map((p: any) => [String(p.email).toLowerCase(), String(p.id)]));
+  const perNome = new Map((elencoProf ?? []).map((p: any) => [String(p.nome).trim().toLowerCase(), String(p.id)]));
+
   const TIPI = ['PERSONA_FISICA', 'SOCIETA_CAPITALI', 'SOCIETA_PERSONE', 'ENTE_NON_PROFIT', 'TRUST', 'ALTRO'];
   const esistenti = (
     await c.env.DB.prepare('SELECT denominazione, codice_fiscale, partita_iva FROM clienti WHERE tenant_id = ?').bind(tenantId).all<any>()
@@ -830,10 +949,15 @@ api.post('/clienti/import', puoScrivere, async (c) => {
       continue;
     }
 
+    // Indicazione per riga, se c'è e se corrisponde a un professionista
+    // dello studio; altrimenti quella scelta per l'intero file.
+    const indicato = String(r.professionista ?? '').trim().toLowerCase();
+    const professionistaId = (indicato && (perEmail.get(indicato) ?? perNome.get(indicato))) || predefinito.id;
+
     await c.env.DB.prepare(
       `INSERT INTO clienti (id, tenant_id, tipo, denominazione, codice_fiscale, partita_iva,
-        paese_residenza, attivita_prevalente, ateco, pep, note, creato_da)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        paese_residenza, attivita_prevalente, ateco, pep, note, creato_da, professionista_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).bind(
       nuovoId('cli'), tenantId, tipo, denominazione, cf, piva,
       String(r.paeseResidenza ?? 'IT').trim().toUpperCase() || 'IT',
@@ -842,6 +966,7 @@ api.post('/clienti/import', puoScrivere, async (c) => {
       r.pep === true || /^(s[iì]|x|1|true|y|yes)$/i.test(String(r.pep ?? '')) ? 1 : 0,
       String(r.note ?? '').trim() || null,
       u.id,
+      professionistaId,
     ).run();
     if (cf) giaCf.add(cf);
     if (piva) giaPiva.add(piva);
@@ -1140,7 +1265,7 @@ api.post('/pubblico/verifica/:token', async (c) => {
 // ===========================================================================
 
 /** Accreditamento biennale dello studio presso la Camera di Commercio. */
-api.post('/studio/registro-accreditamento', soloTitolare, async (c) => {
+api.post('/studio/registro-accreditamento', soloAmministratore, async (c) => {
   const u = c.get('utente');
   const b = await c.req.json<any>().catch(() => ({}));
   const data = String(b.data ?? '').slice(0, 10);
@@ -1210,7 +1335,7 @@ api.get('/ai/stato', async (c) => {
   });
 });
 
-api.post('/ai/abilita', soloTitolare, async (c) => {
+api.post('/ai/abilita', soloAmministratore, async (c) => {
   const u = c.get('utente');
   const b = await c.req.json<any>().catch(() => ({}));
   const abilita = Boolean(b.abilita);
@@ -1346,6 +1471,141 @@ api.get('/studio/autovalutazioni', async (c) => {
   return c.json(results ?? []);
 });
 
+// ---------------------------------------------------------------------------
+// AR-M15 — L'autovalutazione alimentata dai dati.
+//
+// Il collaudo chiedeva che l'autovalutazione si compilasse da sola man mano
+// che i clienti vengono caricati, «con una media ponderata dei rischi dei
+// clienti come gli altri programmi». La media ponderata non è il metodo del
+// CNDCEC e non la si implementa: il Modello AV.0 àncora tre dei quattro
+// fattori del rischio inerente a percentuali del portafoglio, e quelle si
+// calcolano esattamente. Il resto si propone con la sua evidenza e resta
+// giudizio del professionista, che firma.
+// ---------------------------------------------------------------------------
+
+/** Fotografia del portafoglio alla data odierna, per il calcolo AV.0. */
+async function leggiIndicatori(c: Ctx | Context<{ Bindings: Env; Variables: Variabili }>) {
+  const tenantId = c.get('tenantId');
+  const db = c.env.DB;
+
+  const { results: righe } = await db.prepare(
+    `SELECT f.id, f.codice, f.cliente_id, cl.denominazione AS cliente, f.prestazione_codice,
+            f.data_conferimento, f.data_cessazione, f.modalita_identificazione, cl.paese_residenza,
+            v.livello_applicabile, v.esente_verifica, v.circostanze
+     FROM fascicoli f
+     JOIN clienti cl ON cl.id = f.cliente_id
+     LEFT JOIN valutazioni_rischio v ON v.id = (
+       SELECT id FROM valutazioni_rischio WHERE fascicolo_id = f.id ORDER BY versione DESC LIMIT 1)
+     WHERE f.tenant_id = ? AND cl.attivo = 1`,
+  ).bind(tenantId).all<any>();
+
+  const fascicoli: RigaFascicolo[] = (righe ?? []).map((f) => ({
+    id: String(f.id),
+    codice: String(f.codice),
+    clienteId: String(f.cliente_id),
+    cliente: String(f.cliente ?? ''),
+    prestazioneCodice: String(f.prestazione_codice),
+    dataConferimento: String(f.data_conferimento),
+    dataCessazione: f.data_cessazione ?? null,
+    livelloApplicabile: f.livello_applicabile ?? null,
+    // Senza valutazione l'esenzione discende dalla prestazione: la stessa
+    // regola dello scadenzario, o i conti non tornerebbero fra le pagine.
+    esenteVerifica: f.livello_applicabile != null
+      ? Boolean(f.esente_verifica)
+      : Boolean(trovaPrestazione(String(f.prestazione_codice))?.esenteAdeguataVerifica),
+    circostanze: (() => { try { return JSON.parse(f.circostanze ?? '{}'); } catch { return {}; } })(),
+    modalitaIdentificazione: f.modalita_identificazione ?? null,
+    paeseCliente: f.paese_residenza ?? null,
+  }));
+
+  const numero = async (sql: string, ...bind: unknown[]) =>
+    (await db.prepare(sql).bind(...bind).first<{ n: number }>())?.n ?? 0;
+
+  const attiviSql = "f.tenant_id = ? AND f.data_cessazione IS NULL AND f.stato != 'CESSATO'";
+  const [
+    utentiAttivi, formazioneUltimoAnno, formazionePartecipanti, fascicoliAttivi,
+    fascicoliConValutazione, fascicoliConValutazioneFirmata, clientiSocietariSenzaTitolare,
+    documentiTotali, documentiEntro30Giorni, fascicoliSenzaDocumenti,
+    sosTotali, sosNonConcluse, astensioniTotali,
+  ] = await Promise.all([
+    numero('SELECT COUNT(*) AS n FROM utenti WHERE tenant_id = ? AND attivo = 1', tenantId),
+    numero("SELECT COUNT(*) AS n FROM formazione WHERE tenant_id = ? AND data_evento >= date('now','-12 months')", tenantId),
+    numero(
+      `SELECT COUNT(DISTINCT COALESCE(utente_id, partecipante)) AS n FROM formazione
+       WHERE tenant_id = ? AND data_evento >= date('now','-12 months')`, tenantId),
+    numero(`SELECT COUNT(*) AS n FROM fascicoli f WHERE ${attiviSql}`, tenantId),
+    numero(`SELECT COUNT(*) AS n FROM fascicoli f WHERE ${attiviSql}
+              AND EXISTS (SELECT 1 FROM valutazioni_rischio v WHERE v.fascicolo_id = f.id)`, tenantId),
+    numero(`SELECT COUNT(*) AS n FROM fascicoli f WHERE ${attiviSql}
+              AND EXISTS (SELECT 1 FROM valutazioni_rischio v WHERE v.fascicolo_id = f.id AND v.firmata_il IS NOT NULL)`, tenantId),
+    numero(
+      `SELECT COUNT(*) AS n FROM clienti c
+        WHERE c.tenant_id = ? AND c.attivo = 1
+          AND c.tipo IN ('SOCIETA_CAPITALI','SOCIETA_PERSONE','ENTE_NON_PROFIT','TRUST')
+          AND NOT EXISTS (SELECT 1 FROM titolari_effettivi t WHERE t.cliente_id = c.id AND t.valido_al IS NULL)`, tenantId),
+    numero('SELECT COUNT(*) AS n FROM documenti WHERE tenant_id = ?', tenantId),
+    // Art. 31 co. 3: acquisizione entro trenta giorni dal fatto documentato.
+    numero(
+      `SELECT COUNT(*) AS n FROM documenti
+        WHERE tenant_id = ? AND data_riferimento IS NOT NULL AND data_acquisizione IS NOT NULL
+          AND julianday(substr(data_acquisizione,1,10)) - julianday(substr(data_riferimento,1,10)) <= 30`, tenantId),
+    numero(`SELECT COUNT(*) AS n FROM fascicoli f WHERE ${attiviSql}
+              AND NOT EXISTS (SELECT 1 FROM documenti d WHERE d.fascicolo_id = f.id)`, tenantId),
+    numero('SELECT COUNT(*) AS n FROM segnalazioni_sospette WHERE tenant_id = ?', tenantId),
+    numero("SELECT COUNT(*) AS n FROM segnalazioni_sospette WHERE tenant_id = ? AND stato IN ('BOZZA','IN_VALUTAZIONE')", tenantId),
+    numero('SELECT COUNT(*) AS n FROM astensioni WHERE tenant_id = ?', tenantId),
+  ]);
+
+  const scadenzario = await calcolaScadenzario(db, tenantId);
+  const controlliScaduti = scadenzario.scadute.filter((v: any) => v.tipo === 'CONTROLLO_COSTANTE').length;
+
+  const vuln: RigheVulnerabilita = {
+    utentiAttivi, formazioneUltimoAnno, formazionePartecipanti, fascicoliAttivi,
+    fascicoliConValutazione, fascicoliConValutazioneFirmata, controlliScaduti,
+    clientiSocietariSenzaTitolare, documentiTotali, documentiEntro30Giorni,
+    fascicoliSenzaDocumenti, sosTotali, sosNonConcluse, astensioniTotali,
+  };
+
+  return calcolaIndicatori(fascicoli, vuln, oggi());
+}
+
+/** Punteggi registrati in una versione dell'autovalutazione. */
+function punteggiDi(av: any): { inerente?: Record<string, number>; vulnerabilita?: Record<string, number> } | null {
+  if (!av?.punteggi) return null;
+  try { return JSON.parse(av.punteggi); } catch { return null; }
+}
+
+/**
+ * I dati del portafoglio, sempre vivi, con lo scostamento rispetto alla
+ * versione FIRMATA. L'autovalutazione firmata non si tocca (art. 32 co. 2
+ * lett. c): qui si dice soltanto se conviene emetterne una nuova.
+ */
+api.get('/studio/indicatori', async (c) => {
+  const tenantId = c.get('tenantId');
+  const indicatori = await leggiIndicatori(c);
+  const firmata = await c.env.DB.prepare(
+    'SELECT * FROM autovalutazioni WHERE tenant_id = ? AND firmata_il IS NOT NULL ORDER BY versione DESC LIMIT 1',
+  ).bind(tenantId).first<any>();
+
+  const scostamenti = calcolaScostamenti(indicatori, punteggiDi(firmata));
+  // Art. 15: l'autovalutazione va aggiornata periodicamente, e comunque
+  // almeno ogni tre anni. Il promemoria vive qui, accanto ai dati che
+  // giustificano l'aggiornamento.
+  const scadutaPerTempo = firmata
+    ? String(firmata.data_valutazione ?? '').slice(0, 10) < aggiungiAnni(oggi(), -3)
+    : false;
+
+  return c.json({
+    indicatori,
+    versioneFirmata: firmata
+      ? { id: firmata.id, versione: firmata.versione, data: firmata.data_valutazione, classe: firmata.classe }
+      : null,
+    scostamenti,
+    scadutaPerTempo,
+    daAggiornare: scostamenti.length > 0 || scadutaPerTempo || !firmata,
+  });
+});
+
 api.post('/studio/autovalutazioni', puoScrivere, async (c) => {
   const tenantId = c.get('tenantId');
   const u = c.get('utente');
@@ -1354,6 +1614,59 @@ api.post('/studio/autovalutazioni', puoScrivere, async (c) => {
 
   // Il calcolo è del dominio: la route non conosce pesi né soglie.
   const esito = calcolaAutovalutazione({ inerente: body.inerente, vulnerabilita: body.vulnerabilita }, rs);
+
+  // AR-M15. Gli indicatori si ricalcolano QUI, non si accettano dal client:
+  // sono la prova di come si è arrivati al punteggio e devono venire dal
+  // database, non dal browser. Dove il punteggio scelto si discosta dal
+  // proposto, il ruleset stesso pretende «un'altra valutazione motivata»:
+  // qui la motivazione diventa un campo obbligatorio, non un auspicio.
+  const indicatori = await leggiIndicatori(c);
+  const motivazioni: Record<string, string> = body.motivazioniScostamento ?? {};
+  const fattori: Record<string, unknown> = {};
+  const mancanti: string[] = [];
+  const registra = (elenco: typeof indicatori.inerente, scelti: Record<string, number> | undefined, gruppo: string) => {
+    for (const i of elenco) {
+      const scelto = scelti?.[i.codice];
+      if (typeof scelto !== 'number') continue;
+      const motivazione = String(motivazioni[i.codice] ?? '').trim().slice(0, 500);
+      const scostato = i.punteggio !== null && !i.indicativo && scelto !== i.punteggio;
+      // La motivazione si pretende solo quando il dato ha un fondamento:
+      // archivio con un numero significativo di fascicoli e un denominatore
+      // reale. Altrimenti si chiederebbe al professionista di giustificarsi
+      // davanti a una percentuale calcolata sul nulla — che è il contrario
+      // di quello che serve.
+      const vincolante = scostato && indicatori.significativo && i.denominatore > 0;
+      if (vincolante && motivazione.length < 3) mancanti.push(i.etichetta);
+      fattori[i.codice] = {
+        gruppo,
+        etichetta: i.etichetta,
+        proposto: i.punteggio,
+        scelto,
+        origine: i.punteggio === null ? 'MANUALE' : scostato ? 'MODIFICATO' : 'CALCOLATO',
+        motivazione: scostato ? motivazione : null,
+        percentuale: i.percentuale,
+        numeratore: i.numeratore,
+        denominatore: i.denominatore,
+        spiegazione: i.spiegazione,
+      };
+    }
+  };
+  registra(indicatori.inerente, body.inerente, 'inerente');
+  registra(indicatori.vulnerabilita, body.vulnerabilita, 'vulnerabilita');
+  if (mancanti.length) {
+    return c.json({
+      errore: `Il punteggio scelto si discosta da quello calcolato sui dati dello studio: motivare ${mancanti.join(', ')}.`,
+      fattoriDaMotivare: mancanti,
+    }, 400);
+  }
+  const snapshot = {
+    calcolatoIl: indicatori.calcolatoIl,
+    significativo: indicatori.significativo,
+    minimoSignificativo: indicatori.minimoSignificativo,
+    clientiAttivi: indicatori.clientiAttivi,
+    fascicoliAttivi: indicatori.fascicoliAttivi,
+    fattori,
+  };
 
   const ultima = await c.env.DB.prepare('SELECT MAX(versione) AS v FROM autovalutazioni WHERE tenant_id = ?')
     .bind(tenantId)
@@ -1364,8 +1677,8 @@ api.post('/studio/autovalutazioni', puoScrivere, async (c) => {
   await c.env.DB.prepare(
     `INSERT INTO autovalutazioni
      (id, tenant_id, versione, ruleset_id, data_valutazione, punteggi, rischio_inerente, vulnerabilita,
-      rischio_residuo, classe, formula, note, presidi, creato_da)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      rischio_residuo, classe, formula, note, presidi, creato_da, indicatori)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   )
     .bind(
       id,
@@ -1382,6 +1695,8 @@ api.post('/studio/autovalutazioni', puoScrivere, async (c) => {
       body.note ?? null,
       JSON.stringify(body.presidi ?? []),
       u.id,
+      // Congelato con la versione: i clienti cambiano, il verbale no.
+      JSON.stringify(snapshot),
     )
     .run();
 
@@ -1391,19 +1706,27 @@ api.post('/studio/autovalutazioni', puoScrivere, async (c) => {
     azione: 'CREA_AUTOVALUTAZIONE',
     entita: 'autovalutazioni',
     entitaId: id,
-    dettaglio: { versione, classe: esito.classe, rischioResiduo: esito.rischioResiduo },
+    dettaglio: {
+      versione, classe: esito.classe, rischioResiduo: esito.rischioResiduo,
+      fattoriModificati: Object.entries(fattori).filter(([, v]: any) => v.origine === 'MODIFICATO').map(([k]) => k),
+    },
     ip: c.get('ip'),
   });
 
-  return c.json({ id, versione, esito }, 201);
+  return c.json({ id, versione, esito, indicatori: snapshot }, 201);
 });
 
 api.post('/studio/autovalutazioni/:id/firma', soloTitolare, async (c) => {
   const tenantId = c.get('tenantId');
   const u = c.get('utente');
   const id = c.req.param('id');
-  const r = await c.env.DB.prepare('UPDATE autovalutazioni SET firmata_da = ?, firmata_il = ? WHERE id = ? AND tenant_id = ? AND firmata_il IS NULL')
-    .bind(u.id, new Date().toISOString(), id, tenantId)
+  const b = await c.req.json<any>().catch(() => ({}));
+  // L'autovalutazione è dello studio: la firma chiunque sia professionista.
+  // Una nota di firma resta comunque disponibile per i casi in cui firmi
+  // qualcuno in luogo del referente antiriciclaggio.
+  const nota = String(b.motivazioneFirma ?? '').trim().slice(0, 500) || null;
+  const r = await c.env.DB.prepare('UPDATE autovalutazioni SET firmata_da = ?, firmata_il = ?, firma_motivazione = ? WHERE id = ? AND tenant_id = ? AND firmata_il IS NULL')
+    .bind(u.id, new Date().toISOString(), nota, id, tenantId)
     .run();
   if (!r.meta.changes) return c.json({ errore: 'Autovalutazione inesistente o già firmata' }, 409);
   await scriviAudit(c.env.DB, { tenantId, utenteId: u.id, azione: 'FIRMA_AUTOVALUTAZIONE', entita: 'autovalutazioni', entitaId: id, ip: c.get('ip') });
@@ -1447,13 +1770,19 @@ api.get('/clienti', async (c) => {
   // ?archiviati=1 mostra anche i clienti archiviati (attivo = 0), altrimenti
   // l'archiviazione sarebbe un vicolo cieco: si nasconde e non si ritrova più.
   const conArchiviati = c.req.query('archiviati') === '1';
+  // ?professionista=<id> (AR-M15): negli studi associati serve vedere «i miei».
+  // La visibilità resta di studio: questo è un filtro, non una barriera.
+  const professionista = c.req.query('professionista') ?? null;
   const { results } = await c.env.DB.prepare(
     `SELECT c.id, c.tipo, c.denominazione, c.codice_fiscale, c.partita_iva, c.paese_residenza, c.pep, c.attivo,
+            c.professionista_id, u.nome AS professionista,
             (SELECT COUNT(*) FROM fascicoli f WHERE f.cliente_id = c.id) AS fascicoli
-     FROM clienti c WHERE c.tenant_id = ?${conArchiviati ? '' : ' AND c.attivo = 1'}
+     FROM clienti c
+     LEFT JOIN utenti u ON u.id = c.professionista_id
+     WHERE c.tenant_id = ?${conArchiviati ? '' : ' AND c.attivo = 1'}${professionista ? ' AND c.professionista_id = ?' : ''}
      ORDER BY c.attivo DESC, c.denominazione`,
   )
-    .bind(c.get('tenantId'))
+    .bind(...(professionista ? [c.get('tenantId'), professionista] : [c.get('tenantId')]))
     .all();
   return c.json(results ?? []);
 });
@@ -1464,6 +1793,12 @@ api.post('/clienti', puoScrivere, async (c) => {
   const b = await c.req.json<any>();
   if (!b.denominazione || !b.tipo) return c.json({ errore: 'Denominazione e tipo sono obbligatori' }, 400);
 
+  // AR-M15: il professionista di riferimento del cliente. Se non è indicato
+  // ed è un professionista a inserire, è lui; se inserisce un collaboratore
+  // va detto per nome, perché chi inserisce non firma.
+  const prof = await risolviProfessionista(c.env.DB, tenantId, b.professionistaId, u);
+  if ('errore' in prof) return c.json({ errore: prof.errore }, 400);
+
   const id = nuovoId('cli');
   // I dati identificativi di dettaglio sono cifrati: sono la parte più sensibile
   // dell'anagrafica (documento, luogo e data di nascita, residenza).
@@ -1471,13 +1806,13 @@ api.post('/clienti', puoScrivere, async (c) => {
 
   await c.env.DB.prepare(
     `INSERT INTO clienti (id, tenant_id, tipo, denominazione, codice_fiscale, partita_iva, dati_identificativi,
-      paese_residenza, attivita_prevalente, ateco, pep, pep_organo_pubblico, note, creato_da)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      paese_residenza, attivita_prevalente, ateco, pep, pep_organo_pubblico, note, creato_da, professionista_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   )
     .bind(
       id, tenantId, b.tipo, b.denominazione, b.codiceFiscale ?? null, b.partitaIva ?? null,
       dati ? JSON.stringify(dati) : null, b.paeseResidenza ?? 'IT', b.attivitaPrevalente ?? null,
-      b.ateco ?? null, b.pep ? 1 : 0, b.pepOrganoPubblico ? 1 : 0, b.note ?? null, u.id,
+      b.ateco ?? null, b.pep ? 1 : 0, b.pepOrganoPubblico ? 1 : 0, b.note ?? null, u.id, prof.id,
     )
     .run();
 
@@ -1507,6 +1842,10 @@ api.get('/clienti/:id', async (c) => {
   ).bind(id, tenantId).all();
 
   const collegamenti = await collegamentiCliente(c.env.DB, tenantId, id);
+  if (cliente.professionista_id) {
+    const p = await c.env.DB.prepare('SELECT nome FROM utenti WHERE id = ?').bind(cliente.professionista_id).first<any>();
+    cliente.professionista = p?.nome ?? null;
+  }
 
   await scriviAudit(c.env.DB, { tenantId, utenteId: c.get('utente').id, azione: 'LEGGI_CLIENTE', entita: 'clienti', entitaId: id, ip: c.get('ip') });
   return c.json({ cliente, titolariEffettivi: titolari ?? [], fascicoli: fascicoli ?? [], collegamenti });
@@ -1556,6 +1895,12 @@ api.patch('/clienti/:id', puoScrivere, async (c) => {
   }
   if (b.pep !== undefined) { set.push('pep = ?'); valori.push(b.pep ? 1 : 0); }
   if (b.pepOrganoPubblico !== undefined) { set.push('pep_organo_pubblico = ?'); valori.push(b.pepOrganoPubblico ? 1 : 0); }
+  if (b.professionistaId !== undefined) {
+    const prof = await risolviProfessionista(c.env.DB, tenantId, b.professionistaId, u);
+    if ('errore' in prof) return c.json({ errore: prof.errore }, 400);
+    set.push('professionista_id = ?');
+    valori.push(prof.id);
+  }
   if (b.datiIdentificativi !== undefined) {
     const dati = b.datiIdentificativi
       ? await cifra(c.env.MASTER_KEY, tenantId, JSON.stringify(b.datiIdentificativi))
@@ -1602,11 +1947,12 @@ api.post('/clienti/:id/archiviazione', soloTitolare, async (c) => {
 });
 
 /**
- * Cancellazione definitiva (AR-M14). Consentita al solo titolare e solo se al
- * cliente non è appeso nulla di conservabile: serve a rimediare a un
- * inserimento sbagliato o a un import di prova, non a ripulire la storia.
+ * Cancellazione definitiva (AR-M14). Riservata all'amministratore dello
+ * studio (AR-M15: non a ogni associato) e consentita solo se al cliente non
+ * è appeso nulla di conservabile: serve a rimediare a un inserimento
+ * sbagliato o a un import di prova, non a ripulire la storia.
  */
-api.delete('/clienti/:id', soloTitolare, async (c) => {
+api.delete('/clienti/:id', soloAmministratore, async (c) => {
   const tenantId = c.get('tenantId');
   const u = c.get('utente');
   const id = c.req.param('id');
@@ -1708,17 +2054,22 @@ api.post('/clienti/:id/titolarita', puoScrivere, async (c) => {
 // ===========================================================================
 
 api.get('/fascicoli', async (c) => {
+  const professionista = c.req.query('professionista') ?? null;
+  const cliente = c.req.query('cliente') ?? null;
+  const filtri = (professionista ? ' AND f.professionista_id = ?' : '') + (cliente ? ' AND f.cliente_id = ?' : '');
+  const valori = [c.get('tenantId'), ...(professionista ? [professionista] : []), ...(cliente ? [cliente] : [])];
   const { results } = await c.env.DB.prepare(
-    `SELECT f.*, cl.denominazione AS cliente,
+    `SELECT f.*, cl.denominazione AS cliente, u.nome AS professionista,
             v.classe, v.livello_applicabile, v.rischio_effettivo, v.firmata_il AS valutazione_firmata,
             v.controllo_costante_mesi, v.astensione_dovuta
      FROM fascicoli f
      JOIN clienti cl ON cl.id = f.cliente_id
+     LEFT JOIN utenti u ON u.id = f.professionista_id
      LEFT JOIN valutazioni_rischio v ON v.id = (
        SELECT id FROM valutazioni_rischio WHERE fascicolo_id = f.id ORDER BY versione DESC LIMIT 1)
-     WHERE f.tenant_id = ? ORDER BY f.data_conferimento DESC`,
+     WHERE f.tenant_id = ?${filtri} ORDER BY f.data_conferimento DESC`,
   )
-    .bind(c.get('tenantId'))
+    .bind(...valori)
     .all();
   return c.json(results ?? []);
 });
@@ -1735,16 +2086,31 @@ api.post('/fascicoli', puoScrivere, async (c) => {
   ).bind(tenantId, `${anno}/%`).first<{ n: number }>();
   const codice = `${anno}/${String((conteggio?.n ?? 0) + 1).padStart(4, '0')}`;
 
+  // AR-M15. Il professionista incaricato della prestazione e chi ha
+  // materialmente identificato il cliente: l'art. 19 co. 1 lett. a) chiede
+  // l'identificazione, e in uno studio associato chiedersi «chi» non è
+  // pedanteria. In mancanza di indicazione l'identificazione è attribuita
+  // al professionista incaricato, alla data di conferimento dell'incarico.
+  const prof = await risolviProfessionista(c.env.DB, tenantId, b.professionistaId, u);
+  if ('errore' in prof) return c.json({ errore: prof.errore }, 400);
+  const identificatore = b.identificatoDa
+    ? await risolviProfessionista(c.env.DB, tenantId, b.identificatoDa, u)
+    : { id: prof.id };
+  if ('errore' in identificatore) return c.json({ errore: identificatore.errore }, 400);
+  const dataConferimento = b.dataConferimento ?? oggi();
+
   const id = nuovoId('fas');
   await c.env.DB.prepare(
     `INSERT INTO fascicoli (id, tenant_id, cliente_id, codice, prestazione_codice, prestazione_descrizione,
-      tipo_rapporto, importo_operazione, data_conferimento, scopo_natura, esecutore, modalita_identificazione, creato_da)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      tipo_rapporto, importo_operazione, data_conferimento, scopo_natura, esecutore, modalita_identificazione, creato_da,
+      professionista_id, identificato_da, data_identificazione)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   )
     .bind(
       id, tenantId, b.clienteId, codice, prestazione.codice, prestazione.descrizione,
-      b.tipoRapporto ?? 'CONTINUATIVO', b.importoOperazione ?? null, b.dataConferimento ?? oggi(),
+      b.tipoRapporto ?? 'CONTINUATIVO', b.importoOperazione ?? null, dataConferimento,
       b.scopoNatura ?? null, b.esecutore ? JSON.stringify(b.esecutore) : null, b.modalitaIdentificazione ?? null, u.id,
+      prof.id, identificatore.id, b.dataIdentificazione ?? dataConferimento,
     )
     .run();
 
@@ -1771,7 +2137,13 @@ api.get('/fascicoli/:id', async (c) => {
   const tenantId = c.get('tenantId');
   const id = c.req.param('id');
   const f = await c.env.DB.prepare(
-    'SELECT f.*, cl.denominazione AS cliente, cl.pep, cl.paese_residenza FROM fascicoli f JOIN clienti cl ON cl.id = f.cliente_id WHERE f.id = ? AND f.tenant_id = ?',
+    `SELECT f.*, cl.denominazione AS cliente, cl.pep, cl.paese_residenza,
+            p.nome AS professionista, i.nome AS identificatore
+     FROM fascicoli f
+     JOIN clienti cl ON cl.id = f.cliente_id
+     LEFT JOIN utenti p ON p.id = f.professionista_id
+     LEFT JOIN utenti i ON i.id = f.identificato_da
+     WHERE f.id = ? AND f.tenant_id = ?`,
   ).bind(id, tenantId).first<any>();
   if (!f) return c.json({ errore: 'Fascicolo non trovato' }, 404);
 
@@ -1806,6 +2178,47 @@ api.get('/fascicoli/:id', async (c) => {
     operazioni: operazioni ?? [],
     scadenze: statoScadenze(scadenze, oggi()),
   });
+});
+
+/**
+ * Riassegnazione (AR-M15): il professionista incaricato e l'autore
+ * dell'identificazione cambiano — un associato subentra, un incarico passa
+ * di mano. Non si riscrive la storia della verifica: si aggiorna a chi è
+ * intestata la prestazione, e l'audit conserva il passaggio.
+ */
+api.post('/fascicoli/:id/professionista', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const u = c.get('utente');
+  const id = c.req.param('id');
+  const b = await c.req.json<any>().catch(() => ({}));
+
+  const f = await c.env.DB.prepare('SELECT id, professionista_id, identificato_da FROM fascicoli WHERE id = ? AND tenant_id = ?')
+    .bind(id, tenantId).first<any>();
+  if (!f) return c.json({ errore: 'Fascicolo non trovato' }, 404);
+
+  const prof = await risolviProfessionista(c.env.DB, tenantId, b.professionistaId ?? f.professionista_id, u);
+  if ('errore' in prof) return c.json({ errore: prof.errore }, 400);
+  const identificatore = b.identificatoDa !== undefined
+    ? await risolviProfessionista(c.env.DB, tenantId, b.identificatoDa, u)
+    : { id: f.identificato_da ?? prof.id };
+  if ('errore' in identificatore) return c.json({ errore: identificatore.errore }, 400);
+
+  const dataIdent = b.dataIdentificazione === undefined ? undefined : String(b.dataIdentificazione ?? '').slice(0, 10);
+  if (dataIdent !== undefined && dataIdent && !/^\d{4}-\d{2}-\d{2}$/.test(dataIdent)) {
+    return c.json({ errore: 'La data di identificazione va indicata come AAAA-MM-GG' }, 400);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE fascicoli SET professionista_id = ?, identificato_da = ?,
+       data_identificazione = COALESCE(?, data_identificazione), aggiornato_il = datetime('now')
+     WHERE id = ? AND tenant_id = ?`,
+  ).bind(prof.id, identificatore.id, dataIdent ?? null, id, tenantId).run();
+
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: u.id, azione: 'ASSEGNA_PROFESSIONISTA', entita: 'fascicoli', entitaId: id,
+    dettaglio: { da: f.professionista_id, a: prof.id, identificatoDa: identificatore.id }, ip: c.get('ip'),
+  });
+  return c.json({ ok: true });
 });
 
 /** Calcolo senza persistenza: serve alla UI per mostrare l'esito in tempo reale. */
@@ -1874,14 +2287,34 @@ api.post('/fascicoli/:idF/valutazioni/:id/firma', soloTitolare, async (c) => {
   const tenantId = c.get('tenantId');
   const u = c.get('utente');
   const id = c.req.param('id');
+  const idF = c.req.param('idF');
+  const b = await c.req.json<any>().catch(() => ({}));
+
+  // AR-M15. Firmare la verifica di un cliente altrui è legittimo ma non è
+  // ordinario: si chiede il perché e lo si conserva. Il divieto secco
+  // spingerebbe a firmare con le credenziali del collega, che è peggio.
+  const f = await c.env.DB.prepare('SELECT professionista_id FROM fascicoli WHERE id = ? AND tenant_id = ?')
+    .bind(idF, tenantId).first<any>();
+  const perConto = Boolean(f?.professionista_id) && f.professionista_id !== u.id;
+  const motivazione = String(b.motivazioneFirma ?? '').trim().slice(0, 500);
+  if (perConto && motivazione.length < 3) {
+    return c.json({
+      errore: 'La prestazione è intestata a un altro professionista: indicare il motivo della firma (sostituzione, assenza, subentro).',
+      richiedeMotivazione: true,
+    }, 409);
+  }
+
   const r = await c.env.DB.prepare(
-    'UPDATE valutazioni_rischio SET firmata_da = ?, firmata_il = ? WHERE id = ? AND tenant_id = ? AND firmata_il IS NULL',
-  ).bind(u.id, new Date().toISOString(), id, tenantId).run();
+    'UPDATE valutazioni_rischio SET firmata_da = ?, firmata_il = ?, firma_motivazione = ? WHERE id = ? AND tenant_id = ? AND firmata_il IS NULL',
+  ).bind(u.id, new Date().toISOString(), perConto ? motivazione : null, id, tenantId).run();
   if (!r.meta.changes) return c.json({ errore: 'Valutazione inesistente o già firmata' }, 409);
   await c.env.DB.prepare("UPDATE fascicoli SET stato = 'COMPLETO' WHERE id = ? AND stato = 'IN_VERIFICA'")
-    .bind(c.req.param('idF')).run();
-  await scriviAudit(c.env.DB, { tenantId, utenteId: u.id, azione: 'FIRMA_VALUTAZIONE', entita: 'valutazioni_rischio', entitaId: id, ip: c.get('ip') });
-  return c.json({ ok: true });
+    .bind(idF).run();
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: u.id, azione: 'FIRMA_VALUTAZIONE', entita: 'valutazioni_rischio', entitaId: id,
+    dettaglio: perConto ? { perContoDi: f.professionista_id, motivazione } : undefined, ip: c.get('ip'),
+  });
+  return c.json({ ok: true, perConto });
 });
 
 // ===========================================================================
@@ -2818,6 +3251,23 @@ async function nomiUtenti(c: Ctx): Promise<Record<string, string>> {
   return Object.fromEntries((results ?? []).map((u) => [u.id, u.nome]));
 }
 
+/**
+ * Le schede dei professionisti per l'intestazione dei verbali (AR-M15):
+ * qualifica e iscrizione all'albo, non il solo nome di battesimo.
+ */
+async function schedeProfessionisti(c: Ctx): Promise<Record<string, Professionista>> {
+  const { results } = await c.env.DB.prepare(
+    'SELECT id, nome, qualifica, ordine, numero_iscrizione, codice_fiscale FROM utenti WHERE tenant_id = ?',
+  ).bind(c.get('tenantId')).all<any>();
+  return Object.fromEntries((results ?? []).map((u) => [u.id, {
+    nome: u.nome,
+    qualifica: u.qualifica ?? null,
+    ordine: u.ordine ?? null,
+    numeroIscrizione: u.numero_iscrizione ?? null,
+    codiceFiscale: u.codice_fiscale ?? null,
+  } as Professionista]));
+}
+
 api.get('/studio/autovalutazioni/:id/verbale', async (c) => {
   const tenantId = c.get('tenantId');
   const av = await c.env.DB.prepare('SELECT * FROM autovalutazioni WHERE id = ? AND tenant_id = ?')
@@ -2825,6 +3275,7 @@ api.get('/studio/autovalutazioni/:id/verbale', async (c) => {
   if (!av) return c.json({ errore: 'Autovalutazione non trovata' }, 404);
 
   const nomi = await nomiUtenti(c);
+  const schede = await schedeProfessionisti(c);
   const tenant = await tenantCorrente(c);
   const corpo = corpoVerbaleAutovalutazione({
     tenant,
@@ -2832,6 +3283,7 @@ api.get('/studio/autovalutazioni/:id/verbale', async (c) => {
     ruleset: ruleset(av.ruleset_id),
     nomeCreatore: nomi[av.creato_da] ?? '—',
     nomeFirmatario: av.firmata_da ? nomi[av.firmata_da] : null,
+    firmatario: av.firmata_da ? schede[av.firmata_da] ?? null : null,
   });
   await scriviAudit(c.env.DB, { tenantId, utenteId: c.get('utente').id, azione: 'VERBALE_AUTOVALUTAZIONE', entita: 'autovalutazioni', entitaId: av.id, ip: c.get('ip') });
   return rispostaDocx(costruisciDocx(corpo, { logoStudio: logoStudioDocx(tenant) }), `verbale-autovalutazione-v${av.versione}.docx`);
@@ -2855,6 +3307,7 @@ api.get('/fascicoli/:id/scheda-verifica', async (c) => {
   if (!d) return c.json({ errore: 'Fascicolo non trovato' }, 404);
 
   const nomi = await nomiUtenti(c);
+  const schede = await schedeProfessionisti(c);
   const ultima = d.valutazioni[0] ?? null;
   const tenant = await tenantCorrente(c);
   const corpo = corpoSchedaVerifica({
@@ -2866,6 +3319,8 @@ api.get('/fascicoli/:id/scheda-verifica', async (c) => {
     documenti: d.documenti,
     ruleset: ruleset(ultima?.ruleset_id),
     nomeFirmatario: ultima?.firmata_da ? nomi[ultima.firmata_da] : nomi[d.fascicolo.creato_da],
+    professionista: d.fascicolo.professionista_id ? schede[d.fascicolo.professionista_id] ?? null : null,
+    identificatore: d.fascicolo.identificato_da ? schede[d.fascicolo.identificato_da] ?? null : null,
   });
   await scriviAudit(c.env.DB, { tenantId, utenteId: c.get('utente').id, azione: 'VERBALE_SCHEDA_VERIFICA', entita: 'fascicoli', entitaId: d.fascicolo.id, ip: c.get('ip') });
   return rispostaDocx(costruisciDocx(corpo, { logoStudio: logoStudioDocx(tenant) }), `scheda-verifica-${d.fascicolo.codice.replace('/', '-')}.docx`);
@@ -2910,6 +3365,7 @@ api.get('/fascicoli/:id/fascicolo-ispezione', async (c) => {
   const audit = await verificaCatenaAudit(c.env.DB, tenantId);
 
   const nomi = await nomiUtenti(c);
+  const schede = await schedeProfessionisti(c);
   const ultima = d.valutazioni[0] ?? null;
   const tenant = await tenantCorrente(c);
   const corpo = corpoFascicoloIspezione({
@@ -2926,6 +3382,8 @@ api.get('/fascicoli/:id/fascicolo-ispezione', async (c) => {
     ruleset: ruleset(ultima?.ruleset_id),
     nomiUtenti: nomi,
     nomeFirmatario: ultima?.firmata_da ? nomi[ultima.firmata_da] : nomi[d.fascicolo.creato_da],
+    professionista: d.fascicolo.professionista_id ? schede[d.fascicolo.professionista_id] ?? null : null,
+    identificatore: d.fascicolo.identificato_da ? schede[d.fascicolo.identificato_da] ?? null : null,
   });
   await scriviAudit(c.env.DB, { tenantId, utenteId: c.get('utente').id, azione: 'VERBALE_FASCICOLO_ISPEZIONE', entita: 'fascicoli', entitaId: d.fascicolo.id, ip: c.get('ip') });
   return rispostaDocx(costruisciDocx(corpo, { logoStudio: logoStudioDocx(tenant) }), `fascicolo-ispezione-${d.fascicolo.codice.replace('/', '-')}.docx`);

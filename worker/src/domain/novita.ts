@@ -15,6 +15,20 @@ export interface VoceNovita {
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-08-19-studio-associato',
+    data: '2026-08-19',
+    titolo: 'Studio associato e autovalutazione che si nutre dei clienti',
+    punti: [
+      'Più professionisti nello stesso studio: ciascuno identifica i propri clienti, firma le proprie valutazioni e compare col proprio nome — qualifica, ODCEC e numero di iscrizione — sulla scheda di adeguata verifica. Il ruolo «Titolare» si chiama ora «Professionista».',
+      'Amministrare lo studio è diventato un permesso a parte: utenti, licenza, backup ed Elimina Archivio restano a chi amministra, non arrivano in dote a ogni associato.',
+      'Su cliente e fascicolo si indica il professionista incaricato e chi ha materialmente identificato il cliente, con la data (art. 19 co. 1 lett. a). Elenchi e filtri permettono di vedere «i miei».',
+      'Se firmi la valutazione di un cliente intestato a un collega il programma non lo vieta, ma chiede il perché — sostituzione, assenza, subentro — e lo scrive nel verbale.',
+      'L’autovalutazione dello studio non si compila più al buio: il programma calcola sui clienti caricati le percentuali che il Modello AV.0 chiede (clienti in verifica rafforzata, prestazioni con Paesi ad alto rischio, prestazioni a basso rischio inerente) e propone i punteggi del rischio inerente, con numeratore e denominatore in chiaro.',
+      'La vulnerabilità dei presidi viene proposta a partire da quello che il programma sa di sé: formazione registrata, documenti acquisiti entro i trenta giorni, controlli costanti scaduti, titolarità effettive mancanti. Resta un giudizio tuo, e i punteggi si cambiano — motivando lo scostamento, come chiede la Regola tecnica.',
+      'Quando i dati si muovono al punto da cambiare un punteggio, il cruscotto lo segnala e propone una nuova versione. La versione firmata non si tocca: l’art. 32 vuole che si emetta la successiva.',
+    ],
+  },
+  {
     id: '2026-08-19-scheda-cliente',
     data: '2026-08-19',
     titolo: 'La scheda del cliente: si apre, si modifica, si cancella',

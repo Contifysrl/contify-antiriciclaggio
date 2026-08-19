@@ -11,15 +11,18 @@ import type { SessioneApp } from './Accessi';
 // Profilo (foto), cambio password, e — solo per il titolare — la
 // gestione degli utenti dello studio, sul modello di Assist.
 
+// AR-M15. «Titolare» diventa «Professionista»: in uno studio associato i
+// professionisti sono più d'uno e ciascuno identifica e firma per i propri
+// clienti. Chi amministra lo studio è un flag a parte, non un ruolo.
 const ETICHETTA_RUOLO: Record<string, string> = {
-  TITOLARE: 'Titolare',
+  TITOLARE: 'Professionista',
   COLLABORATORE: 'Collaboratore',
   LETTORE: 'Lettore',
   REVISORE: 'Revisore',
 };
 
 const DESCRIZIONE_RUOLO: Record<string, string> = {
-  TITOLARE: 'Firma valutazioni e autovalutazioni, accede alle segnalazioni (art. 38), gestisce gli utenti.',
+  TITOLARE: 'Identifica i clienti, firma valutazioni e autovalutazione, accede alle segnalazioni (art. 38).',
   COLLABORATORE: 'Inserisce e istruisce fascicoli e clienti; non firma e non vede le segnalazioni.',
   LETTORE: 'Sola lettura, senza accesso alle segnalazioni.',
   REVISORE: 'Funzione di revisione indipendente ex art. 16 co. 2 lett. b).',
@@ -31,8 +34,46 @@ interface UtenteRiga {
   nome: string;
   ruolo: string;
   attivo: boolean;
+  amministratore: boolean;
   cambioPasswordRichiesto: boolean;
   ultimoAccesso: string | null;
+  codiceFiscale?: string | null;
+  ordine?: string | null;
+  numeroIscrizione?: string | null;
+  qualifica?: string | null;
+}
+
+/** Campi d'albo, condivisi da creazione e modifica del professionista. */
+function CampiAlbo({ valori, onChange }: {
+  valori: { qualifica: string; ordine: string; numeroIscrizione: string; codiceFiscale: string };
+  onChange: (v: { qualifica: string; ordine: string; numeroIscrizione: string; codiceFiscale: string }) => void;
+}) {
+  const campo = (k: keyof typeof valori, etichetta: string, placeholder?: string) => (
+    <div>
+      <label className="label">{etichetta}</label>
+      <input
+        className="input"
+        value={valori[k]}
+        placeholder={placeholder}
+        onChange={(e) => onChange({ ...valori, [k]: e.target.value })}
+      />
+    </div>
+  );
+  return (
+    <div className="rounded-lg border border-ink-100 p-3 space-y-3">
+      <div className="text-sm font-semibold">Dati d’albo</div>
+      <div className="aiuto">
+        Compaiono nell’intestazione dei verbali e nella scheda di adeguata verifica: davanti a un’ispezione
+        l’atto deve dire quale professionista ha identificato il cliente.
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {campo('qualifica', 'Qualifica', 'Dott. · Rag. · Avv.')}
+        {campo('ordine', 'ODCEC di', 'Milano')}
+        {campo('numeroIscrizione', 'Numero di iscrizione')}
+        {campo('codiceFiscale', 'Codice fiscale')}
+      </div>
+    </div>
+  );
 }
 
 function dataIt(iso?: string | null): string {
@@ -45,24 +86,25 @@ export function Impostazioni({ sessione, onSessioneAggiornata }: {
   sessione: SessioneApp;
   onSessioneAggiornata: (s: SessioneApp) => void;
 }) {
-  const titolare = sessione.utente.ruolo === 'TITOLARE';
+  // AR-M15: amministrare lo studio non è più un attributo del ruolo.
+  const amministratore = sessione.utente.amministratore === true;
   return (
     <>
       <h1>Impostazioni <HelpLink sezione="impostazioni" /></h1>
       <p className="occhiello">
-        Aspetto, password e dispositivi collegati; per il titolare anche utenti, logo dello
-        studio, assistente AI e zona di sicurezza.
+        Aspetto, password e dispositivi collegati; per chi amministra lo studio anche utenti, logo,
+        assistente AI e zona di sicurezza.
       </p>
-      {titolare && <LogoStudio sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} />}
-      {titolare && <GestioneUtenti ioId={sessione.utente.id} />}
-      {titolare && <AssistenteAi />}
+      {amministratore && <LogoStudio sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} />}
+      {amministratore && <GestioneUtenti ioId={sessione.utente.id} />}
+      {amministratore && <AssistenteAi />}
       <CambiaPassword />
       <AccessiDispositivi />
       <div className="grid gap-4 lg:grid-cols-3 my-4">
         <div className="lg:col-span-2"><AspettoInterfaccia sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} /></div>
         <div><Profilo sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} /></div>
       </div>
-      {titolare && <ZonaSicurezza />}
+      {amministratore && <ZonaSicurezza />}
       <PiedeLegale />
     </>
   );
@@ -485,13 +527,15 @@ function GestioneUtenti({ ioId }: { ioId: string }) {
         </button>
       </div>
       <div className="aiuto">
-        Il titolare firma e accede alle segnalazioni; collaboratore, lettore e revisore hanno accessi ridotti.
-        Lo studio deve avere sempre almeno un titolare attivo.
+        Il professionista identifica i clienti, firma e accede alle segnalazioni; collaboratore, lettore e
+        revisore hanno accessi ridotti. In uno studio associato i professionisti sono più d’uno: ciascuno
+        segue i propri clienti. L’amministratore è chi gestisce utenti, licenza, backup e archivio — non
+        serve che lo siano tutti. Lo studio deve avere sempre almeno un professionista e un amministratore attivi.
       </div>
       {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
       <table>
         <thead>
-          <tr><th>Nome</th><th>Email</th><th>Ruolo</th><th>Stato</th><th>Ultimo accesso</th><th /></tr>
+          <tr><th>Nome</th><th>Email</th><th>Ruolo</th><th>Studio</th><th>Stato</th><th>Ultimo accesso</th><th /></tr>
         </thead>
         <tbody>
           {utenti.map((u) => (
@@ -499,6 +543,7 @@ function GestioneUtenti({ ioId }: { ioId: string }) {
               <td className="font-semibold">{u.nome}{u.id === ioId && <span className="text-ink-400 font-normal"> (tu)</span>}</td>
               <td>{u.email}</td>
               <td><Badge tone={u.ruolo === 'TITOLARE' ? 'teal' : 'gray'}>{ETICHETTA_RUOLO[u.ruolo] ?? u.ruolo}</Badge></td>
+              <td>{u.amministratore ? <Badge tone="amber">amministratore</Badge> : <span className="text-ink-400">—</span>}</td>
               <td>
                 {u.attivo
                   ? u.cambioPasswordRichiesto
@@ -635,6 +680,8 @@ function NuovoUtente({ onChiudi, onCreato }: {
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
   const [ruolo, setRuolo] = useState('COLLABORATORE');
+  const [amministratore, setAmministratore] = useState(false);
+  const [albo, setAlbo] = useState({ qualifica: '', ordine: '', numeroIscrizione: '', codiceFiscale: '' });
   const [errore, setErrore] = useState('');
   const [invio, setInvio] = useState(false);
 
@@ -643,7 +690,9 @@ function NuovoUtente({ onChiudi, onCreato }: {
     setErrore('');
     setInvio(true);
     try {
-      const r = await api.post<{ passwordTemporanea: string; emailInviata: boolean }>('/utenti', { nome, email, ruolo });
+      const r = await api.post<{ passwordTemporanea: string; emailInviata: boolean }>('/utenti', {
+        nome, email, ruolo, amministratore: ruolo === 'TITOLARE' && amministratore, ...albo,
+      });
       onCreato({ email: email.toLowerCase().trim(), password: r.passwordTemporanea, emailInviata: r.emailInviata });
     } catch (err) {
       setErrore((err as Error).message);
@@ -669,6 +718,15 @@ function NuovoUtente({ onChiudi, onCreato }: {
           </select>
           <div className="aiuto mt-1">{DESCRIZIONE_RUOLO[ruolo]}</div>
         </div>
+        {ruolo === 'TITOLARE' && (
+          <>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" className="!w-4" checked={amministratore} onChange={(e) => setAmministratore(e.target.checked)} />
+              <span className="text-sm">Amministra lo studio (utenti, licenza, backup, archivio)</span>
+            </label>
+            <CampiAlbo valori={albo} onChange={setAlbo} />
+          </>
+        )}
         {errore && <div className="errore">{errore}</div>}
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" className="btn btn-secondary" onClick={onChiudi}>Annulla</button>
@@ -689,6 +747,13 @@ function ModificaUtente({ utente, io, onChiudi, onSalvato, onReset }: {
   const [nome, setNome] = useState(utente.nome);
   const [ruolo, setRuolo] = useState(utente.ruolo);
   const [attivo, setAttivo] = useState(utente.attivo);
+  const [amministratore, setAmministratore] = useState(utente.amministratore);
+  const [albo, setAlbo] = useState({
+    qualifica: utente.qualifica ?? '',
+    ordine: utente.ordine ?? '',
+    numeroIscrizione: utente.numeroIscrizione ?? '',
+    codiceFiscale: utente.codiceFiscale ?? '',
+  });
   const [errore, setErrore] = useState('');
   const [invio, setInvio] = useState(false);
 
@@ -697,7 +762,9 @@ function ModificaUtente({ utente, io, onChiudi, onSalvato, onReset }: {
     setErrore('');
     setInvio(true);
     try {
-      await api.post(`/utenti/${utente.id}`, { nome, ruolo, attivo });
+      await api.post(`/utenti/${utente.id}`, {
+        nome, ruolo, attivo, amministratore: ruolo === 'TITOLARE' && attivo && amministratore, ...albo,
+      });
       onSalvato();
     } catch (err) {
       setErrore((err as Error).message);
@@ -736,7 +803,16 @@ function ModificaUtente({ utente, io, onChiudi, onSalvato, onReset }: {
           <input type="checkbox" className="!w-4" checked={attivo} onChange={(e) => setAttivo(e.target.checked)} />
           <span className="text-sm">Account attivo</span>
         </label>
-        {io && <div className="aiuto">Stai modificando il tuo stesso account: non puoi lasciare lo studio senza un titolare attivo.</div>}
+        {ruolo === 'TITOLARE' && attivo && (
+          <>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" className="!w-4" checked={amministratore} onChange={(e) => setAmministratore(e.target.checked)} />
+              <span className="text-sm">Amministra lo studio (utenti, licenza, backup, archivio)</span>
+            </label>
+            <CampiAlbo valori={albo} onChange={setAlbo} />
+          </>
+        )}
+        {io && <div className="aiuto">Stai modificando il tuo stesso account: non puoi lasciare lo studio senza un professionista né senza un amministratore attivo.</div>}
         {errore && <div className="errore">{errore}</div>}
         <div className="flex items-center justify-between gap-2 pt-1">
           <button

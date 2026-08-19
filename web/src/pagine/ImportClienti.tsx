@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { api } from '../api';
 import { Modal } from '../components/ui';
 import { Riquadro } from '../componenti';
+import { useProfessionisti } from '../lib/professionisti';
 
 // ── Import clienti da CSV / Excel esportato (AR-M7) ────────────
 // Tutto il parsing sta nel browser: si incolla o si carica il file, si
@@ -19,6 +20,9 @@ const CAMPI = [
   { chiave: 'ateco', etichetta: 'Codice ATECO' },
   { chiave: 'pep', etichetta: 'PEP (sì/no)' },
   { chiave: 'note', etichetta: 'Note' },
+  // AR-M15: negli studi associati il file esportato dal gestionale spesso
+  // ha già la colonna del professionista che segue il cliente.
+  { chiave: 'professionista', etichetta: 'Professionista (nome o email)' },
 ] as const;
 
 /** Intestazioni ricorrenti → campo. */
@@ -33,6 +37,7 @@ function proponiCampo(intestazione: string): string {
   if (/ateco/.test(h)) return 'ateco';
   if (/pep|politicamente/.test(h)) return 'pep';
   if (/not[ae]/.test(h)) return 'note';
+  if (/professionist|titolar|referente|responsabil|socio|associat/.test(h)) return 'professionista';
   return '';
 }
 
@@ -91,6 +96,8 @@ export function ImportClientiModal({ onChiudi, onImportati }: { onChiudi: () => 
   const [errore, setErrore] = useState('');
   const [invio, setInvio] = useState(false);
   const [report, setReport] = useState<{ creati: number; scartate: Array<{ riga: number; motivo: string }> } | null>(null);
+  const professionisti = useProfessionisti();
+  const [professionistaId, setProfessionistaId] = useState('');
 
   const analizza = (contenuto: string) => {
     setErrore('');
@@ -125,7 +132,10 @@ export function ImportClientiModal({ onChiudi, onImportati }: { onChiudi: () => 
     setErrore('');
     setInvio(true);
     try {
-      const r = await api.post<{ creati: number; scartate: Array<{ riga: number; motivo: string }> }>('/clienti/import', { righe: record });
+      const r = await api.post<{ creati: number; scartate: Array<{ riga: number; motivo: string }> }>('/clienti/import', {
+        righe: record,
+        professionistaId: professionistaId || undefined,
+      });
       setReport(r);
     } catch (e) {
       setErrore((e as Error).message);
@@ -190,6 +200,20 @@ export function ImportClientiModal({ onChiudi, onImportati }: { onChiudi: () => 
               <input type="checkbox" className="!w-4" checked={conIntestazione} onChange={(e) => setConIntestazione(e.target.checked)} />
               <span>La prima riga contiene le intestazioni</span>
             </label>
+            {professionisti.filter((p) => p.attivo).length > 1 && (
+              <div>
+                <label className="label">Professionista di riferimento per questi clienti</label>
+                <select className="input" value={professionistaId} onChange={(e) => setProfessionistaId(e.target.value)}>
+                  <option value="">Chi sta importando</option>
+                  {professionisti.filter((p) => p.attivo).map((p) => (
+                    <option key={p.id} value={p.id}>{p.nome}</option>
+                  ))}
+                </select>
+                <div className="aiuto mt-1">
+                  Vale per tutte le righe che non indicano un professionista nella propria colonna.
+                </div>
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table>
                 <thead>

@@ -148,6 +148,11 @@ export async function richiediAutenticazione(
     cambio_password_richiesto: riga.cambio_password_richiesto ?? 0,
     tema: riga.tema ?? null,
     modo_colore: riga.modo_colore ?? null,
+    amministratore: riga.amministratore ?? 0,
+    codice_fiscale: riga.codice_fiscale ?? null,
+    ordine: riga.ordine ?? null,
+    numero_iscrizione: riga.numero_iscrizione ?? null,
+    qualifica: riga.qualifica ?? null,
   } as Utente);
   c.set('sessioneId', riga.sid);
   c.set('tenantId', riga.tenant_id);
@@ -177,8 +182,35 @@ export function richiediRuolo(...ruoli: Ruolo[]) {
   };
 }
 
-/** Solo chi può firmare atti che impegnano la responsabilità del professionista. */
+/**
+ * Solo chi può firmare atti che impegnano la responsabilità del
+ * professionista: valutazioni, autovalutazione, astensioni, SOS.
+ * In uno studio associato sono più persone (AR-M15).
+ */
 export const soloTitolare = richiediRuolo('TITOLARE');
+/** Sinonimo parlante: dal punto di vista del dominio è il professionista. */
+export const soloProfessionista = soloTitolare;
+
+/**
+ * Chi amministra lo studio (AR-M15): utenti, dati d'albo, logo, backup,
+ * ripristino, eliminazione dell'archivio, licenza. È un flag separato dal
+ * ruolo perché il secondo associato deve poter identificare e firmare senza
+ * ereditare il pulsante che cancella l'archivio di tutti.
+ */
+export async function soloAmministratore(
+  c: Context<{ Bindings: Env; Variables: Variabili }>,
+  next: Next,
+): Promise<Response | void> {
+  const u = c.get('utente');
+  if (!u) return c.json({ errore: 'Non autenticato' }, 401);
+  if (u.amministratore !== 1) {
+    return c.json(
+      { errore: 'Operazione riservata all’amministratore dello studio. Chiedi a chi amministra lo studio di procedere.' },
+      403,
+    );
+  }
+  await next();
+}
 /** Chi può scrivere nel fascicolo. */
 export const puoScrivere = richiediRuolo('TITOLARE', 'COLLABORATORE');
 /** Chi può accedere alle segnalazioni di operazione sospetta. */

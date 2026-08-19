@@ -12,6 +12,10 @@ export interface SessioneApp {
     id: string; nome: string; email: string; ruolo: string;
     avatar?: string | null; cambioPasswordRichiesto?: boolean;
     tema?: string | null; modoColore?: string | null;
+    /** AR-M15: il ruolo dice se firma, il flag dice se amministra lo studio. */
+    amministratore?: boolean; professionista?: boolean;
+    codiceFiscale?: string | null; ordine?: string | null;
+    numeroIscrizione?: string | null; qualifica?: string | null;
   };
   studio: { id: string; denominazione: string; piano: string; stato?: string; logo?: string | null };
 }

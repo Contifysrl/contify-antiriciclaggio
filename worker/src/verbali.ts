@@ -158,6 +158,27 @@ function vociDaPunteggi(
     .map((f) => ({ etichetta: f.etichetta, punteggio: punteggi[f.codice], norma: f.norma }));
 }
 
+/**
+ * Come si nomina un professionista nel verbale (AR-M15). In uno studio
+ * associato «il titolare» non basta: davanti a un'ispezione l'atto deve
+ * dire chi, con quale qualifica e quale iscrizione all'albo.
+ */
+export interface Professionista {
+  nome: string;
+  qualifica?: string | null;
+  ordine?: string | null;
+  numeroIscrizione?: string | null;
+  codiceFiscale?: string | null;
+}
+
+function descriviProfessionista(p?: Professionista | null): string {
+  if (!p?.nome) return '—';
+  const albo = [p.ordine ? `ODCEC di ${p.ordine}` : null, p.numeroIscrizione ? `iscr. n. ${p.numeroIscrizione}` : null]
+    .filter(Boolean)
+    .join(', ');
+  return [p.qualifica, p.nome].filter(Boolean).join(' ') + (albo ? ` (${albo})` : '');
+}
+
 const AVVERTENZA_MODULISTICA =
   'La modulistica CNDCEC (Informativa n. 57 del 26.3.2026) ha natura esemplificativa e non obbligatoria: le ' +
   'valutazioni riportate nel presente documento restano riferite al giudizio professionale del soggetto obbligato, ' +
@@ -172,10 +193,12 @@ export function corpoVerbaleAutovalutazione(dati: {
   ruleset: Ruleset;
   nomeCreatore: string;
   nomeFirmatario?: string | null;
+  firmatario?: Professionista | null;
 }): string {
   const { tenant, av, ruleset: rs } = dati;
   const punteggi = JSON.parse(av.punteggi ?? '{}');
   const presidi: string[] = JSON.parse(av.presidi ?? '[]');
+  const indicatori = (() => { try { return av.indicatori ? JSON.parse(av.indicatori) : null; } catch { return null; } })();
 
   let corpo = intestazione(
     tenant,
@@ -213,6 +236,43 @@ export function corpoVerbaleAutovalutazione(dati: {
   ]);
   corpo += testo(`Formula applicata: ${av.formula}`, {}, { colore: COLORI.grigio, punti: 8.5 });
 
+  // AR-M15. I numeri da cui discendono i punteggi proposti, con i loro
+  // denominatori: senza questi il punteggio è un'affermazione, con questi
+  // è una misurazione che l'ispettore può rifare.
+  if (indicatori?.fattori && Object.keys(indicatori.fattori).length > 0) {
+    corpo += titolo2('Dati dello studio alla base della valutazione');
+    corpo += testo(
+      `Rilevazione del ${dataIt(indicatori.calcolatoIl)} su ${indicatori.fascicoliAttivi ?? 0} prestazioni in corso ` +
+        `e ${indicatori.clientiAttivi ?? 0} clienti attivi` +
+        (indicatori.significativo === false
+          ? `. Numerosità inferiore alla soglia di significatività (${indicatori.minimoSignificativo ?? 10} prestazioni): ` +
+            'le percentuali sono riportate come dato di fatto, i punteggi restano valutazione del professionista.'
+          : '.'),
+      {},
+      { colore: COLORI.grigio, punti: 8.5 },
+    );
+    const righe: Cella[][] = [rigaIntestazione(['Fattore', 'Dato rilevato', 'Proposto', 'Adottato'], [3400, 5140, 1100, 1100])];
+    for (const f of Object.values<any>(indicatori.fattori)) {
+      righe.push([
+        { contenuto: par(run(f.etichetta ?? '—'), { spazioDopo: 0 }), larghezza: 3400 },
+        {
+          contenuto:
+            par(run(f.spiegazione ?? '—'), { spazioDopo: 0 }) +
+            (f.origine === 'MODIFICATO' && f.motivazione
+              ? par(run(`Motivazione dello scostamento: ${f.motivazione}`, { colore: COLORI.grigio, punti: 8 }), { spazioDopo: 0 })
+              : ''),
+          larghezza: 5140,
+        },
+        { contenuto: par(run(f.proposto != null ? String(f.proposto) : '—'), { allinea: 'center', spazioDopo: 0 }), larghezza: 1100 },
+        {
+          contenuto: par(run(String(f.scelto ?? '—'), { bold: f.origine === 'MODIFICATO' }), { allinea: 'center', spazioDopo: 0 }),
+          larghezza: 1100,
+        },
+      ]);
+    }
+    corpo += tabella(righe, { larghezze: [3400, 5140, 1100, 1100] });
+  }
+
   if (presidi.length > 0) {
     corpo += titolo2('Presidi e azioni di mitigazione (art. 16)');
     corpo += elenco(presidi);
@@ -227,7 +287,8 @@ export function corpoVerbaleAutovalutazione(dati: {
 
   if (av.firmata_il) {
     corpo += testo(
-      `Autovalutazione sottoscritta da ${dati.nomeFirmatario ?? 'titolare'} in data ${dataIt(av.firmata_il)}.`,
+      `Autovalutazione sottoscritta da ${descriviProfessionista(dati.firmatario) !== '—' ? descriviProfessionista(dati.firmatario) : (dati.nomeFirmatario ?? 'il professionista')} in data ${dataIt(av.firmata_il)}.` +
+        (av.firma_motivazione ? ` Nota di firma: ${av.firma_motivazione}` : ''),
       { spazioPrima: 6 },
       { bold: true },
     );
@@ -248,6 +309,9 @@ export function corpoSchedaVerifica(dati: {
   documenti: any[];
   ruleset: Ruleset;
   nomeFirmatario?: string | null;
+  /** AR-M15: chi segue la prestazione e chi ha identificato il cliente. */
+  professionista?: Professionista | null;
+  identificatore?: Professionista | null;
 }): string {
   const { tenant, fascicolo: f, cliente: cl, valutazione: v, ruleset: rs } = dati;
 
@@ -277,6 +341,12 @@ export function corpoSchedaVerifica(dati: {
     ['Importo dell’operazione', f.importo_operazione != null ? `€ ${num(f.importo_operazione)}` : '—'],
     ['Scopo e natura (art. 19 co. 1 lett. c)', f.scopo_natura ?? '—'],
     ['Modalità di identificazione (art. 19 co. 1 lett. a)', f.modalita_identificazione ?? '—'],
+    ['Professionista incaricato', descriviProfessionista(dati.professionista)],
+    [
+      'Identificazione eseguita da (art. 19 co. 1 lett. a)',
+      descriviProfessionista(dati.identificatore) +
+        (f.data_identificazione ? ` — in data ${dataIt(f.data_identificazione)}` : ''),
+    ],
     ['Stato del fascicolo', ETICHETTA_STATO_FASCICOLO[f.stato] ?? etichettaGrezza(f.stato)],
   ]);
 
@@ -377,7 +447,8 @@ export function corpoSchedaVerifica(dati: {
     }
     if (v.firmata_il) {
       corpo += testo(
-        `Valutazione sottoscritta in data ${dataIt(v.firmata_il)}.`,
+        `Valutazione sottoscritta da ${dati.nomeFirmatario ?? 'il professionista'} in data ${dataIt(v.firmata_il)}.` +
+          (v.firma_motivazione ? ` Firma in luogo del professionista incaricato: ${v.firma_motivazione}` : ''),
         { spazioPrima: 4 },
         { bold: true },
       );
@@ -489,6 +560,9 @@ export function corpoFascicoloIspezione(dati: {
   ruleset: Ruleset;
   nomiUtenti: Record<string, string>;
   nomeFirmatario?: string | null;
+  /** AR-M15: chi segue la prestazione e chi ha identificato il cliente. */
+  professionista?: Professionista | null;
+  identificatore?: Professionista | null;
 }): string {
   const { tenant, fascicolo: f, cliente: cl } = dati;
 
@@ -532,6 +606,8 @@ export function corpoFascicoloIspezione(dati: {
     documenti: dati.documenti,
     ruleset: dati.ruleset,
     nomeFirmatario: dati.nomeFirmatario,
+    professionista: dati.professionista,
+    identificatore: dati.identificatore,
   });
   // Rimuove titolo e blocco studio della scheda (già in copertina): tiene dal primo titolo2.
   const daTitolo2 = scheda.indexOf('<w:p><w:pPr><w:pStyle w:val="Titolo2"/>');

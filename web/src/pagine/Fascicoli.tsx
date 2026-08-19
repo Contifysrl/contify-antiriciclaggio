@@ -14,6 +14,7 @@ import { CampiCliente, etichettaTipo } from './Cliente';
 import { ImportClientiModal } from './ImportClienti';
 import { TitolaritaEffettiva, VerificaADistanza } from './TitolaritaVerifica';
 import { BozzaAi } from './BozzaAi';
+import { CampoProfessionista, FiltroProfessionista, useProfessionisti } from '../lib/professionisti';
 
 // ===========================================================================
 export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
@@ -25,6 +26,8 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
   const [cercaInCorso, setCercaInCorso] = useState(false);
   const [avvisiLookup, setAvvisiLookup] = useState<string[]>([]);
   const [conArchiviati, setConArchiviati] = useState(false);
+  const [filtroProf, setFiltroProf] = useState('');
+  const professionisti = useProfessionisti();
 
   const carica = () => api.get<any[]>(`/clienti${conArchiviati ? '?archiviati=1' : ''}`).then(setLista);
   useEffect(() => { carica(); /* eslint-disable-next-line */ }, [conArchiviati]);
@@ -84,6 +87,15 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
       {nuovo && (
         <div className="scheda" style={{ marginTop: 14 }}>
           <CampiCliente f={f} setF={setF} onCompilaDaPiva={compilaDaPiva} cercaInCorso={cercaInCorso} />
+          {professionisti.filter((p) => p.attivo).length > 1 && (
+            <CampoProfessionista
+              elenco={professionisti}
+              valore={f.professionistaId}
+              onCambia={(v) => setF({ ...f, professionistaId: v })}
+              etichetta="Professionista di riferimento"
+              aiuto="Chi segue il cliente e ne firma le valutazioni. Se non lo indichi e sei un professionista, sei tu."
+            />
+          )}
           {avvisiLookup.length > 0 && (
             <Riquadro tipo="avviso">
               {avvisiLookup.map((a, i) => <div key={i}>{a}</div>)}
@@ -108,10 +120,17 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
           />
           Mostra anche i clienti archiviati
         </label>
+        <FiltroProfessionista elenco={professionisti} valore={filtroProf} onCambia={setFiltroProf} />
         <table>
-          <thead><tr><th>Denominazione</th><th>Natura</th><th>CF / P.IVA</th><th>Paese</th><th>PEP</th><th>Fascicoli</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Denominazione</th><th>Natura</th><th>CF / P.IVA</th><th>Paese</th>
+              {professionisti.filter((p) => p.attivo).length > 1 && <th>Professionista</th>}
+              <th>PEP</th><th>Fascicoli</th>
+            </tr>
+          </thead>
           <tbody>
-            {lista.map((c) => (
+            {lista.filter((c) => !filtroProf || c.professionista_id === filtroProf).map((c) => (
               <tr
                 key={c.id}
                 style={{ cursor: 'pointer', opacity: c.attivo ? 1 : 0.55 }}
@@ -125,13 +144,16 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
                 <td>{etichettaTipo(c.tipo)}</td>
                 <td className="mono">{c.codice_fiscale ?? c.partita_iva ?? '—'}</td>
                 <td className="mono">{c.paese_residenza}</td>
+                {professionisti.filter((p) => p.attivo).length > 1 && <td>{c.professionista ?? '—'}</td>}
                 <td>{c.pep ? <span className="pillola r3">PEP</span> : '—'}</td>
                 <td className="mono">{c.fascicoli}</td>
               </tr>
             ))}
           </tbody>
         </table>
-        {lista.length === 0 && <p className="caricamento">Nessun cliente registrato.</p>}
+        {lista.filter((c) => !filtroProf || c.professionista_id === filtroProf).length === 0 && (
+          <p className="caricamento">{filtroProf ? 'Nessun cliente per il professionista scelto.' : 'Nessun cliente registrato.'}</p>
+        )}
       </div>
       <PiedeLegale />
     </>
@@ -147,6 +169,9 @@ export function Fascicoli({ vaiA, cliente }: { vaiA: (p: string) => void; client
   const [f, setF] = useState<any>({ tipoRapporto: 'CONTINUATIVO', dataConferimento: dataOggi() });
   const [avvisi, setAvvisi] = useState<string[]>([]);
   const [errore, setErrore] = useState('');
+  const [filtroProf, setFiltroProf] = useState('');
+  const professionisti = useProfessionisti();
+  const piuProfessionisti = professionisti.filter((p) => p.attivo).length > 1;
 
   const carica = () => api.get<any[]>('/fascicoli').then(setLista);
   useEffect(() => {
@@ -158,7 +183,8 @@ export function Fascicoli({ vaiA, cliente }: { vaiA: (p: string) => void; client
   const prestazioneScelta = prestazioni.find((p) => p.codice === f.prestazioneCodice);
   // Filtro per cliente: onorato anche quando arriva da un link vecchio
   // (#fascicoli?cliente=…), che fino a M13 veniva ignorato.
-  const visibili = cliente ? lista.filter((x) => x.cliente_id === cliente) : lista;
+  const visibili = (cliente ? lista.filter((x) => x.cliente_id === cliente) : lista)
+    .filter((x) => !filtroProf || x.professionista_id === filtroProf);
   const clienteFiltrato = cliente ? clienti.find((x) => x.id === cliente) : undefined;
 
   async function salva() {
@@ -238,6 +264,33 @@ export function Fascicoli({ vaiA, cliente }: { vaiA: (p: string) => void; client
                 <div className="aiuto">Da 15.000 euro l’adeguata verifica è obbligatoria (art. 17 co. 1 lett. b).</div>
               </div>
             )}
+            {piuProfessionisti && (
+              <CampoProfessionista
+                elenco={professionisti}
+                valore={f.professionistaId}
+                onCambia={(v) => setF({ ...f, professionistaId: v, identificatoDa: f.identificatoDa ?? v })}
+                etichetta="Professionista incaricato"
+                aiuto="A chi è intestata la prestazione: è il suo nome che compare sulla scheda di adeguata verifica."
+              />
+            )}
+            {piuProfessionisti && (
+              <CampoProfessionista
+                elenco={professionisti}
+                valore={f.identificatoDa ?? f.professionistaId}
+                onCambia={(v) => setF({ ...f, identificatoDa: v })}
+                etichetta="Identificazione eseguita da"
+                aiuto="Art. 19 co. 1 lett. a): chi ha materialmente identificato il cliente, se diverso dall’incaricato."
+              />
+            )}
+            <div className="campo">
+              <label>Data dell’identificazione</label>
+              <input
+                type="date"
+                value={f.dataIdentificazione ?? f.dataConferimento}
+                onChange={(e) => setF({ ...f, dataIdentificazione: e.target.value })}
+              />
+              <div className="aiuto">Se non indicata, coincide con il conferimento dell’incarico.</div>
+            </div>
             <div className="campo">
               <label>Modalità di identificazione</label>
               <select value={f.modalitaIdentificazione ?? ''} onChange={(e) => setF({ ...f, modalitaIdentificazione: e.target.value })}>
@@ -282,9 +335,14 @@ export function Fascicoli({ vaiA, cliente }: { vaiA: (p: string) => void; client
       )}
 
       <div className="scheda" style={{ marginTop: 16 }}>
+        <FiltroProfessionista elenco={professionisti} valore={filtroProf} onCambia={setFiltroProf} />
         <table>
           <thead>
-            <tr><th>Codice</th><th>Cliente</th><th>Prestazione</th><th>Conferimento</th><th>Rischio</th><th>Verifica</th><th>Stato</th></tr>
+            <tr>
+              <th>Codice</th><th>Cliente</th><th>Prestazione</th><th>Conferimento</th>
+              {piuProfessionisti && <th>Professionista</th>}
+              <th>Rischio</th><th>Verifica</th><th>Stato</th>
+            </tr>
           </thead>
           <tbody>
             {visibili.map((x) => (
@@ -293,6 +351,7 @@ export function Fascicoli({ vaiA, cliente }: { vaiA: (p: string) => void; client
                 <td><strong>{x.cliente}</strong></td>
                 <td>{x.prestazione_descrizione}</td>
                 <td className="mono">{formattaData(x.data_conferimento)}</td>
+                {piuProfessionisti && <td>{x.professionista ?? '—'}</td>}
                 <td>{x.classe ? <PillolaRischio classe={x.classe as ClasseRischio} /> : <span className="pillola r3">da valutare</span>}</td>
                 <td>{x.livello_applicabile?.toLowerCase() ?? '—'}</td>
                 <td>{x.stato === 'ASTENSIONE' ? <span className="pillola r4">astensione</span> : x.stato.toLowerCase()}</td>
@@ -394,6 +453,15 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
       <p className="occhiello">
         {f.cliente} — {f.prestazione_descrizione} · incarico conferito il {formattaData(f.data_conferimento)}
       </p>
+      {(f.professionista || f.identificatore) && (
+        <p className="occhiello">
+          Professionista incaricato: <strong>{f.professionista ?? '—'}</strong>
+          {f.identificatore && (
+            <> · identificazione eseguita da <strong>{f.identificatore}</strong>
+              {f.data_identificazione ? ` il ${formattaData(f.data_identificazione)}` : ''} (art. 19 co. 1 lett. a)</>
+          )}
+        </p>
+      )}
 
       <div style={{ marginBottom: 14 }}>
         <button
@@ -441,12 +509,12 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
           <p className="mono" style={{ color: 'var(--c-grey)' }}>{ultima.formula}</p>
           <ElencoVincoli vincoli={JSON.parse(ultima.vincoli || '[]')} />
           {!ultima.firmata_il && (
-            <button
-              className="azione"
-              onClick={async () => { await api.post(`/fascicoli/${id}/valutazioni/${ultima.id}/firma`); carica(); }}
-            >
-              Firma la valutazione
-            </button>
+            <FirmaValutazione
+              fascicoloId={id}
+              valutazioneId={ultima.id}
+              onFirmata={carica}
+              onErrore={setErrore}
+            />
           )}
           {Boolean(ultima.astensione_dovuta) && (
             <Riquadro tipo="critico">
@@ -708,5 +776,58 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
 
       <PiedeLegale />
     </>
+  );
+}
+
+
+/**
+ * Firma della valutazione (AR-M15). Se la prestazione è intestata a un altro
+ * professionista il server chiede il motivo: la si raccoglie qui e si
+ * riprova. Non è un divieto — in uno studio associato sostituirsi a un
+ * collega assente è normale — ma resta scritto nel verbale.
+ */
+function FirmaValutazione({ fascicoloId, valutazioneId, onFirmata, onErrore }: {
+  fascicoloId: string;
+  valutazioneId: string;
+  onFirmata: () => void;
+  onErrore: (m: string) => void;
+}) {
+  const [motivazione, setMotivazione] = useState('');
+  const [chiedi, setChiedi] = useState(false);
+  const [invio, setInvio] = useState(false);
+
+  const firma = async () => {
+    setInvio(true);
+    try {
+      await api.post(`/fascicoli/${fascicoloId}/valutazioni/${valutazioneId}/firma`,
+        motivazione ? { motivazioneFirma: motivazione } : undefined);
+      setChiedi(false);
+      setMotivazione('');
+      onFirmata();
+    } catch (e) {
+      const m = (e as Error).message;
+      if (/altro professionista/i.test(m)) { setChiedi(true); onErrore(''); }
+      else onErrore(m);
+    } finally {
+      setInvio(false);
+    }
+  };
+
+  if (!chiedi) {
+    return <button className="azione" onClick={firma} disabled={invio}>Firma la valutazione</button>;
+  }
+  return (
+    <div className="campo">
+      <label>Motivo della firma</label>
+      <div className="aiuto">
+        La prestazione è intestata a un altro professionista: indica perché firmi tu (sostituzione, assenza,
+        subentro). La nota compare nella scheda di adeguata verifica.
+      </div>
+      <input value={motivazione} onChange={(e) => setMotivazione(e.target.value)} autoFocus />
+      <button className="azione" onClick={firma} disabled={invio || motivazione.trim().length < 3}>
+        Firma la valutazione
+      </button>{' '}
+      <button className="azione secondaria" onClick={() => { setChiedi(false); setMotivazione(''); }}>Annulla</button>
+    </div>
   );
 }
