@@ -1262,14 +1262,27 @@ api.post('/pubblico/verifica/:token', async (c) => {
     const buf = await file.arrayBuffer();
     const nome = file.name.replace(/[^\w.\- ]/g, '_').slice(0, 120) || 'documento';
     const r2Key = `verifica/${r.tenant_id}/${r.id}/${allegati.length}-${nome}`;
-    await c.env.DOCS.put(r2Key, buf, { httpMetadata: { contentType: file.type } });
+    try {
+      await c.env.DOCS.put(r2Key, buf, { httpMetadata: { contentType: file.type } });
+    } catch (e) {
+      // Distinguere il sottosistema guasto: senza questo, ogni guasto qui era
+      // un «Errore interno» indistinguibile per il cliente e per l'assistenza.
+      console.error('verifica remota: salvataggio allegato su R2 fallito:', e);
+      return c.json({ errore: 'Non è stato possibile salvare l’allegato: riprova tra qualche minuto o segnala il problema allo studio' }, 500);
+    }
     allegati.push({ r2Key, nome, mime: file.type, dimensione: buf.byteLength, sha256: await sha256Hex(buf) });
   }
   if (JSON.parse(r.richieste).documento && allegati.length === 0) {
     return c.json({ errore: 'Allega il documento d’identità richiesto' }, 400);
   }
 
-  const cifrato = await cifra(c.env.MASTER_KEY, r.tenant_id, JSON.stringify(dati));
+  let cifrato: { contenuto: string; iv: string };
+  try {
+    cifrato = await cifra(c.env.MASTER_KEY, r.tenant_id, JSON.stringify(dati));
+  } catch (e) {
+    console.error('verifica remota: cifratura non disponibile (MASTER_KEY?):', e);
+    return c.json({ errore: 'Il servizio non riesce a salvare i dati in modo sicuro: segnala il problema allo studio' }, 500);
+  }
   await c.env.DB.prepare(
     `UPDATE richieste_verifica SET stato = 'COMPLETATA', completata_il = datetime('now'),
        dati_cifrati = ?, iv = ?, allegati = ? WHERE id = ? AND stato = 'INVIATA'`,

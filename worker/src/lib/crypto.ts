@@ -20,8 +20,18 @@ export function b64(buf: ArrayBuffer | Uint8Array): string {
   return btoa(s);
 }
 
+/**
+ * Decodifica base64 TOLLERANTE: accetta anche l'alfabeto base64url (-, _) e il
+ * padding mancante. L'atob di workerd è rigoroso e in produzione una MASTER_KEY
+ * incollata in forma base64url (o senza '=') faceva esplodere la cifratura con
+ * un InvalidCharacterError generico — scoperto col primo invio reale della
+ * verifica a distanza (19.8.2026). Normalizzare qui è retrocompatibile: il
+ * base64 standard passa invariato.
+ */
 export function unb64(s: string): Uint8Array {
-  const bin = atob(s);
+  const pulito = s.trim().replace(/-/g, '+').replace(/_/g, '/');
+  const resto = pulito.length % 4;
+  const bin = atob(resto === 0 ? pulito : pulito + '='.repeat(4 - resto));
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
@@ -91,8 +101,15 @@ export function confrontoCostante(a: Uint8Array, b: Uint8Array): boolean {
  * un tenant non esponga gli altri. HKDF con il tenant id come info.
  */
 async function chiaveTenant(masterKeyB64: string, tenantId: string): Promise<CryptoKey> {
-  const master = unb64(masterKeyB64);
-  if (master.length !== 32) throw new Error('MASTER_KEY deve essere una chiave base64 di 32 byte');
+  if (!masterKeyB64) throw new Error('MASTER_KEY assente: impostarla con `wrangler secret put MASTER_KEY` (32 byte in base64).');
+  let master: Uint8Array;
+  try {
+    master = unb64(masterKeyB64);
+  } catch {
+    // Mai riportare il valore della chiave nei log: solo la diagnosi.
+    throw new Error(`MASTER_KEY non decodificabile come base64 (lunghezza ${masterKeyB64.length}): rigenerarla con \`openssl rand -base64 32\` e reimpostarla con \`wrangler secret put MASTER_KEY\`.`);
+  }
+  if (master.length !== 32) throw new Error(`MASTER_KEY non valida: attesi 32 byte, decodificati ${master.length}. Rigenerarla con \`openssl rand -base64 32\` e reimpostarla con \`wrangler secret put MASTER_KEY\`.`);
   const ikm = await crypto.subtle.importKey('raw', master, 'HKDF', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
     { name: 'HKDF', hash: 'SHA-256', salt: enc.encode('contify-antiriciclaggio') /* MAI cambiare: invaliderebbe tutti i dati cifrati */, info: enc.encode(`tenant:${tenantId}`) },
