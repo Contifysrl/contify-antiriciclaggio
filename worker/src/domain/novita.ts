@@ -15,6 +15,15 @@ export interface VoceNovita {
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-08-19b-posti-professionista',
+    data: '2026-08-19',
+    titolo: 'Posti professionista a contratto',
+    punti: [
+      'Il contratto dello studio può ora prevedere un numero di posti professionista. In Impostazioni → Utenti dello studio vedi quanti ne stai usando; se sono tutti occupati e vuoi aggiungere un associato, basta una richiesta dalla pagina Assistenza e adeguiamo il contratto.',
+      'Collaboratori, lettori e revisori non contano: il posto riguarda solo chi identifica e firma.',
+    ],
+  },
+  {
     id: '2026-08-19-studio-associato',
     data: '2026-08-19',
     titolo: 'Studio associato e autovalutazione che si nutre dei clienti',

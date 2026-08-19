@@ -96,7 +96,7 @@ export function Impostazioni({ sessione, onSessioneAggiornata }: {
         assistente AI e zona di sicurezza.
       </p>
       {amministratore && <LogoStudio sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} />}
-      {amministratore && <GestioneUtenti ioId={sessione.utente.id} />}
+      {amministratore && <GestioneUtenti ioId={sessione.utente.id} postiProfessionista={sessione.studio.professionistiInclusi ?? null} />}
       {amministratore && <AssistenteAi />}
       <CambiaPassword />
       <AccessiDispositivi />
@@ -508,7 +508,7 @@ function ZonaSicurezza() {
 }
 
 // ── Gestione utenti (solo titolare) ────────────────────────────
-function GestioneUtenti({ ioId }: { ioId: string }) {
+function GestioneUtenti({ ioId, postiProfessionista }: { ioId: string; postiProfessionista: number | null }) {
   const [utenti, setUtenti] = useState<UtenteRiga[]>([]);
   const [errore, setErrore] = useState('');
   const [nuovo, setNuovo] = useState(false);
@@ -532,6 +532,19 @@ function GestioneUtenti({ ioId }: { ioId: string }) {
         segue i propri clienti. L’amministratore è chi gestisce utenti, licenza, backup e archivio — non
         serve che lo siano tutti. Lo studio deve avere sempre almeno un professionista e un amministratore attivi.
       </div>
+      {/* AR-M16: i posti professionista sono quelli del contratto. Il numero
+          va detto PRIMA che l'amministratore compili il modulo e riceva un
+          rifiuto: un limite scoperto a cose fatte sembra un guasto. */}
+      {postiProfessionista !== null && (() => {
+        const attivi = utenti.filter((u) => u.ruolo === 'TITOLARE' && u.attivo).length;
+        const esauriti = attivi >= postiProfessionista;
+        return (
+          <div className={`riquadro ${esauriti ? 'avviso' : 'info'} !my-2 text-sm`}>
+            Posti professionista a contratto: <strong>{attivi} di {postiProfessionista}</strong> in uso.
+            {esauriti && <> Per aggiungere un professionista apri una richiesta dalla pagina Assistenza: adegueremo il contratto.</>}
+          </div>
+        );
+      })()}
       {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
       <table>
         <thead>

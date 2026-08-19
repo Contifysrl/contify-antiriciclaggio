@@ -327,7 +327,10 @@ interface StudioRiga {
   dataAttivazione: string | null;
   dataScadenzaCanone: string | null;
   noteContratto: string | null;
+  /** AR-M16: posti professionista a contratto. null = nessun limite. */
+  professionistiInclusi: number | null;
   nUtenti: number;
+  nProfessionisti: number;
   ultimoAccesso: string | null;
 }
 
@@ -370,7 +373,7 @@ function StudiConsole() {
         <div className="card p-5">
           <table>
             <thead>
-              <tr><th>Studio</th><th>Stato</th><th>Attivazione</th><th>Scadenza canone</th><th>Utenti</th></tr>
+              <tr><th>Studio</th><th>Stato</th><th>Attivazione</th><th>Scadenza canone</th><th>Professionisti</th><th>Utenti</th></tr>
             </thead>
             <tbody>
               {studi.map((s) => {
@@ -386,6 +389,17 @@ function StudiConsole() {
                         <span className={`block text-xs ${giorni < 0 ? 'text-red-600 font-semibold' : giorni <= 30 ? 'text-amber-600' : 'text-ink-400'}`}>
                           {giorni < 0 ? `scaduto da ${-giorni} giorni` : `mancano ${giorni} giorni`}
                         </span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap">
+                      {s.nProfessionisti}
+                      {s.professionistiInclusi !== null && (
+                        <span className={s.nProfessionisti > s.professionistiInclusi ? 'text-red-600 font-semibold' : 'text-ink-400'}>
+                          {' '}/ {s.professionistiInclusi}
+                        </span>
+                      )}
+                      {s.professionistiInclusi !== null && s.nProfessionisti > s.professionistiInclusi && (
+                        <span className="block text-xs text-red-600 font-semibold">oltre contratto</span>
                       )}
                     </td>
                     <td>{s.nUtenti}</td>
@@ -407,6 +421,7 @@ function StudioModal({ studio, onChiudi }: { studio: StudioRiga; onChiudi: (rica
   const [attivazione, setAttivazione] = useState(studio.dataAttivazione?.slice(0, 10) ?? '');
   const [scadenza, setScadenza] = useState(studio.dataScadenzaCanone?.slice(0, 10) ?? '');
   const [note, setNote] = useState(studio.noteContratto ?? '');
+  const [posti, setPosti] = useState(studio.professionistiInclusi !== null ? String(studio.professionistiInclusi) : '');
   const [errore, setErrore] = useState('');
   const [esito, setEsito] = useState('');
   const [invio, setInvio] = useState(false);
@@ -421,6 +436,7 @@ function StudioModal({ studio, onChiudi }: { studio: StudioRiga; onChiudi: (rica
         dataAttivazione: attivazione || null,
         dataScadenzaCanone: scadenza || null,
         noteContratto: note.trim() || null,
+        professionistiInclusi: posti.trim() === '' ? null : Number(posti),
       });
       setEsito('Contratto salvato.');
       setToccato(true);
@@ -464,7 +480,9 @@ function StudioModal({ studio, onChiudi }: { studio: StudioRiga; onChiudi: (rica
     <Modal title={studio.denominazione} onClose={() => onChiudi(toccato)} wide>
       <div className="flex items-center gap-2 mb-4">
         <Badge tone={STATO_STUDIO[studio.stato].tone}>{STATO_STUDIO[studio.stato].testo}</Badge>
-        <span className="text-xs text-ink-400">{studio.nUtenti} utenti attivi</span>
+        <span className="text-xs text-ink-400">
+          {studio.nUtenti} utenti attivi · {studio.nProfessionisti} professionist{studio.nProfessionisti === 1 ? 'a' : 'i'}
+        </span>
       </div>
       {esito && <div className="riquadro info !my-2 text-sm">{esito}</div>}
       {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
@@ -477,6 +495,22 @@ function StudioModal({ studio, onChiudi }: { studio: StudioRiga; onChiudi: (rica
           <div>
             <label className="label">Scadenza canone</label>
             <input className="input" type="date" value={scadenza} onChange={(e) => setScadenza(e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Posti professionista a contratto</label>
+            <input
+              className="input"
+              type="number"
+              min={1}
+              max={999}
+              value={posti}
+              onChange={(e) => setPosti(e.target.value)}
+              placeholder="vuoto = nessun limite"
+            />
+            <div className="aiuto mt-1">
+              Conta i professionisti attivi (chi identifica e firma), non collaboratori e lettori.
+              Un limite sotto gli attivi non disattiva nessuno: impedisce solo di aggiungerne.
+            </div>
           </div>
         </div>
         <div>

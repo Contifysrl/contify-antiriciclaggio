@@ -17,7 +17,11 @@ export interface SessioneApp {
     codiceFiscale?: string | null; ordine?: string | null;
     numeroIscrizione?: string | null; qualifica?: string | null;
   };
-  studio: { id: string; denominazione: string; piano: string; stato?: string; logo?: string | null };
+  studio: {
+    id: string; denominazione: string; piano: string; stato?: string; logo?: string | null;
+    /** AR-M16: posti professionista a contratto. null = nessun limite. */
+    professionistiInclusi?: number | null;
+  };
 }
 
 /** Campo password con occhio mostra/nascondi. */

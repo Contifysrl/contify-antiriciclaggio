@@ -264,6 +264,8 @@ function vistaStudio(t: any) {
     ...(t.parametri !== undefined ? { parametri: t.parametri } : {}),
     stato: statoValido(t.stato),
     logo: logoStudio(t.logo_url)?.dataUrl ?? null,
+    // AR-M16: posti professionista a contratto. null = nessun limite pattuito.
+    professionistiInclusi: t.professionisti_inclusi ?? null,
   };
 }
 
@@ -290,7 +292,7 @@ function utentePubblico(u: any) {
 
 api.get('/auth/io', async (c) => {
   const u = c.get('utente');
-  const tenant = await c.env.DB.prepare('SELECT id, denominazione, piano, ruleset_default, parametri, stato, logo_url FROM tenants WHERE id = ?')
+  const tenant = await c.env.DB.prepare('SELECT id, denominazione, piano, ruleset_default, parametri, stato, logo_url, professionisti_inclusi FROM tenants WHERE id = ?')
     .bind(u.tenant_id)
     .first<any>();
   return c.json({ utente: utentePubblico(u), studio: vistaStudio(tenant) });
@@ -459,6 +461,27 @@ async function altriTitolariAttivi(db: D1Database, tenantId: string, escludiId: 
   return r?.n ?? 0;
 }
 
+/**
+ * AR-M16. Il contratto può prevedere un numero di posti professionista
+ * (tenants.professionisti_inclusi; NULL = nessun limite pattuito). Si
+ * controlla QUI, alla creazione o riattivazione di un TITOLARE: è l'unico
+ * punto in cui il numero può crescere. Il messaggio dice cosa fare, perché
+ * chi lo legge è l'amministratore dello studio, non Contify.
+ */
+async function postiProfessionistaEsauriti(
+  db: D1Database, tenantId: string, escludiId: string | null,
+): Promise<string | null> {
+  const t = await db.prepare('SELECT professionisti_inclusi AS n FROM tenants WHERE id = ?')
+    .bind(tenantId).first<{ n: number | null }>();
+  const limite = t?.n;
+  if (limite === null || limite === undefined) return null;
+  const attivi = await db.prepare(
+    "SELECT COUNT(*) AS n FROM utenti WHERE tenant_id = ? AND ruolo = 'TITOLARE' AND attivo = 1 AND id <> ?",
+  ).bind(tenantId, escludiId ?? '').first<{ n: number }>();
+  if ((attivi?.n ?? 0) < limite) return null;
+  return `Il contratto dello studio comprende ${limite} ${limite === 1 ? 'posto professionista' : 'posti professionista'}, già ${limite === 1 ? 'occupato' : 'occupati'}. Per aggiungerne apri una richiesta dalla pagina Assistenza: adegueremo il contratto.`;
+}
+
 async function altriAmministratoriAttivi(db: D1Database, tenantId: string, escludiId: string): Promise<number> {
   const r = await db.prepare(
     'SELECT COUNT(*) AS n FROM utenti WHERE tenant_id = ? AND amministratore = 1 AND attivo = 1 AND id <> ?',
@@ -549,6 +572,12 @@ api.post('/utenti', soloAmministratore, async (c) => {
   const esiste = await c.env.DB.prepare('SELECT id FROM utenti WHERE email = ?').bind(email).first();
   if (esiste) return c.json({ errore: 'Esiste già un utente con questa email' }, 409);
 
+  // AR-M16: i posti professionista sono quelli del contratto.
+  if (ruolo === 'TITOLARE') {
+    const esauriti = await postiProfessionistaEsauriti(c.env.DB, tenantId, null);
+    if (esauriti) return c.json({ errore: esauriti, postiEsauriti: true }, 409);
+  }
+
   // Solo un professionista può amministrare: chi gestisce utenti e archivio
   // deve poter rispondere di ciò che nell'archivio c'è.
   const amministratore = Boolean(b.amministratore) && ruolo === 'TITOLARE';
@@ -599,6 +628,15 @@ api.post('/utenti/:id', soloAmministratore, async (c) => {
   const perdeTitolare = target.ruolo === 'TITOLARE' && (nuovoRuolo !== 'TITOLARE' || !nuovoAttivo);
   if (perdeTitolare && (await altriTitolariAttivi(c.env.DB, tenantId, target.id)) === 0) {
     return c.json({ errore: 'Lo studio deve avere sempre almeno un professionista attivo' }, 409);
+  }
+
+  // AR-M16: promuovere o riattivare un professionista occupa un posto del
+  // contratto. Chi era già professionista attivo non consuma nulla di nuovo.
+  const diventaProfessionista =
+    nuovoRuolo === 'TITOLARE' && nuovoAttivo && !(target.ruolo === 'TITOLARE' && target.attivo === 1);
+  if (diventaProfessionista) {
+    const esauriti = await postiProfessionistaEsauriti(c.env.DB, tenantId, target.id);
+    if (esauriti) return c.json({ errore: esauriti, postiEsauriti: true }, 409);
   }
 
   // …né senza amministratore: nessuno potrebbe più gestire utenti, backup
@@ -3173,7 +3211,9 @@ consoleApp.get('/studi', async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT t.id, t.denominazione, t.stato, t.data_attivazione AS dataAttivazione,
             t.data_scadenza_canone AS dataScadenzaCanone, t.note_contratto AS noteContratto,
+            t.professionisti_inclusi AS professionistiInclusi,
             (SELECT COUNT(*) FROM utenti u WHERE u.tenant_id = t.id AND u.attivo = 1) AS nUtenti,
+            (SELECT COUNT(*) FROM utenti u WHERE u.tenant_id = t.id AND u.attivo = 1 AND u.ruolo = 'TITOLARE') AS nProfessionisti,
             (SELECT MAX(ultimo_accesso) FROM utenti u WHERE u.tenant_id = t.id) AS ultimoAccesso
      FROM tenants t
      ORDER BY t.denominazione`,
@@ -3197,13 +3237,29 @@ consoleApp.post('/studi/:id/contratto', async (c) => {
     return c.json({ errore: 'Le date vanno indicate come AAAA-MM-GG' }, 400);
   }
   const note = b.noteContratto === null ? null : String(b.noteContratto ?? '').trim().slice(0, 2000) || null;
+
+  // AR-M16: posti professionista a contratto. Vuoto/null = nessun limite.
+  // Si può impostare un limite più basso dei professionisti già attivi: non
+  // disattiva nessuno (sarebbe un danno operativo deciso da fuori), ma da
+  // quel momento lo studio non può aggiungerne. La console lo evidenzia.
+  let posti: number | null;
+  if (b.professionistiInclusi === null || b.professionistiInclusi === undefined || b.professionistiInclusi === '') {
+    posti = null;
+  } else {
+    const n = Number(b.professionistiInclusi);
+    if (!Number.isInteger(n) || n < 1 || n > 999) {
+      return c.json({ errore: 'I posti professionista vanno indicati come numero intero da 1 a 999, o lasciati vuoti per nessun limite' }, 400);
+    }
+    posti = n;
+  }
+
   await c.env.DB.prepare(
-    'UPDATE tenants SET data_attivazione = ?, data_scadenza_canone = ?, note_contratto = ? WHERE id = ?',
-  ).bind(attivazione, scadenza, note, t.id).run();
+    'UPDATE tenants SET data_attivazione = ?, data_scadenza_canone = ?, note_contratto = ?, professionisti_inclusi = ? WHERE id = ?',
+  ).bind(attivazione, scadenza, note, posti, t.id).run();
   await scriviAudit(c.env.DB, {
     tenantId: t.id, utenteId: null, azione: 'CONTRATTO_AGGIORNATO',
     entita: 'tenants', entitaId: t.id,
-    dettaglio: { operatore: o.email, dataAttivazione: attivazione, dataScadenzaCanone: scadenza },
+    dettaglio: { operatore: o.email, dataAttivazione: attivazione, dataScadenzaCanone: scadenza, professionistiInclusi: posti },
   });
   return c.json({ ok: true });
 });
