@@ -481,7 +481,7 @@ let idRichiestaVerifica;
       .every((a) => (log.dati ?? []).some((v) => v.azione === a)));
 }
 {
-  // Registro dei titolari effettivi (D.M. 122/2026).
+  // Registro dei titolari effettivi (art. 21-ter, D.Lgs. 122/2026; dal M20 il riscontro è una consultazione).
   const r = await req('POST', '/studio/registro-accreditamento', { data: new Date().toISOString().slice(0, 10) });
   verifica('accreditamento biennale registrato', r.stato === 200 && typeof r.dati?.registroTe?.scadeIl === 'string', r.dati);
   const scr = await req('GET', '/screening');
@@ -492,7 +492,7 @@ let idRichiestaVerifica;
   const rSi = await req('POST', '/clienti/cli_alfa/titolarita/registro', { incongruenza: false, note: 'Riscontro coerente con visura.' });
   verifica('riscontro col registro applicato ai titolari correnti', rSi.stato === 200 && (rSi.dati?.titolariAggiornati ?? 0) >= 1, rSi.dati);
   const log = await req('GET', '/audit');
-  verifica('il riscontro è tracciato', (log.dati ?? []).some((v) => v.azione === 'RISCONTRO_REGISTRO_TE'));
+  verifica('il riscontro è tracciato (CONSULTAZIONE_REGISTRO_TE)', (log.dati ?? []).some((v) => v.azione === 'CONSULTAZIONE_REGISTRO_TE'));
 }
 
 console.log('\n== Assistente AI (AR-M9) ==');

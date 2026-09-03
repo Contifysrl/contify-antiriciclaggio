@@ -12,6 +12,7 @@
 import type { Env } from './tipi';
 import { calcolaScadenzeFascicolo, statoScadenze } from '../domain/scadenze';
 import { trovaPrestazione } from '../domain/prestazioni';
+import { statoRegistroClienti } from './registro-te';
 import { calcolaCompletezza, type ClienteCompletezza, type EsitoCompletezza, type FascicoloCompletezza } from '../domain/completezza';
 
 const oggi = () => new Date().toISOString().slice(0, 10);
@@ -49,6 +50,12 @@ export async function leggiClientiCompletezza(env: Env, tenantId: string): Promi
     ).bind(tenantId).all<any>(),
     db.prepare("SELECT cliente_id, richieste FROM richieste_verifica WHERE tenant_id = ? AND stato IN ('COMPLETATA','ACQUISITA')").bind(tenantId).all<any>(),
   ]);
+  // AR-M20-03: registro dei titolari effettivi.
+  const [registro, titolariData] = await Promise.all([
+    statoRegistroClienti(env, tenantId),
+    db.prepare('SELECT cliente_id, MAX(valido_dal) AS dal FROM titolari_effettivi WHERE tenant_id = ? AND valido_al IS NULL GROUP BY cliente_id').bind(tenantId).all<any>(),
+  ]);
+  const titolariDal = new Map<string, string>((titolariData.results ?? []).map((r: any) => [r.cliente_id, String(r.dal ?? '')]));
 
   const data = oggi();
   const perCliente = new Map<string, FascicoloCompletezza[]>();
@@ -105,6 +112,10 @@ export async function leggiClientiCompletezza(env: Env, tenantId: string): Promi
     id: c.id, denominazione: c.denominazione, tipo: c.tipo, professionista: c.professionista ?? null, professionistaId: c.professionista_id ?? null,
     pep: c.pep === 1, fascicoli: perCliente.get(c.id) ?? [], titolariVigenti: nTitolari.get(c.id) ?? 0, documenti: docs.get(c.id) ?? [],
     proposteAperte: props.get(c.id) ?? [], screeningDaEsaminare: nScreening.get(c.id) ?? 0, pepChiesto: pepChiesto.has(c.id),
+    registroTe: (() => {
+      const r = registro.get(c.id);
+      return { titolariRegistratiIl: titolariDal.get(c.id) || null, ultima: r?.ultima ? { data: r.ultima.data, esito: r.ultima.esito, prova: r.ultima.prova } : null, daSegnalare: r?.daSegnalare.length ?? 0 };
+    })(),
   }));
 }
 

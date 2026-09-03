@@ -12,7 +12,7 @@ import type { Env, Utente } from './tipi';
 import { cifra, decifra, nuovoId } from './crypto';
 import { scriviAudit } from './audit';
 import { normalizzaPiva } from './lookup/piva';
-import { propostaTitolarita, registraProposta, salvaCompagine, screeningCompagine, type CaricaIn, type SocioIn } from './compagine';
+import { proponiRivalutazioni, propostaTitolarita, registraProposta, salvaCompagine, screeningCompagine, type CaricaIn, type SocioIn } from './compagine';
 
 export const TIPI_CLIENTE = ['PERSONA_FISICA', 'SOCIETA_CAPITALI', 'SOCIETA_PERSONE', 'ENTE_NON_PROFIT', 'TRUST', 'ALTRO'];
 
@@ -203,7 +203,7 @@ export async function aggiornaClienteDaVisura(env: Env, tenantId: string, u: Ute
   const dataVisura = dataIso(b.dataVisura);
   const diff = (soci.length || cariche.length || b.svuotaCompagine)
     ? await salvaCompagine(env, tenantId, id, u.id, { soci, cariche, fonte: 'VISURA', fonteData: b.dataElencoSoci ?? dataVisura })
-    : { partecipazioni: { aperte: 0, chiuse: 0, invariate: 0 }, cariche: { aperte: 0, chiuse: 0, invariate: 0 } };
+    : { partecipazioni: { aperte: 0, chiuse: 0, invariate: 0 }, cariche: { aperte: 0, chiuse: 0, invariate: 0 }, dettaglio: null };
 
   const screening = await screeningCompagine(env, tenantId, id).catch(() => ({ eseguito: false, nuove: 0 }));
   const denominazione = campi.denominazione ?? cliente.denominazione;
@@ -214,13 +214,23 @@ export async function aggiornaClienteDaVisura(env: Env, tenantId: string, u: Ute
   const compagineCambiata = diff.partecipazioni.aperte + diff.partecipazioni.chiuse + diff.cariche.aperte + diff.cariche.chiuse > 0;
   if (compagineCambiata || b.forzaProposta) {
     propostaId = await registraProposta(env, tenantId, id, u.id, 'TITOLARITA', 'VISURA',
-      { titolari: proposta.analisi.titolari, criterio: proposta.analisi.criterioApplicato, bozzaMotivazione: proposta.bozzaMotivazione, dataVisura, diff }, proposta.alert);
+      { titolari: proposta.analisi.titolari, criterio: proposta.analisi.criterioApplicato, bozzaMotivazione: proposta.bozzaMotivazione, dataVisura,
+        diff: { partecipazioni: diff.partecipazioni, cariche: diff.cariche }, variazioni: diff.dettaglio?.righe ?? [] }, proposta.alert);
   }
+  // AR-M20-02: struttura cambiata → controllo costante «da rivalutare» proposto sui fascicoli vivi valutati.
+  const rivalutazioni = diff.dettaglio ? await proponiRivalutazioni(env, tenantId, id, u.id, diff.dettaglio, dataVisura) : [];
 
   await audioVisuraLetta(env, tenantId, u.id, ip, id, b);
   await scriviAudit(env.DB, {
     tenantId, utenteId: u.id, azione: 'AGGIORNA_CLIENTE', entita: 'clienti', entitaId: id,
-    dettaglio: { origine: 'VISURA', dataVisura, campi: applicati, diff, alert: proposta.alert.map((x) => x.codice) }, ip,
+    dettaglio: {
+      origine: 'VISURA', dataVisura, campi: applicati, diff: { partecipazioni: diff.partecipazioni, cariche: diff.cariche },
+      strutturaCambiata: Boolean(diff.dettaglio?.strutturaCambiata), rivalutazioniProposte: rivalutazioni.length, alert: proposta.alert.map((x) => x.codice),
+    }, ip,
   });
-  return { ok: true, applicati, diff, compagineCambiata, proposta: { ...proposta, id: propostaId }, screening };
+  return {
+    ok: true, applicati, diff: { partecipazioni: diff.partecipazioni, cariche: diff.cariche }, compagineCambiata,
+    variazioni: diff.dettaglio ? { righe: diff.dettaglio.righe, strutturaCambiata: diff.dettaglio.strutturaCambiata } : null,
+    rivalutazioni, proposta: { ...proposta, id: propostaId }, screening,
+  };
 }

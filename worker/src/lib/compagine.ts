@@ -28,7 +28,9 @@ import {
   type NodoPartecipazione,
   type RisultatoAnalisiTitolarita,
 } from '../domain/titolare-effettivo';
-import { bozzaMotivazioneCo6, calcolaAlertRicorrenze, calcolaAlertTitolarita, type Alert, type RicorrenzaSoggetto, type SocioCompagine, type TipoSocio } from '../domain/alert-titolarita';
+import { diffCompagine, riepilogoDiff, type DiffCompagine } from '../domain/diff-compagine';
+import { statoRegistroCliente } from './registro-te';
+import { bozzaMotivazioneCo6, calcolaAlertAnzianitaVisura, calcolaAlertRegistroTe, calcolaAlertRicorrenze, calcolaAlertTitolarita, type Alert, type RicorrenzaSoggetto, type SocioCompagine, type TipoSocio } from '../domain/alert-titolarita';
 
 export interface SocioIn {
   nome: string;
@@ -134,7 +136,7 @@ export async function salvaCompagine(
   clienteId: string,
   utenteId: string,
   dati: { soci: SocioIn[]; cariche: CaricaIn[]; fonte: 'VISURA' | 'DICHIARAZIONE' | 'REGISTRO_TE' | 'MANUALE'; fonteData: string | null; fonteDocumentoId?: string | null },
-): Promise<{ partecipazioni: EsitoDiff; cariche: EsitoDiff }> {
+): Promise<{ partecipazioni: EsitoDiff; cariche: EsitoDiff; dettaglio: DiffCompagine }> {
   const data = oggi();
   const fonteData = dati.fonteData ?? data;
   const attuali = await leggiCompagine(env, tenantId, clienteId);
@@ -219,7 +221,56 @@ export async function salvaCompagine(
     const LOTTO = 40;
     for (let i = 0; i < stmts.length; i += LOTTO) await env.DB.batch(stmts.slice(i, i + LOTTO));
   }
-  return { partecipazioni: esitoP, cariche: esitoC };
+  // AR-M20-02: il diff letto in termini di struttura (chi entra, chi esce,
+  // quote e cariche variate), per il controllo costante.
+  const dettaglio = diffCompagine(
+    {
+      soci: attuali.soci.map((x) => ({ nome: x.nome, chiave: x.cfHash ?? x.codiceFiscale ?? null, tipo: x.tipo, quotaPercento: x.quotaPercento, diritto: x.diritto ?? null, quoteProprie: x.quoteProprie })),
+      cariche: attuali.cariche.map((x) => ({ nome: x.nome, chiave: x.cfHash ?? x.codiceFiscale ?? null, carica: x.carica, rappresentanzaLegale: x.rappresentanzaLegale })),
+    },
+    {
+      soci: nuoviSoci.map((x) => ({ nome: x.nome, chiave: x.cfHash ?? x.cf ?? null, tipo: x.tipo, quotaPercento: x.quotaPercento, diritto: x.diritto ?? null, quoteProprie: x.quoteProprie })),
+      cariche: nuoveCariche.map((x) => ({ nome: x.nome, chiave: x.cfHash ?? x.cf ?? null, carica: x.carica, rappresentanzaLegale: x.rappresentanzaLegale })),
+    },
+  );
+  return { partecipazioni: esitoP, cariche: esitoC, dettaglio };
+}
+
+/**
+ * AR-M20-02: al rinnovo della visura con struttura cambiata, il programma
+ * PROPONE il controllo costante «da rivalutare» su ogni fascicolo vivo
+ * valutato del cliente. Una proposta per fascicolo; se ce n'è già una
+ * aperta, non se ne accoda un'altra. Restituisce le proposte create.
+ */
+export async function proponiRivalutazioni(
+  env: Env,
+  tenantId: string,
+  clienteId: string,
+  utenteId: string,
+  diff: DiffCompagine,
+  dataVisura: string | null,
+): Promise<Array<{ propostaId: string; fascicoloId: string; codice: string }>> {
+  if (!diff.strutturaCambiata) return [];
+  const { results } = await env.DB.prepare(
+    `SELECT f.id, f.codice, v.classe
+     FROM fascicoli f
+     JOIN valutazioni_rischio v ON v.id = (SELECT id FROM valutazioni_rischio WHERE fascicolo_id = f.id ORDER BY versione DESC LIMIT 1)
+     WHERE f.tenant_id = ? AND f.cliente_id = ? AND f.stato != 'CESSATO' AND f.data_cessazione IS NULL AND v.esente_verifica = 0
+       AND NOT EXISTS (SELECT 1 FROM proposte p WHERE p.tenant_id = f.tenant_id AND p.cliente_id = f.cliente_id AND p.ambito = 'RIVALUTAZIONE' AND p.stato = 'PROPOSTA'
+                       AND p.alert LIKE '%' || f.id || '%')`,
+  ).bind(tenantId, clienteId).all<any>();
+  const out: Array<{ propostaId: string; fascicoloId: string; codice: string }> = [];
+  for (const f of results ?? []) {
+    const contenuto = {
+      tipo: 'RIVALUTAZIONE', fascicoloId: f.id, codice: f.codice, classe: f.classe, dataVisura,
+      righe: diff.righe, riepilogo: riepilogoDiff(diff, dataVisura),
+      esitoProposto: 'DA_RIVALUTARE', verificheProposte: ['COMPAGINE', 'TITOLARI', 'ANAGRAFICA'],
+      norma: 'art. 19 co. 1 lett. d) DLgs. 231/2007; Regole tecniche CNDCEC 2025 (aggiornamento della valutazione al mutare degli elementi)',
+    };
+    const id = await registraProposta(env, tenantId, clienteId, utenteId, 'RIVALUTAZIONE', 'VISURA', contenuto, [], 'PROPOSTA', { fascicoloId: f.id });
+    out.push({ propostaId: id, fascicoloId: f.id, codice: f.codice });
+  }
+  return out;
 }
 
 /** Soci e cariche vigenti, in chiaro per lo studio. */
@@ -255,6 +306,22 @@ export async function leggiCompagine(env: Env, tenantId: string, clienteId: stri
     });
   }
   return { soci: sociLetti, cariche: caricheLette };
+}
+
+/**
+ * Cadenza del controllo costante (mesi) del fascicolo vivo più esigente del
+ * cliente, dall'ultima valutazione non esente. Null se nessun fascicolo vivo
+ * è valutato: senza cadenza l'anzianità della visura non ha metro (A12).
+ */
+export async function cadenzaControlloCostante(env: Env, tenantId: string, clienteId: string): Promise<number | null> {
+  const r = await env.DB.prepare(
+    `SELECT MIN(v.controllo_costante_mesi) AS mesi
+     FROM fascicoli f
+     JOIN valutazioni_rischio v ON v.id = (SELECT id FROM valutazioni_rischio WHERE fascicolo_id = f.id ORDER BY versione DESC LIMIT 1)
+     WHERE f.tenant_id = ? AND f.cliente_id = ? AND f.stato != 'CESSATO' AND f.data_cessazione IS NULL
+       AND v.esente_verifica = 0 AND v.controllo_costante_mesi > 0`,
+  ).bind(tenantId, clienteId).first<any>();
+  return r?.mesi ? Number(r.mesi) : null;
 }
 
 /** Data dell'ultima visura conservata fra i documenti del cliente. */
@@ -349,6 +416,27 @@ export async function propostaTitolarita(
     dataVisura, dataElencoSoci: opzioni.dataElencoSoci ?? null,
   };
   const alert = calcolaAlertTitolarita(input);
+  // AR-M20-01, A12: la visura conservata è più vecchia della cadenza del
+  // controllo costante del fascicolo vivo più esigente. Si valuta sulla
+  // visura in archivio (non su quella che si sta caricando ora, che per
+  // definizione è nuova): se `opzioni.dataVisura` è di oggi, l'alert tace.
+  if (cliente.tipo !== 'PERSONA_FISICA') {
+    try {
+      const a12 = calcolaAlertAnzianitaVisura(dataVisura, await cadenzaControlloCostante(env, tenantId, cliente.id), data);
+      if (a12.alert) alert.push(a12.alert);
+    } catch (e) {
+      console.error('anzianità della visura non calcolata:', e);
+    }
+  }
+  // AR-M20-03, A13: incongruenze col registro dei titolari effettivi non ancora segnalate.
+  if (!opzioni.compagine) {
+    try {
+      const reg = await statoRegistroCliente(env, tenantId, cliente.id);
+      alert.push(...calcolaAlertRegistroTe(reg.daSegnalare.map((k) => ({ id: k.id, data: k.data, esito: k.esito, segnalata: false }))));
+    } catch (e) {
+      console.error('stato del registro TE non letto:', e);
+    }
+  }
   // AR-M19, A11: la stessa persona in molti clienti dello studio (via cf_hash, senza decifrare).
   try {
     const soggetti = [
@@ -372,11 +460,13 @@ export async function registraProposta(
   tenantId: string,
   clienteId: string | null,
   utenteId: string,
-  ambito: 'ANAGRAFICA' | 'TITOLARITA' | 'ESECUTORE' | 'RISCHIO_A' | 'DOCUMENTI' | 'SCREENING',
+  ambito: 'ANAGRAFICA' | 'TITOLARITA' | 'ESECUTORE' | 'RISCHIO_A' | 'DOCUMENTI' | 'SCREENING' | 'RIVALUTAZIONE',
   origine: 'VISURA' | 'REGISTRI' | 'DICHIARAZIONE' | 'PORTAFOGLIO',
   contenuto: unknown,
   alert: Alert[],
   stato: 'PROPOSTA' | 'APPLICATA' = 'PROPOSTA',
+  /** Riferimenti in chiaro (nessun dato personale) da tenere accanto ai codici alert: es. il fascicolo di una RIVALUTAZIONE. */
+  riferimenti: Record<string, string> = {},
 ): Promise<string> {
   const id = nuovoId('prp');
   // Una proposta di titolarità ancora aperta viene sostituita: la nuova visura è più recente.
@@ -389,7 +479,7 @@ export async function registraProposta(
      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
   ).bind(
     id, tenantId, clienteId, ambito, origine, await cifraJson(env, tenantId, contenuto),
-    JSON.stringify(alert.map((a) => ({ codice: a.codice, gravita: a.gravita }))), stato, utenteId,
+    JSON.stringify([...alert.map((a) => ({ codice: a.codice, gravita: a.gravita })), ...(Object.keys(riferimenti).length ? [{ codice: 'RIF', ...riferimenti }] : [])]), stato, utenteId,
     stato === 'APPLICATA' ? utenteId : null, stato === 'APPLICATA' ? new Date().toISOString() : null,
   ).run();
   return id;

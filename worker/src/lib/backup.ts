@@ -81,6 +81,8 @@ export const TABELLE_ARCHIVIO = [
   'valutazioni_rischio',
   // AR-M19: i controlli costanti eseguiti referenziano fascicoli e utenti.
   'controlli_costanti',
+  // AR-M20: le consultazioni del registro TE referenziano clienti, fascicoli, documenti e utenti.
+  'consultazioni_registro_te',
   'operazioni',
   'segnalazioni_sospette',
   'astensioni',

@@ -92,13 +92,13 @@ verifica('login professionista', login.stato === 200, login);
 // ── 1. Regole e completezza ───────────────────────────────────
 console.log('\n== 1. Regole di completezza ==');
 const regole = await req('GET', '/catalogo/regole-completezza');
-verifica('13 regole, ognuna con norma, modulistica e «quando»', regole.dati?.length === 13 && regole.dati.every((r) => r.norma && r.fonte && r.quando && r.pagina), regole.dati?.map((r) => r.codice));
+verifica('17 regole (13 M19 + A12 + 3 registro TE), ognuna con norma, modulistica e «quando»', regole.dati?.length === 17 && regole.dati.every((r) => r.norma && r.fonte && r.quando && r.pagina), regole.dati?.map((r) => r.codice));
 const nuovoCliente = await req('POST', '/clienti', { tipo: 'SOCIETA_CAPITALI', denominazione: `COMPLETEZZA ${suffisso} SRL`, partitaIva: pivaValida(`${suffisso}99`) });
 verifica('cliente creato a mano (come da import)', nuovoCliente.stato === 201, nuovoCliente.dati);
 const idC = nuovoCliente.dati?.id;
 let comp = await req('GET', '/completezza');
 let vc = comp.dati?.clienti?.find((c) => c.id === idC);
-verifica('cruscotto: struttura (avanzamento, perGravita, iniziaDa, regole)', typeof comp.dati?.avanzamento === 'number' && comp.dati?.perGravita && Array.isArray(comp.dati?.iniziaDa) && comp.dati?.regole?.length === 13, Object.keys(comp.dati ?? {}));
+verifica('cruscotto: struttura (avanzamento, perGravita, iniziaDa, regole)', typeof comp.dati?.avanzamento === 'number' && comp.dati?.perGravita && Array.isArray(comp.dati?.iniziaDa) && comp.dati?.regole?.length === 17, Object.keys(comp.dati ?? {}));
 verifica('cliente appena creato: una sola cosa da fare, aprire il fascicolo (alta)', vc?.mancanze?.length === 1 && vc.mancanze[0].codice === 'FASCICOLO_ASSENTE' && vc.urgente === true, vc);
 const fasc = await req('POST', '/fascicoli', { clienteId: idC, prestazioneCodice: 'CONSULENZA_TRIBUTARIA', dataConferimento: new Date().toISOString().slice(0, 10) });
 verifica('fascicolo aperto', fasc.stato === 201, fasc.dati);

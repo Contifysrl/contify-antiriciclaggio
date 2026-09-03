@@ -67,7 +67,8 @@ import {
 import { CATALOGO_PRESTAZIONI_2025, prestazioneObbligatoria, trovaPrestazione } from './domain/prestazioni';
 import { calcolaAutovalutazione, calcolaProfiloCliente, ErroreDominio } from './domain/risk';
 import { analizzaTitolaritaEffettiva } from './domain/titolare-effettivo';
-import { calcolaScadenzeFascicolo, scadenzaComunicazioneMef, statoScadenze } from './domain/scadenze';
+import { agganciaProva, leggiConsultazioni, registraConsultazione, registraSegnalazione, TIPO_DOCUMENTO_PROVA } from './lib/registro-te';
+import { anzianitaVisura, calcolaScadenzeFascicolo, scadenzaComunicazioneMef, scadenzaRinnovoVisura, statoScadenze } from './domain/scadenze';
 import { SOGLIE, TERMINI, aggiungiAnni, paeseAltoRischio, verificaContante } from './domain/norme';
 import { AVVISO_INDICATORI, INDICATORI_UIF_2023 } from './domain/indicatori-uif';
 import { NOVITA, idNovitaValido } from './domain/novita';
@@ -854,14 +855,20 @@ async function clientiPaesiDaRivalutare(db: D1Database, tenantId: string) {
   });
 }
 
-/** Stato dell'accreditamento biennale al registro dei titolari effettivi (AR-M8). */
+/**
+ * Stato dell'accreditamento biennale al registro dei titolari effettivi
+ * (AR-M8; AR-M20-03: art. 21-ter co. 4-5 DLgs. 231/2007 come riscritto dal
+ * D.Lgs. 10.6.2026 n. 122 — due anni dal primo accreditamento o dal rinnovo,
+ * delegati incardinati nell'organizzazione).
+ */
 async function statoRegistroTe(db: D1Database, tenantId: string) {
   const t = await db.prepare('SELECT parametri FROM tenants WHERE id = ?').bind(tenantId).first<any>();
   let parametri: any = {};
   try { parametri = JSON.parse(t?.parametri ?? '{}'); } catch { /* parametri illeggibili */ }
   const reg = parametri.registroTe;
-  if (!reg?.scadeIl) return { accreditato: false, accreditatoIl: null, scadeIl: null, giorniResidui: null };
-  return { accreditato: true, accreditatoIl: reg.accreditatoIl, scadeIl: reg.scadeIl, giorniResidui: giorniAllaScadenza(reg.scadeIl) };
+  const base = { delegati: Array.isArray(reg?.delegati) ? reg.delegati : [], riferimento: reg?.riferimento ?? null, cameraDiCommercio: reg?.cameraDiCommercio ?? null };
+  if (!reg?.scadeIl) return { accreditato: false, accreditatoIl: null, scadeIl: null, giorniResidui: null, ...base };
+  return { accreditato: true, accreditatoIl: reg.accreditatoIl, scadeIl: reg.scadeIl, giorniResidui: giorniAllaScadenza(reg.scadeIl), ...base };
 }
 
 api.get('/screening', async (c) => {
@@ -1385,56 +1392,99 @@ api.post('/pubblico/verifica/:token', async (c) => {
 });
 
 // ===========================================================================
-// REGISTRO DEI TITOLARI EFFETTIVI (AR-M8) — D.M. 122/2026
+// REGISTRO DEI TITOLARI EFFETTIVI — art. 21-ter DLgs. 231/2007
+// (D.Lgs. 10.6.2026 n. 122, in vigore dal 23.7.2026; AR-M8 → AR-M20-03)
 // ===========================================================================
 
-/** Accreditamento biennale dello studio presso la Camera di Commercio. */
+/** Accreditamento biennale dello studio presso la Camera di commercio (co. 3-5), con i delegati. */
 api.post('/studio/registro-accreditamento', soloAmministratore, async (c) => {
   const u = c.get('utente');
   const b = await c.req.json<any>().catch(() => ({}));
   const data = String(b.data ?? '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return c.json({ errore: 'Data non valida (AAAA-MM-GG)' }, 400);
+  if (data > oggi()) return c.json({ errore: 'La data dell’accreditamento non può essere futura.' }, 400);
 
   const t = await c.env.DB.prepare('SELECT parametri FROM tenants WHERE id = ?').bind(u.tenant_id).first<any>();
   const parametri = (() => { try { return JSON.parse(t?.parametri ?? '{}'); } catch { return {}; } })();
-  parametri.registroTe = { accreditatoIl: data, scadeIl: aggiungiAnni(data, 2) };
+  let delegati: string[] = [];
+  if (Array.isArray(b.delegati)) {
+    const ids = [...new Set(b.delegati.map(String))];
+    if (ids.length) {
+      const { results } = await c.env.DB.prepare(`SELECT id FROM utenti WHERE tenant_id = ? AND attivo = 1 AND id IN (${ids.map(() => '?').join(',')})`).bind(u.tenant_id, ...ids).all<any>();
+      delegati = (results ?? []).map((r: any) => String(r.id));
+    }
+  } else if (Array.isArray(parametri.registroTe?.delegati)) {
+    delegati = parametri.registroTe.delegati;
+  }
+  parametri.registroTe = {
+    accreditatoIl: data, scadeIl: aggiungiAnni(data, 2), delegati,
+    riferimento: String(b.riferimento ?? parametri.registroTe?.riferimento ?? '').trim().slice(0, 200) || null,
+    cameraDiCommercio: String(b.cameraDiCommercio ?? parametri.registroTe?.cameraDiCommercio ?? '').trim().slice(0, 120) || null,
+  };
   await c.env.DB.prepare('UPDATE tenants SET parametri = ? WHERE id = ?').bind(JSON.stringify(parametri), u.tenant_id).run();
 
   await scriviAudit(c.env.DB, {
     tenantId: u.tenant_id, utenteId: u.id, azione: 'ACCREDITAMENTO_REGISTRO_TE',
-    dettaglio: parametri.registroTe, ip: c.get('ip'),
+    dettaglio: { ...parametri.registroTe, delegati: delegati.length }, ip: c.get('ip'),
   });
-  return c.json({ ok: true, registroTe: parametri.registroTe });
+  return c.json({ ok: true, registroTe: await statoRegistroTe(c.env.DB, u.tenant_id) });
+});
+
+/** Storico delle consultazioni del registro per un cliente (co. 1, 7, 12). */
+api.get('/clienti/:id/registro-te', async (c) => {
+  const tenantId = c.get('tenantId');
+  const clienteId = c.req.param('id');
+  const cliente = await c.env.DB.prepare('SELECT id FROM clienti WHERE id = ? AND tenant_id = ?').bind(clienteId, tenantId).first<any>();
+  if (!cliente) return c.json({ errore: 'Cliente non trovato' }, 404);
+  const [consultazioni, accreditamento] = await Promise.all([leggiConsultazioni(c.env, tenantId, clienteId), statoRegistroTe(c.env.DB, tenantId)]);
+  return c.json({ consultazioni, accreditamento, tipoDocumentoProva: TIPO_DOCUMENTO_PROVA });
+});
+
+/** Registra una consultazione del registro: esito, difformità, prova (documento del cliente). */
+api.post('/clienti/:id/registro-te', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const r = await registraConsultazione(c.env, tenantId, u.id, c.get('ip'), c.req.param('id') as string, b);
+  if ('errore' in r) return c.json({ errore: r.errore }, r.stato);
+  return c.json(r, 201);
+});
+
+/** Segnalazione dell'incongruenza alla Camera di commercio (co. 7). */
+api.post('/registro-te/:id/segnalazione', puoScrivere, async (c) => {
+  const b = await c.req.json<any>().catch(() => ({}));
+  const r = await registraSegnalazione(c.env, c.get('tenantId'), c.get('utente').id, c.get('ip'), c.req.param('id') as string, b);
+  if ('errore' in r) return c.json({ errore: r.errore }, r.stato);
+  return c.json(r);
+});
+
+/** Aggancia la prova dell'iscrizione (documento già caricato sul cliente) alla consultazione (co. 12). */
+api.post('/registro-te/:id/prova', puoScrivere, async (c) => {
+  const b = await c.req.json<any>().catch(() => ({}));
+  if (!b.documentoId) return c.json({ errore: 'Indica il documento (estratto del registro) già caricato fra i documenti del cliente.' }, 400);
+  const r = await agganciaProva(c.env, c.get('tenantId'), c.get('utente').id, c.get('ip'), c.req.param('id') as string, String(b.documentoId));
+  if ('errore' in r) return c.json({ errore: r.errore }, r.stato);
+  return c.json(r);
 });
 
 /**
- * Riscontro della titolarità effettiva col registro (art. 21-ter):
- * si applica a TUTTI i titolari correnti del cliente — la consultazione
- * è una, il suo esito vale per la fotografia intera.
+ * Compatibilità AR-M8: il vecchio riscontro (flag + nota) diventa una
+ * consultazione a tutti gli effetti (CORRISPONDE / DIFFORME).
  */
 api.post('/clienti/:id/titolarita/registro', puoScrivere, async (c) => {
   const tenantId = c.get('tenantId');
   const u = c.get('utente');
   const clienteId = c.req.param('id');
   const b = await c.req.json<any>().catch(() => ({}));
-  const data = String(b.data ?? oggi()).slice(0, 10);
+  const n = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM titolari_effettivi WHERE cliente_id = ? AND tenant_id = ? AND valido_al IS NULL').bind(clienteId, tenantId).first<any>();
+  if (!n?.n) return c.json({ errore: 'Nessun titolare effettivo corrente da riscontrare' }, 404);
   const incongruenza = Boolean(b.incongruenza);
-  const note = String(b.note ?? '').trim() || null;
-  if (incongruenza && !note) {
-    return c.json({ errore: 'Descrivi la difformità rilevata: va comunicata al gestore del registro (art. 21 co. 4)' }, 400);
+  if (incongruenza && !String(b.note ?? '').trim()) {
+    return c.json({ errore: 'Descrivi la difformità rilevata: va segnalata alla Camera di commercio (art. 21-ter co. 7)' }, 400);
   }
-
-  const r = await c.env.DB.prepare(
-    `UPDATE titolari_effettivi SET registro_consultato = 1, registro_data = ?, registro_incongruenza = ?, registro_note = ?
-     WHERE cliente_id = ? AND tenant_id = ? AND valido_al IS NULL`,
-  ).bind(data, incongruenza ? 1 : 0, note, clienteId, tenantId).run();
-  if (!r.meta.changes) return c.json({ errore: 'Nessun titolare effettivo corrente da riscontrare' }, 404);
-
-  await scriviAudit(c.env.DB, {
-    tenantId, utenteId: u.id, azione: 'RISCONTRO_REGISTRO_TE', entita: 'clienti', entitaId: clienteId,
-    dettaglio: { data, incongruenza, titolari: r.meta.changes }, ip: c.get('ip'),
-  });
-  return c.json({ ok: true, titolariAggiornati: r.meta.changes });
+  const r = await registraConsultazione(c.env, tenantId, u.id, c.get('ip'), clienteId as string, { data: b.data, esito: incongruenza ? 'DIFFORME' : 'CORRISPONDE', difformita: b.note });
+  if ('errore' in r) return c.json({ errore: r.errore }, r.stato);
+  return c.json({ ok: true, titolariAggiornati: Number(n.n), consultazione: r });
 });
 
 // ===========================================================================
@@ -2536,6 +2586,13 @@ api.get('/fascicoli/:id', async (c) => {
   const { results: operazioni } = await c.env.DB.prepare(
     'SELECT * FROM operazioni WHERE fascicolo_id = ? AND tenant_id = ? ORDER BY data_operazione DESC',
   ).bind(id, tenantId).all();
+  // AR-M20 (bugfix): i titolari effettivi vigenti del cliente non erano mai
+  // restituiti da questa rotta, e la sezione «Titolarità effettiva» del
+  // fascicolo diceva sempre «nessun titolare registrato» (la scheda .docx,
+  // che passa da datiFascicolo, li aveva). Sono per cliente, come in archivio.
+  const { results: titolari } = await c.env.DB.prepare(
+    'SELECT * FROM titolari_effettivi WHERE cliente_id = ? AND tenant_id = ? AND valido_al IS NULL ORDER BY nominativo',
+  ).bind(f.cliente_id, tenantId).all<any>();
 
   const ultima = valutazioni?.[0];
   // L'esenzione dell'art. 17 co. 7 discende dalla prestazione, non dalla
@@ -2557,6 +2614,7 @@ api.get('/fascicoli/:id', async (c) => {
   return c.json({
     fascicolo: f,
     valutazioni: valutazioni ?? [],
+    titolari: titolari ?? [],
     documenti: documenti ?? [],
     operazioni: operazioni ?? [],
     scadenze: statoScadenze(scadenze, oggi()),
@@ -2977,7 +3035,7 @@ api.get('/documenti/:id', async (c) => {
 /** Scadenzario del tenant: usato dall'endpoint e dall'email settimanale (AR-M7). */
 async function calcolaScadenzario(db: D1Database, tenantId: string) {
   const { results } = await db.prepare(
-    `SELECT f.id, f.codice, f.prestazione_codice, f.data_conferimento, f.data_cessazione, f.ultimo_controllo, f.stato, cl.denominazione AS cliente,
+    `SELECT f.id, f.codice, f.cliente_id, f.prestazione_codice, f.data_conferimento, f.data_cessazione, f.ultimo_controllo, f.stato, cl.denominazione AS cliente,
             v.classe, v.controllo_costante_mesi, v.esente_verifica, v.firmata_il
      FROM fascicoli f JOIN clienti cl ON cl.id = f.cliente_id
      LEFT JOIN valutazioni_rischio v ON v.id = (SELECT id FROM valutazioni_rischio WHERE fascicolo_id = f.id ORDER BY versione DESC LIMIT 1)
@@ -3001,6 +3059,27 @@ async function calcolaScadenzario(db: D1Database, tenantId: string) {
       oggi(),
     ).map((s) => ({ ...s, fascicoloId: f.id, codice: f.codice, cliente: f.cliente })),
   );
+
+  // AR-M20-01 (A12): rinnovo della visura, una voce per cliente societario,
+  // sul fascicolo vivo valutato più esigente (cadenza minima).
+  const { results: visure } = await db.prepare(
+    `SELECT d.cliente_id, MAX(substr(d.data_riferimento,1,10)) AS data_visura
+     FROM documenti d JOIN clienti c ON c.id = d.cliente_id
+     WHERE d.tenant_id = ? AND d.tipo = 'VISURA' AND d.data_riferimento IS NOT NULL AND c.attivo = 1 AND c.tipo != 'PERSONA_FISICA'
+     GROUP BY d.cliente_id`,
+  ).bind(tenantId).all<any>();
+  const dataVisura = new Map<string, string>((visure ?? []).map((r: any) => [String(r.cliente_id), String(r.data_visura)]));
+  const esigente = new Map<string, any>();
+  for (const f of results ?? []) {
+    if (f.data_cessazione || f.classe == null || Boolean(f.esente_verifica) || !(f.controllo_costante_mesi > 0)) continue;
+    const cur = esigente.get(f.cliente_id);
+    if (!cur || f.controllo_costante_mesi < cur.controllo_costante_mesi) esigente.set(f.cliente_id, f);
+  }
+  for (const [clienteId, f] of esigente) {
+    const anz = anzianitaVisura(dataVisura.get(clienteId), f.controllo_costante_mesi, oggi());
+    if (!anz) continue;
+    voci.push(...statoScadenze([scadenzaRinnovoVisura(anz, f.classe)], oggi()).map((s) => ({ ...s, fascicoloId: f.id, codice: f.codice, cliente: f.cliente })));
+  }
 
   voci.sort((a, b) => a.giorniResidui - b.giorniResidui);
   return {
@@ -3075,7 +3154,7 @@ api.get('/primi-passi', async (c) => {
     {
       id: 'registro-te',
       titolo: 'Registra l’accreditamento al registro dei titolari effettivi',
-      spiega: 'D.M. 122/2026: accesso biennale via Camera di Commercio, promemoria al rinnovo.',
+      spiega: 'Art. 21-ter (D.Lgs. 122/2026): accreditamento biennale presso la Camera di commercio, delegati, promemoria al rinnovo.',
       pagina: 'controlli',
       fatto: registroTe.accreditato,
       facoltativo: false,
@@ -3207,8 +3286,22 @@ api.post('/fascicoli/:id/controllo-costante', puoScrivere, async (c) => {
     c.env.DB.prepare("UPDATE fascicoli SET ultimo_controllo = ?, aggiornato_il = datetime('now') WHERE id = ? AND tenant_id = ? AND (ultimo_controllo IS NULL OR ultimo_controllo < ?)")
       .bind(data, id, tenantId, data),
   ]);
-  await scriviAudit(c.env.DB, { tenantId, utenteId: u.id, azione: 'CONTROLLO_COSTANTE', entita: 'fascicoli', entitaId: id, dettaglio: { data, esito, verifiche }, ip: c.get('ip') });
-  return c.json({ id: cid, data, esito, prossimaValutazione: esito === 'DA_RIVALUTARE' }, 201);
+  // AR-M20-02: il controllo chiude la proposta di rivalutazione nata dal
+  // rinnovo della visura. Esito «da rivalutare» = APPLICATA; «invariato»
+  // nonostante la struttura cambiata = MODIFICATA, e le note sono la motivazione.
+  let propostaEsito: string | null = null;
+  if (b.propostaId) {
+    if (esito === 'INVARIATO' && !note) return c.json({ errore: 'La compagine è cambiata: se ritieni che nulla vada rivalutato, scrivi perché nelle note.' }, 400);
+    propostaEsito = esito === 'DA_RIVALUTARE' ? 'APPLICATA' : 'MODIFICATA';
+    const es = JSON.stringify(await cifra(c.env.MASTER_KEY, tenantId, JSON.stringify({ motivazione: note, dettaglio: { controlloId: cid, data, esito, verifiche } })));
+    const r = await c.env.DB.prepare(
+      "UPDATE proposte SET stato = ?, esito = ?, rivista_da = ?, rivista_il = datetime('now') WHERE id = ? AND tenant_id = ? AND ambito = 'RIVALUTAZIONE' AND stato = 'PROPOSTA'",
+    ).bind(propostaEsito, es, u.id, String(b.propostaId), tenantId).run();
+    if (!r.meta.changes) propostaEsito = null;
+    else await scriviAudit(c.env.DB, { tenantId, utenteId: u.id, azione: 'RIVEDI_PROPOSTA', entita: 'proposte', entitaId: String(b.propostaId), dettaglio: { stato: propostaEsito, origine: 'CONTROLLO_COSTANTE' }, ip: c.get('ip') });
+  }
+  await scriviAudit(c.env.DB, { tenantId, utenteId: u.id, azione: 'CONTROLLO_COSTANTE', entita: 'fascicoli', entitaId: id, dettaglio: { data, esito, verifiche, propostaId: b.propostaId ?? null }, ip: c.get('ip') });
+  return c.json({ id: cid, data, esito, prossimaValutazione: esito === 'DA_RIVALUTARE', proposta: propostaEsito }, 201);
 });
 
 api.get('/fascicoli/:id/controlli-costanti', async (c) => {
