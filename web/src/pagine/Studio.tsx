@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { api, formattaData, type ClasseRischio, type EsitoAutovalutazione, type Ruleset } from '../api';
 import { ElencoVincoli, GruppoFattori, PiedeLegale, PillolaRischio, Riquadro, Tessera } from '../componenti';
 import { HelpLink } from '../components/ui';
+import { BarraAvanzamento, percorsoMancanza } from './Completezza';
+import { RegistroFormazione } from './Formazione';
 
 // ===========================================================================
 export function Cruscotto({ vaiA }: { vaiA: (p: string) => void }) {
@@ -29,6 +31,32 @@ export function Cruscotto({ vaiA }: { vaiA: (p: string) => void }) {
       </p>
 
       <PerIniziare vaiA={vaiA} />
+
+      {/* AR-M19: «oggi ti mancano N cose, queste sono urgenti, inizia da qui». */}
+      {d.completezza && d.completezza.clientiAttivi > 0 && (
+        <div className="scheda" data-test="cruscotto-completezza">
+          {d.completezza.totaleMancanze === 0 ? (
+            <p className="!m-0 font-semibold text-teal-700">Tutti i {d.completezza.clientiAttivi} clienti attivi sono a posto: nessuna cosa da completare.</p>
+          ) : (
+            <>
+              <p className="!m-0 font-semibold text-ink-900">
+                Oggi ti mancano <span className="font-mono">{d.completezza.totaleMancanze}</span> cose
+                {d.completezza.perGravita.alta > 0 && <>, <span className="text-red-700">{d.completezza.perGravita.alta} urgent{d.completezza.perGravita.alta === 1 ? 'e' : 'i'}</span></>}:
+                {' '}{d.completezza.clientiCompleti} clienti su {d.completezza.clientiAttivi} sono già a posto.
+              </p>
+              <div className="mt-2"><BarraAvanzamento percentuale={d.completezza.avanzamento} /></div>
+              {d.completezza.iniziaDa?.length > 0 && (
+                <p className="text-sm text-ink-600 mt-2 !mb-0">
+                  Inizia da: {d.completezza.iniziaDa.map((x: any, i: number) => (
+                    <span key={i}>{i > 0 ? ' · ' : ''}<button className="hover:underline" onClick={() => vaiA(percorsoMancanza(x.clienteId, x.mancanza))}><strong>{x.denominazione}</strong> ({x.mancanza.etichetta.toLowerCase()})</button></span>
+                  ))}
+                </p>
+              )}
+              <button className="azione secondaria" style={{ marginTop: 10 }} onClick={() => vaiA('completezza')}>Apri la lista completa</button>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="griglia c4">
         <Tessera etichetta="Clienti" valore={d.clienti} />
@@ -208,7 +236,7 @@ function TabellaIndicatori({ titolo, righe, scelti }: {
   );
 }
 
-export function Autovalutazione() {
+export function Autovalutazione({ amministratore = false }: { amministratore?: boolean }) {
   const [rs, setRs] = useState<Ruleset | null>(null);
   const [storico, setStorico] = useState<any[]>([]);
   const [inerente, setInerente] = useState<Record<string, number>>({});
@@ -419,6 +447,8 @@ export function Autovalutazione() {
           </Riquadro>
         </div>
       )}
+
+      <RegistroFormazione amministratore={amministratore} onCambiato={caricaDati} />
 
       {storico.length > 0 && (
         <>

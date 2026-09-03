@@ -15,6 +15,18 @@ export interface VoceNovita {
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-09-06-coda-e-completezza',
+    data: '2026-09-06',
+    titolo: 'Coda di revisione e «Da completare»: si parte dai documenti, non dalla pagina bianca',
+    punti: [
+      '«Da completare» (nuova voce di menu, riepilogo anche nel Cruscotto): per ogni cliente attivo il programma calcola cosa manca perché il fascicolo antiriciclaggio sia a posto — fascicolo, valutazione firmata, titolari effettivi, PEP chiesto, documento d’identità, visura, dichiarazione art. 22, controllo costante — e lo presenta come una lista finita ordinata per urgenza, rischio e scadenza, con la norma e la sezione della modulistica CNDCEC per ogni voce e un pulsante che porta dove si risolve. Sono cose da completare, non violazioni.',
+      'Coda di revisione: carica fino a sessanta visure in un colpo. Ognuna viene letta nel browser e diventa una proposta cifrata, abbinata al cliente esistente per codice fiscale o partita IVA o marcata «nuovo cliente»; nessuna produce effetti finché non la rivedi. Revisione una alla volta ma veloce (Invio applica, M modifica, frecce scorrono), «Applica tutto» solo per le proposte senza alert di gravità alta; i titolari effettivi individuati per proprietà si registrano in blocco, gli altri restano per la sequenza guidata.',
+      'Alert A11 «ricorrenza nel portafoglio»: la stessa persona socia o amministratrice in cinque o più clienti, o in due società costituite negli ultimi ventiquattro mesi, viene segnalata (gravità media) con l’elenco dei clienti collegati. Il confronto usa le impronte dei codici fiscali, senza decifrarli.',
+      'Nel fascicolo ora si registra il controllo costante eseguito (cosa hai controllato, con quale esito): la scadenza successiva decorre dal controllo e non resta più «scaduta» per sempre. Si può dichiarare cessato il rapporto: da quella data decorre la conservazione decennale dei documenti, senza cancellare nulla.',
+      'Registro della formazione (art. 16 co. 3) in Autovalutazione studio: gli eventi seguiti dal personale alimentano il fattore «formazione» del Modello AV.0; il cruscotto di completezza alimenta il fattore «organizzazione dell’adeguata verifica».',
+    ],
+  },
+  {
     id: '2026-09-05-visure-vere-catena',
     data: '2026-09-05',
     titolo: 'Visure: cariche al femminile e catene su più livelli',

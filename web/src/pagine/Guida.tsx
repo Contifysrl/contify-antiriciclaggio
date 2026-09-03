@@ -112,6 +112,83 @@ const SEZIONI: Sezione[] = [
     ),
   },
   {
+    id: 'completezza',
+    titolo: 'Da completare',
+    icona: 'spunta',
+    corpo: (
+      <>
+        <P>
+          <K>Da completare</K> è il cruscotto di completezza: per ogni cliente attivo il programma
+          calcola che cosa manca perché il fascicolo antiriciclaggio sia a posto, e lo presenta come
+          una lista finita — «oggi ti mancano 14 cose, 3 urgenti, inizia da qui» — ordinata per
+          urgenza, classe di rischio e scadenza. Sono cose da completare, non violazioni.
+        </P>
+        <P>Le regole non sono inventate: ognuna cita l'articolo del DLgs. 231/2007 e la sezione della modulistica CNDCEC (Modello AV.1, Informativa n. 57/2026) in cui l'adempimento va documentato. Le trovi con <Btn>Da dove vengono queste regole?</Btn>. In sintesi:</P>
+        <Punti punti={[
+          <><K>Urgenti</K>: nessun fascicolo aperto <Norma>artt. 17-18</Norma>, termine dei trenta giorni superato <Norma>art. 18 co. 3</Norma>, valutazione del rischio non registrata <Norma>art. 17 co. 3</Norma>, titolari effettivi non individuati <Norma>artt. 20-22</Norma>, corrispondenze nelle liste sanzioni da decidere.</>,
+          <><K>Da fare</K>: valutazione non firmata (non fa prova), controllo costante scaduto <Norma>art. 19 co. 1 lett. d</Norma>, status PEP mai chiesto, documento d'identità del cliente o del titolare effettivo non conservato <Norma>art. 19 co. 1 lett. a-b</Norma>, dichiarazione art. 22 mancante.</>,
+          <><K>Quando puoi</K>: visura camerale non conservata, proposta del programma in attesa nella coda di revisione.</>,
+        ]} />
+        <Nota>
+          Per un cliente appena importato dal gestionale l'unica cosa da fare è aprire il fascicolo:
+          titolari, valutazione e documenti vengono chiesti dopo, una cosa alla volta. Ogni voce ha un
+          pulsante che porta esattamente dove si risolve.
+        </Nota>
+        <H>Controllo costante e cessazione del rapporto</H>
+        <P>
+          Nel fascicolo, il riquadro <K>Controllo costante e rapporto</K> permette di registrare il
+          controllo costante eseguito <Norma>art. 19 co. 1 lett. d</Norma> — cosa hai controllato
+          (anagrafica, compagine, titolari, operatività, liste, PEP, documenti) e con quale esito — e
+          di dichiarare cessato il rapporto, da cui decorre la conservazione decennale
+          <Norma>art. 31</Norma>. Nulla si cancella: il fascicolo resta consultabile.
+        </P>
+        <H>Formazione</H>
+        <P>
+          In <K>Autovalutazione studio</K> il registro della formazione <Norma>art. 16 co. 3</Norma>
+          raccoglie corsi e aggiornamenti seguiti dal personale: alimenta il fattore «formazione» del
+          Modello AV.0, che altrimenti resterebbe al massimo della vulnerabilità.
+        </P>
+      </>
+    ),
+  },
+  {
+    id: 'coda',
+    titolo: 'Coda di revisione',
+    icona: 'carica',
+    corpo: (
+      <>
+        <P>
+          La <K>Coda di revisione</K> separa l'ingestione dalla conferma. Con <Btn>Scegli i PDF…</Btn>
+          carichi fino a sessanta visure camerali in un colpo: vengono lette nel tuo browser (mai
+          con l'AI), ognuna diventa una proposta cifrata abbinata al cliente esistente per codice
+          fiscale o partita IVA, oppure marcata «nuovo cliente». Nessuna produce effetti finché non la
+          rivedi: nessun cliente viene creato o modificato dall'import.
+        </P>
+        <P>La revisione è una alla volta, ma progettata per la velocità: proposta a sinistra, alert a destra.</P>
+        <Punti punti={[
+          <><Btn>Invio</Btn> applica la proposta tale e quale; <Btn>M</Btn> apre l'anagrafica per correggerla prima di applicare (l'esito diventa «modificata»); <Btn>←</Btn> <Btn>→</Btn> scorrono la coda.</>,
+          <>Per un cliente esistente vedi il confronto campo per campo e spunti cosa applicare; compagine e cariche si aggiornano come serie temporale.</>,
+          <>Applicata la visura, la proposta dei <K>titolari effettivi</K> entra a sua volta in coda con gli alert e la sequenza guidata dell'art. 20; il PDF viene conservato fra i documenti del cliente.</>,
+          <><Btn>Applica le N senza alert alti</Btn> chiude in blocco solo le proposte senza alert di gravità alta e registra i titolari effettivi individuati per proprietà; le altre restano da rivedere.</>,
+          <>Scartare una proposta richiede una motivazione: è la prova, in ispezione, del giudizio esercitato.</>,
+        ]} />
+        <H>Alert A11 — ricorrenza nel portafoglio</H>
+        <P>
+          Se la stessa persona compare come socio o amministratore in cinque o più clienti dello
+          studio, o in due o più società costituite negli ultimi ventiquattro mesi, la proposta porta
+          l'alert <K>A11</K> (gravità media, mai bloccante) con l'elenco dei clienti collegati. Il
+          confronto avviene sulle impronte dei codici fiscali, senza decifrarli. La ricorrenza in sé
+          non è un'anomalia; l'assenza di una spiegazione sì <Norma>indicatori di anomalia UIF</Norma>.
+        </P>
+        <Attenzione>
+          Le visure caricate in blocco vengono lette dal PDF originale del Registro Imprese; le
+          scansioni non si leggono. Le visure senza denominazione o natura giuridica vengono scartate
+          in ingestione: per quelle usa «Nuovo da visura» e completa a mano.
+        </Attenzione>
+      </>
+    ),
+  },
+  {
     id: 'autovalutazione',
     titolo: 'Autovalutazione studio',
     icona: 'grafico',

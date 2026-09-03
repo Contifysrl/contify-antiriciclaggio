@@ -15,6 +15,7 @@ import { ImportClientiModal } from './ImportClienti';
 import { VisuraModal } from './Visura';
 import { TitolaritaEffettiva, VerificaADistanza } from './TitolaritaVerifica';
 import { BozzaAi } from './BozzaAi';
+import { ControlloCostanteBox } from './ControlloCostante';
 import { FascicoloProposto, type ContestoProposta } from './FascicoloProposto';
 import { CampoProfessionista, FiltroProfessionista, useProfessionisti } from '../lib/professionisti';
 
@@ -543,6 +544,9 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
           <span className="norma">{s.norma}</span>
         </Riquadro>
       ))}
+
+      {/* AR-M19: controllo costante eseguito e cessazione del rapporto. */}
+      <ControlloCostanteBox fascicoloId={id} fascicolo={f} onCambiato={carica} vaiA={vaiA} />
 
       {ultima && (
         <div className="scheda">

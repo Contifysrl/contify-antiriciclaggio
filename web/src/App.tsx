@@ -11,6 +11,8 @@ import { Clienti, DettaglioFascicolo, Fascicoli } from './pagine/Fascicoli';
 import { DettaglioCliente } from './pagine/Cliente';
 import { Contante, Scadenzario, Sos } from './pagine/Presidi';
 import { Controlli } from './pagine/Controlli';
+import { Completezza } from './pagine/Completezza';
+import { Coda } from './pagine/Coda';
 import { Normativa } from './pagine/Normativa';
 import { Impostazioni } from './pagine/Impostazioni';
 import { Backup } from './pagine/Backup';
@@ -83,6 +85,9 @@ export default function App() {
   // dall'amministrazione dello studio (chi tiene la licenza e l'archivio).
   const voci: Array<{ id: string; testo: string; icona: string; ruoli?: string[]; soloAmministratore?: boolean }> = [
     { id: 'cruscotto', testo: 'Cruscotto', icona: 'dashboard' },
+    // AR-M19: «oggi ti mancano N cose» e le proposte del programma da rivedere.
+    { id: 'completezza', testo: 'Da completare', icona: 'spunta' },
+    { id: 'coda', testo: 'Coda di revisione', icona: 'carica' },
     { id: 'autovalutazione', testo: 'Autovalutazione studio', icona: 'grafico' },
     { id: 'clienti', testo: 'Clienti', icona: 'edificio' },
     { id: 'fascicoli', testo: 'Fascicoli', icona: 'elenco' },
@@ -111,7 +116,9 @@ export default function App() {
       vaiA={vaiA}
     >
       {pagina === 'cruscotto' && <Cruscotto vaiA={vaiA} />}
-      {pagina === 'autovalutazione' && <Autovalutazione />}
+      {pagina === 'completezza' && <Completezza vaiA={vaiA} />}
+      {pagina === 'coda' && <Coda vaiA={vaiA} />}
+      {pagina === 'autovalutazione' && <Autovalutazione amministratore={sessione.utente.amministratore === true} />}
       {pagina === 'clienti' && <Clienti vaiA={vaiA} />}
       {pagina === 'cliente' && <DettaglioCliente id={parametri.get('id') ?? ''} ruolo={sessione.utente.ruolo} amministratore={sessione.utente.amministratore === true} vaiA={vaiA} />}
       {pagina === 'fascicoli' && <Fascicoli vaiA={vaiA} cliente={parametri.get('cliente')} />}
@@ -153,6 +160,7 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
   // «Novità» non ancora viste e messaggi di assistenza non letti.
   const [nNovita, setNNovita] = useState(0);
   const [nAssistenza, setNAssistenza] = useState(0);
+  const [nCoda, setNCoda] = useState(0);
   useEffect(() => {
     let vivo = true;
     const novita = () => {
@@ -165,19 +173,30 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
         .then((r) => { if (vivo) setNAssistenza(r.n); })
         .catch(() => { /* idem */ });
     };
+    // AR-M19: proposte in attesa nella coda di revisione.
+    const coda = () => {
+      api.get<{ n: number }>('/coda/conteggio')
+        .then((r) => { if (vivo) setNCoda(r.n); })
+        .catch(() => { /* idem */ });
+    };
     novita();
     assistenza();
+    coda();
     const timer = window.setInterval(assistenza, 60_000);
     window.addEventListener('novita-viste', novita);
     window.addEventListener('ticket-letti', assistenza);
+    window.addEventListener('coda-cambiata', coda);
+    window.addEventListener('hashchange', coda);
     return () => {
       vivo = false;
       window.clearInterval(timer);
       window.removeEventListener('novita-viste', novita);
       window.removeEventListener('ticket-letti', assistenza);
+      window.removeEventListener('coda-cambiata', coda);
+      window.removeEventListener('hashchange', coda);
     };
   }, []);
-  const pallini: Record<string, number> = { novita: nNovita, assistenza: nAssistenza };
+  const pallini: Record<string, number> = { novita: nNovita, assistenza: nAssistenza, coda: nCoda };
 
   // Foto profilo caricabile anche dalla sidebar, come in Assist.
   const caricaAvatar = async (file: File) => {

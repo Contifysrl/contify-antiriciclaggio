@@ -515,6 +515,24 @@ passo('Screening delle liste: una decisione motivata, se ci sono corrispondenze'
   } else nota('nessuna corrispondenza con le liste (in locale le fixture non ne producono)');
 }
 
+passo('AR-M19: controllo costante eseguito, un rapporto cessato, formazione registrata');
+{
+  // Il controllo costante di OMEGA SPA (incarico di tre anni fa) è stato fatto: nulla di nuovo.
+  const omega = fascicoli.find((f) => f.cliente === 'OMEGA SPA');
+  if (omega) await amm.deve('POST', `/fascicoli/${omega.id}/controllo-costante`, { esito: 'INVARIATO', verifiche: ['ANAGRAFICA', 'COMPAGINE', 'TITOLARI', 'LISTE'], note: 'Visura rinnovata e confrontata: compagine e collegio invariati.' }, null, [201]);
+  // GAMMA FAMILY SRL: il controllo ha trovato un cambio di amministratore → da rivalutare.
+  const gamma = fascicoli.find((f) => f.cliente === 'GAMMA FAMILY SRL');
+  if (gamma) await amm.deve('POST', `/fascicoli/${gamma.id}/controllo-costante`, { esito: 'DA_RIVALUTARE', verifiche: ['COMPAGINE', 'TITOLARI'], note: 'Nominato un nuovo amministratore unico: la titolarità con criterio residuale va rivista.' }, null, [201]);
+  // Marangoni: il rapporto è cessato da un anno (conservazione decennale in corso).
+  const marangoni = fascicoli.find((f) => f.cliente === 'Marangoni Ubaldo');
+  if (marangoni) await amm.deve('POST', `/fascicoli/${marangoni.id}/cessazione`, { dataCessazione: giorniFa(365), motivo: 'Cessazione dell’attività del cliente' });
+  // Formazione dell'anno per tutto lo studio.
+  const persone = await amm.deve('GET', '/studio/persone');
+  await amm.deve('POST', '/studio/formazione', { titolo: 'Antiriciclaggio: regole tecniche e modulistica CNDCEC 2026', ente: 'ODCEC Padova', dataEvento: giorniFa(120), ore: 4, utentiIds: persone.map((p) => p.id) }, null, [201]);
+  await amm.deve('POST', '/studio/formazione', { titolo: 'Titolare effettivo e registro: casi pratici', ente: 'CNDCEC (webinar)', dataEvento: giorniFa(40), ore: 2, utentiIds: persone.slice(0, 2).map((p) => p.id) }, null, [201]);
+  nota('controlli costanti registrati (OMEGA invariato, GAMMA da rivalutare), Marangoni cessato, 2 eventi formativi');
+}
+
 passo('Autovalutazione dello studio, proposta dai dati e firmata');
 {
   const ind = await amm.deve('GET', '/studio/indicatori');

@@ -306,6 +306,19 @@ export function PropostaTitolaritaBox({ clienteId, proposta, onRegistrata, vaiA 
                   {a.azione.tipo === 'SEQUENZA_GUIDATA' && <button className="btn btn-primary btn-sm" onClick={() => setSequenza(true)}>{a.azione.etichetta}</button>}
                   {a.azione.tipo === 'CATENA_RISOLTA' && vaiA && <button className="btn btn-secondary btn-sm" onClick={() => vaiA(`cliente?id=${(a.azione as any).clienteId}`)}>{a.azione.etichetta}</button>}
                   {a.azione.tipo === 'DECIDI_SCREENING' && vaiA && <button className="btn btn-secondary btn-sm" onClick={() => vaiA('controlli')}>{a.azione.etichetta}</button>}
+                  {a.azione.tipo === 'VALUTA_RICORRENZA' && (
+                    <details className="text-xs" data-test="a11-clienti">
+                      <summary className="btn btn-secondary btn-sm cursor-pointer">{a.azione.etichetta}</summary>
+                      <ul className="mt-2 space-y-1 max-w-sm">
+                        {a.azione.clienti.map((c) => (
+                          <li key={c.id}>
+                            {vaiA ? <button className="hover:underline text-left" onClick={() => vaiA(`cliente?id=${c.id}`)}>{c.denominazione}</button> : c.denominazione}
+                            <span className="text-ink-400"> · {c.ruolo}{c.neoCostituita ? ' · costituita di recente' : ''}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
                   {a.azione.tipo === 'DOMANDE_ART22' && (
                     <details className="text-xs">
                       <summary className="btn btn-secondary btn-sm cursor-pointer">{a.azione.etichetta}</summary>
