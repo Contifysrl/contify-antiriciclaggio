@@ -13,6 +13,13 @@ describe('Scadenze del fascicolo', () => {
     controlloCostanteMesi: 12,
   };
 
+  it('verifica completata (valutazione firmata) o astensione: i termini dei 30 giorni non si espongono più, il controllo costante resta', () => {
+    const s = calcolaScadenzeFascicolo({ ...base, verificaCompletataIl: '2026-01-20' });
+    expect(s.find((x) => x.tipo === 'COMPLETAMENTO_VERIFICA')).toBeUndefined();
+    expect(s.find((x) => x.tipo === 'ACQUISIZIONE_CONSERVAZIONE')).toBeUndefined();
+    expect(s.find((x) => x.tipo === 'CONTROLLO_COSTANTE')?.data).toBe('2027-01-15');
+  });
+
   it('genera il termine di 30 giorni per il completamento della verifica', () => {
     const s = calcolaScadenzeFascicolo(base);
     const v = s.find((x) => x.tipo === 'COMPLETAMENTO_VERIFICA');

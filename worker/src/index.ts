@@ -2772,6 +2772,9 @@ api.get('/fascicoli/:id', async (c) => {
     controlloCostanteMesi: ultima?.controllo_costante_mesi ?? 0,
     ultimoControllo: f.ultimo_controllo,
     esenteAdeguataVerifica: esente,
+    // Verifica completata (valutazione firmata) o astensione: i termini dei
+    // trenta giorni sono chiusi, resta il controllo costante.
+    verificaCompletataIl: ultima?.firmata_il ?? (f.stato === 'ASTENSIONE' ? f.data_conferimento : null),
   });
 
   return c.json({
@@ -3197,8 +3200,8 @@ api.get('/documenti/:id', async (c) => {
 /** Scadenzario del tenant: usato dall'endpoint e dall'email settimanale (AR-M7). */
 async function calcolaScadenzario(db: D1Database, tenantId: string) {
   const { results } = await db.prepare(
-    `SELECT f.id, f.codice, f.prestazione_codice, f.data_conferimento, f.data_cessazione, f.ultimo_controllo, cl.denominazione AS cliente,
-            v.classe, v.controllo_costante_mesi, v.esente_verifica
+    `SELECT f.id, f.codice, f.prestazione_codice, f.data_conferimento, f.data_cessazione, f.ultimo_controllo, f.stato, cl.denominazione AS cliente,
+            v.classe, v.controllo_costante_mesi, v.esente_verifica, v.firmata_il
      FROM fascicoli f JOIN clienti cl ON cl.id = f.cliente_id
      LEFT JOIN valutazioni_rischio v ON v.id = (SELECT id FROM valutazioni_rischio WHERE fascicolo_id = f.id ORDER BY versione DESC LIMIT 1)
      WHERE f.tenant_id = ? AND f.stato != 'CESSATO'`,
@@ -3216,6 +3219,7 @@ async function calcolaScadenzario(db: D1Database, tenantId: string) {
           f.classe != null
             ? Boolean(f.esente_verifica)
             : Boolean(trovaPrestazione(f.prestazione_codice)?.esenteAdeguataVerifica),
+        verificaCompletataIl: f.firmata_il ?? (f.stato === 'ASTENSIONE' ? f.data_conferimento : null),
       }),
       oggi(),
     ).map((s) => ({ ...s, fascicoloId: f.id, codice: f.codice, cliente: f.cliente })),

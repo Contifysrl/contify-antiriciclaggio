@@ -324,6 +324,13 @@ const SEZIONI: Sezione[] = [
           nuova valutazione (o confermare l'esistente con una nuova versione firmata).
         </P>
         <P>
+          Per ogni nuovo incarico lo scadenzario espone anche i due termini di <K>trenta giorni</K>{' '}
+          <Norma>art. 18 co. 3</Norma> e <Norma>art. 32 co. 2 lett. b)</Norma>: completamento della
+          verifica e acquisizione dei dati in conservazione. Spariscono quando la valutazione
+          del fascicolo è firmata (la verifica è completa) o quando ti sei astenuto: una
+          valutazione solo salvata non basta, perché non fa prova.
+        </P>
+        <P>
           Lo scadenzario segue anche il termine della <K>comunicazione al MEF</K> delle
           violazioni sul contante, quando ne hai registrata una.
         </P>

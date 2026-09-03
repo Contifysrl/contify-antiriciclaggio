@@ -15,6 +15,14 @@ export interface VoceNovita {
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-09-05-scadenzario-termini-chiusi',
+    data: '2026-09-05',
+    titolo: 'Scadenzario: i termini dei trenta giorni si chiudono con la firma',
+    punti: [
+      'I termini di trenta giorni per il completamento della verifica (art. 18 co. 3) e per l’acquisizione dei dati in conservazione (art. 32 co. 2 lett. b) non restano più «scaduti» per sempre: spariscono dallo scadenzario quando la valutazione del fascicolo è firmata o quando ti sei astenuto. Una valutazione solo salvata continua a tenerli aperti, perché non fa prova. Il controllo costante resta.',
+    ],
+  },
+  {
     id: '2026-09-04-fascicolo-proposto',
     data: '2026-09-04',
     titolo: 'Il fascicolo proposto: Tabella A, esecutore, documenti e dichiarazione art. 22 dai dati camerali',

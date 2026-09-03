@@ -36,6 +36,13 @@ export interface DatiFascicoloScadenze {
   /** Data dell'ultima verifica del controllo costante, se gia' eseguita. */
   ultimoControllo?: string | null;
   esenteAdeguataVerifica?: boolean;
+  /**
+   * Data in cui la verifica è stata completata (firma della valutazione) o in
+   * cui il professionista si è astenuto: da quel momento i termini dei trenta
+   * giorni dell'art. 18 co. 3 e dell'art. 32 co. 2 lett. b) sono adempiuti (o
+   * superati dall'astensione) e non vanno più esposti come scaduti.
+   */
+  verificaCompletataIl?: string | null;
 }
 
 export function calcolaScadenzeFascicolo(d: DatiFascicoloScadenze): Scadenza[] {
@@ -48,6 +55,7 @@ export function calcolaScadenzeFascicolo(d: DatiFascicoloScadenze): Scadenza[] {
     return s;
   }
 
+  if (!d.verificaCompletataIl) {
   s.push({
     tipo: 'COMPLETAMENTO_VERIFICA',
     etichetta: 'Completamento della verifica dell’identità',
@@ -65,6 +73,7 @@ export function calcolaScadenzeFascicolo(d: DatiFascicoloScadenze): Scadenza[] {
     normativa: true,
     descrizione: TERMINI.ACQUISIZIONE_CONSERVAZIONE_GIORNI.descrizione,
   });
+  }
 
   // Controllo costante: la legge lo impone (art. 19 co. 1 lett. d) ma non ne
   // fissa la cadenza. La periodicità è un parametro di studio.
