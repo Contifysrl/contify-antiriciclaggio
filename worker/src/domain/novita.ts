@@ -15,6 +15,19 @@ export interface VoceNovita {
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-09-03-anagrafiche-da-visura',
+    data: '2026-09-03',
+    titolo: 'Partire dalla visura camerale: anagrafica, compagine e titolari effettivi proposti',
+    punti: [
+      'In Clienti trovi «Nuovo da visura»: trascini il PDF della visura camerale e il programma lo legge nel tuo browser — niente intelligenza artificiale, niente servizi esterni, il file non lascia lo studio. Anagrafica, sede, PEC, REA, capitale, ATECO, soci con quote e diritti, cariche con poteri: tutto precompilato, tutto da rivedere. Ciò che la visura non dice resta vuoto e viene elencato, mai inventato.',
+      'Soci e cariche restano registrati, cifrati, con la data della visura: al prossimo rinnovo vedrai cosa è cambiato. Se un socio è una società già cliente dello studio, la catena partecipativa si ricostruisce da sola con i dati in archivio.',
+      'I titolari effettivi vengono proposti applicando l’art. 20 ai dati camerali, con la soglia letta dalle regole vigenti (oggi «più del 25%»; dal 10 luglio 2027 «25% o più», come vuole il Regolamento UE 2024/1624). Otto alert, ciascuno con norma e azione, segnalano ciò che la visura non può dire: nessun socio sopra soglia, controllo da chiedere al cliente, usufrutto o pegno sulle quote, socio società o estero, fiduciarie e trust, quote proprie, corrispondenze nelle liste sanzioni.',
+      'Quando la proprietà non individua nessuno, la sequenza guidata segue i tre gradini della norma — proprietà, controllo, residuale — e scrive in bozza la motivazione dell’art. 20 co. 6 partendo dai fatti: la correggi e la firmi tu. Niente salti al rappresentante legale.',
+      'Dalla scheda del cliente, «Aggiorna da visura» confronta la visura nuova con i dati registrati e applica solo le differenze che scegli; la visura si conserva fra i documenti del cliente con la sua impronta. Ogni proposta del programma resta nello storico con il tuo esito: applicata, modificata o scartata, e perché.',
+      'Lo screening sulle liste sanzioni ora controlla anche soci e amministratori letti dalle visure, subito e a ogni corsa notturna.',
+    ],
+  },
+  {
     id: '2026-08-19b-posti-professionista',
     data: '2026-08-19',
     titolo: 'Posti professionista a contratto',

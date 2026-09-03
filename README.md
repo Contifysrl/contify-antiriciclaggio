@@ -64,12 +64,14 @@ worker/src/domain/     motore puro, senza dipendenze da runtime o database
   risk.ts              calcolo del rischio e vincoli normativi
   prestazioni.ts       catalogo Tabella 1 della Regola tecnica n. 2
   norme.ts             soglie art. 49 con vigenza temporale, termini, date
-  titolare-effettivo.ts cascata dei criteri dell'art. 20
+  titolare-effettivo.ts cascata dei criteri dell'art. 20 (soglia dal ruleset, diritti sulle quote, cariche)
+  alert-titolarita.ts  alert A1-A8 sulla titolarità effettiva, bozza motivazione ex art. 20 co. 6 (AR-M17)
   scadenze.ts          scadenzario, con distinzione legge / organizzazione
   indicatori-uif.ts    tassonomia del provvedimento UIF 12.5.2023
 worker/src/lib/        crittografia, sessioni, registro concatenato
 worker/src/index.ts    API Hono
 web/                   SPA React
+  src/lib/visura.ts    parser locale della visura camerale (nessuna AI: il PDF non esce dal browser, AR-M17)
 migrations/            schema D1
 tests/                 73 test unitari sul dominio
 scripts/smoke-api.mjs  40 verifiche end-to-end contro wrangler dev
@@ -85,10 +87,16 @@ npm run db:seed:local
 npm run build              # SPA in dist/
 npx wrangler dev --local   # porta 8787
 
-npm test                   # 73 test di dominio
-node scripts/smoke-api.mjs # 40 verifiche end-to-end
+npm test                   # test di dominio (parser visura incluso: tests/visura.test.ts)
+node scripts/smoke-api.mjs # verifiche end-to-end; poi le suite per milestone smoke-api-m11…m17.mjs
+node scripts/ui-m17.mjs    # giro Playwright «Nuovo da visura» (dopo npm run build)
 npm run typecheck
 ```
+
+Le migrazioni D1 sono additive e vanno applicate in ordine (`migrations/0001…0011`), in
+produzione PRIMA del push del codice che le usa. Le fixture del parser delle visure
+(`tests/fixtures/visure/*.txt`) si generano da un PDF con `node scripts/visura-testo.mjs`
+e si anonimizzano a mano; i PDF sintetici per Playwright con `scripts/visura-pdf-fixture.py`.
 
 Credenziali di collaudo (solo locali): `titolare@studiodemo.it` / `Antiriciclaggio!2026` e
 `collaboratore@studiodemo.it` / `Collab!2026`.

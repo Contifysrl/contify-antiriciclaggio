@@ -2984,7 +2984,7 @@ api.get('/primi-passi', async (c) => {
     {
       id: 'clienti',
       titolo: 'Carica i clienti dello studio',
-      spiega: 'A mano, dalla partita IVA o con l’import CSV dal gestionale.',
+      spiega: 'Dal PDF della visura camerale («Nuovo da visura»: anagrafica, soci, cariche e titolari effettivi proposti), a mano, dalla partita IVA o con l’import CSV dal gestionale.',
       pagina: 'clienti',
       fatto: (clienti?.n ?? 0) > 0,
       facoltativo: false,

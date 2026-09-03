@@ -50,6 +50,10 @@ function Btn({ children }: { children: ReactNode }) {
 function Norma({ children }: { children: ReactNode }) {
   return <span className="text-ink-400">({children})</span>;
 }
+/** Sottotitolo dentro una sezione (AR-M17). */
+function H({ children }: { children: ReactNode }) {
+  return <h4 className="font-bold text-ink-800 mt-5 mb-1">{children}</h4>;
+}
 
 type Sezione = { id: string; titolo: string; icona: NomeIcona; soloTitolare?: boolean; soloAmministratore?: boolean; corpo: ReactNode };
 
@@ -165,6 +169,45 @@ const SEZIONI: Sezione[] = [
           <K>rafforzata</K> <Norma>art. 24 co. 5</Norma>: nell'esito della valutazione il
           livello si alza da solo, qualunque sia il punteggio.
         </Attenzione>
+        <H>Partire dalla visura camerale</H>
+        <P>
+          Con <Btn>Nuovo da visura</Btn> carichi il <K>PDF della visura camerale</K> (ordinaria o
+          storica) scaricato dal Registro Imprese: il programma la legge <K>nel tuo browser</K>,
+          senza intelligenza artificiale e senza mandare il documento a nessun servizio, e
+          precompila anagrafica, sede, PEC, REA, capitale, ATECO, <K>soci</K> con quote e diritti
+          (proprietà, nuda proprietà, usufrutto, pegno…) e <K>cariche</K> con poteri. Tu rivedi
+          ogni campo; ciò che la visura non dice resta vuoto e viene elencato, mai inventato.
+        </P>
+        <Passi passi={[
+          <>Trascina il PDF. Funzionano le visure <K>originali del Registro Imprese</K> (InfoCamere, Telemaco e i rivenditori che ne conservano il layout); una scansione o una foto vengono rifiutate, una visura rimaneggiata dà campi vuoti.</>,
+          <>Rivedi l'anagrafica precompilata e scegli se <K>conservare la visura</K> fra i documenti del cliente (impronta SHA-256, conservazione decennale <Norma>art. 31</Norma>).</>,
+          <>Controlla soci e cariche: puoi correggere tipo, quota e Paese, o togliere una riga. Vengono conservati <K>cifrati</K> con la data della visura e restano leggibili anche quando cambieranno.</>,
+          <>Valuta la <K>proposta dei titolari effettivi</K> <Norma>art. 20</Norma>: il programma applica il criterio della proprietà ai soci, risale le società già clienti dello studio e segnala con gli <K>alert</K> ciò che la visura non può dire.</>,
+        ]} />
+        <P>
+          Gli alert hanno un codice, la norma e un'azione: <K>A1</K> nessun socio sopra soglia
+          (anche quattro soci al 25% esatto), <K>A2</K> controllo da chiedere al cliente (assetti
+          50/50, usufrutto o pegno sulle quote, socio unico società), <K>A3</K> criterio residuale
+          con la <K>motivazione ex art. 20 co. 6</K> scritta in bozza dai fatti — da correggere e
+          firmare —, <K>A4</K> socio società italiana (carica anche la sua visura, o la catena si
+          chiude da sola se è già cliente), <K>A5</K> socio estero, <K>A6</K> fiduciaria o trust,{' '}
+          <K>A7</K> quote proprie, comproprietà, capitale non versato, <K>A8</K> corrispondenze nelle
+          liste sanzioni sui nomi estratti (lo screening parte da solo).
+        </P>
+        <Attenzione>
+          «Nessuno supera il 25%, quindi il titolare effettivo è il rappresentante legale» è un
+          errore frequente: salta il <K>controllo</K> <Norma>art. 20 co. 3</Norma>. La sequenza
+          guidata segue i tre gradini della norma e ti fa firmare la motivazione del residuale.
+          E la visura <K>non è il registro dei titolari effettivi</K> <Norma>art. 21-ter</Norma>:
+          quella consultazione resta un atto distinto, da registrare dal fascicolo.
+        </Attenzione>
+        <Nota>
+          Nella scheda del cliente, <Btn>Aggiorna da visura</Btn> confronta campo per campo la
+          visura nuova con i dati registrati: applichi solo le differenze che scegli, e la
+          compagine mostra cosa è cambiato. È il modo più rapido per il <K>controllo costante</K>{' '}
+          <Norma>art. 19 co. 1 lett. c)</Norma>. Ogni visura la scarica e la paga lo studio dal
+          proprio fornitore: il programma non compra nulla.
+        </Nota>
       </>
     ),
   },
