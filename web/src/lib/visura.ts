@@ -189,21 +189,33 @@ const MAPPA_FORMA_GIURIDICA: Array<[RegExp, string]> = [
   [/\btrust\b/i, 'TRUST'],
 ];
 
+// Le visure scrivono le cariche anche al femminile («amministratrice unica»,
+// «consigliera», «liquidatrice»): le forme vanno riconosciute entrambe.
 const MAPPA_CARICHE: Array<[RegExp, CodiceCarica]> = [
-  [/amministratore unico/i, 'AMMINISTRATORE_UNICO'],
-  [/presidente (del )?consiglio( di)? amministrazione|presidente cda|presidente del c\.d\.a/i, 'PRESIDENTE_CDA'],
-  [/vice ?presidente/i, 'VICE_PRESIDENTE_CDA'],
-  [/amministratore delegato|consigliere delegato/i, 'CONSIGLIERE_DELEGATO'],
-  [/consigliere|componente (del )?consiglio/i, 'CONSIGLIERE'],
-  [/socio amministratore|socio accomandatario|amministratore(?! )$/i, 'SOCIO_AMMINISTRATORE'],
-  [/^titolare|titolare firmatario|titolare dell'impresa/i, 'TITOLARE'],
-  [/liquidatore/i, 'LIQUIDATORE'],
-  [/procuratore/i, 'PROCURATORE'],
+  [/amministrat(?:ore|rice) unic[oa]/i, 'AMMINISTRATORE_UNICO'],
+  [/presidente (?:del )?consiglio(?: di)?(?: amministrazione)?|presidente cda|presidente del c\.d\.a/i, 'PRESIDENTE_CDA'],
+  [/vice ?president/i, 'VICE_PRESIDENTE_CDA'],
+  [/amministrat(?:ore|rice) delegat[oa]|consiglier[ea] delegat[oa]/i, 'CONSIGLIERE_DELEGATO'],
+  [/consiglier[ea]|componente (?:del )?consiglio/i, 'CONSIGLIERE'],
+  [/soci[oa] amministrat(?:ore|rice)|soci[oa] accomandatari[oa]|amministrat(?:ore|rice)(?! )$/i, 'SOCIO_AMMINISTRATORE'],
+  [/^titolare|titolare firmatari[oa]|titolare dell'impresa/i, 'TITOLARE'],
+  [/liquidat(?:ore|rice)/i, 'LIQUIDATORE'],
+  [/procurat(?:ore|rice)/i, 'PROCURATORE'],
   [/institore/i, 'INSTITORE'],
-  [/sindaco/i, 'SINDACO'],
-  [/revisore/i, 'REVISORE'],
-  [/curatore|commissario/i, 'CURATORE'],
+  [/sindac[oa]/i, 'SINDACO'],
+  [/revisor[ea]/i, 'REVISORE'],
+  [/curat(?:ore|rice)|commissari[oa]/i, 'CURATORE'],
 ];
+
+/**
+ * Quando una persona cumula più cariche (consigliere e presidente del CdA), la
+ * carica «principale» è quella con più peso ai fini dell'esecutore e del
+ * criterio residuale: l'ordine qui sotto lo decide.
+ */
+const PESO_CARICA: Record<string, number> = {
+  AMMINISTRATORE_UNICO: 10, LIQUIDATORE: 9, CURATORE: 9, PRESIDENTE_CDA: 8, CONSIGLIERE_DELEGATO: 7, VICE_PRESIDENTE_CDA: 6,
+  SOCIO_AMMINISTRATORE: 6, TITOLARE: 6, CONSIGLIERE: 5, INSTITORE: 4, PROCURATORE: 3, SINDACO: 2, REVISORE: 2, ALTRO: 0,
+};
 
 const MAPPA_DIRITTI: Array<[RegExp, DirittoPartecipazione]> = [
   [/nuda propriet/i, 'NUDA_PROPRIETA'],
@@ -588,6 +600,7 @@ function leggiCariche(rs: Riga[], iAmm: number, tutto: string): CaricaVisura[] {
   // Blocchi: riga intestazione carica (una cella, non continuazione, senza ':') → riga «NOME\tRappresentante dell'impresa» → dettagli.
   let corrente: CaricaVisura | null = null;
   let intestazione: string | null = null;
+  let intestazioneUsata = true;
   const chiudi = () => { if (corrente) out.push(corrente); corrente = null; };
   for (let j = iElenco + 1; j < fine; j++) {
     const r = rs[j];
@@ -601,9 +614,18 @@ function leggiCariche(rs: Riga[], iAmm: number, tutto: string): CaricaVisura[] {
         // Nome senza «Rappresentante dell'impresa» sulla stessa riga.
         chiudi();
         corrente = nuovaCarica(t, intestazione);
+        intestazioneUsata = true;
+        continue;
+      }
+      // Intestazione spezzata su due righe («Presidente Consiglio» / «Amministrazione»):
+      // se quella precedente non è ancora stata usata e la riga da sola non è una
+      // carica, è la coda della stessa intestazione.
+      if (intestazione && !intestazioneUsata && mappaCarica(t) === 'ALTRO' && /^[A-ZÀ-Ü][a-zà-ü' ]+$/.test(t)) {
+        intestazione = normalizzaSpazi(`${intestazione} ${t}`);
         continue;
       }
       intestazione = normalizzaSpazi(t);
+      intestazioneUsata = false;
       chiudi();
       continue;
     }
@@ -611,12 +633,16 @@ function leggiCariche(rs: Riga[], iAmm: number, tutto: string): CaricaVisura[] {
     if (!r.continua && r.celle.length >= 2 && intestazione && /^[A-ZÀ-Ü' .]+$/.test(r.celle[0]) && !/^(domicilio|carica|poteri|residenza|nato)/i.test(r.celle[0])) {
       chiudi();
       corrente = nuovaCarica(r.celle[0], intestazione);
+      intestazioneUsata = true;
       if (/Rappresentante dell'impresa/i.test(t)) corrente.rappresentanzaLegale = true;
+      // «NOME\tNata a … il …»: la nascita può stare sulla riga del nome.
+      const mNatoQui = /Nat[oa] a\s+(.+?)\s+il\s+(\d{2}\/\d{2}\/\d{4})/i.exec(t);
+      if (mNatoQui) { corrente.natoA = normalizzaSpazi(mNatoQui[1]); corrente.dataNascita = dataIso(mNatoQui[2]); }
       continue;
     }
     if (!corrente) continue;
     if (/Rappresentante dell'impresa/i.test(t)) corrente.rappresentanzaLegale = true;
-    const mNato = /Nato a\s+(.+?)\s+il\s+(\d{2}\/\d{2}\/\d{4})/i.exec(t);
+    const mNato = /Nat[oa] a\s+(.+?)\s+il\s+(\d{2}\/\d{2}\/\d{4})/i.exec(t);
     if (mNato) { corrente.natoA = normalizzaSpazi(mNato[1]); corrente.dataNascita = dataIso(mNato[2]); continue; }
     const mCf = /Codice fiscale:\s*([A-Z0-9]{11,16})/i.exec(t);
     if (mCf) { corrente.codiceFiscale = mCf[1].toUpperCase(); corrente.id = corrente.codiceFiscale; corrente.paese = paeseDa(corrente.codiceFiscale, corrente.domicilio); continue; }
@@ -625,11 +651,18 @@ function leggiCariche(rs: Riga[], iAmm: number, tutto: string): CaricaVisura[] {
     const mPec = /posta (?:elettronica )?certificata:\s*([^\s\t]+@[^\s\t]+)/i.exec(t);
     if (mPec) { corrente.pec = mPec[1]; continue; }
     if (/^carica$/i.test(r.celle[0]) && !r.continua && r.celle[1]) {
-      // La prima carica del blocco è quella dell'intestazione; le successive
-      // (es. «preposto agenti…») si accodano al testo dei poteri.
+      // Una persona può cumulare più cariche (consigliere + presidente del CdA):
+      // la principale è quella di maggior peso, le altre restano nei poteri.
       const testoCarica = normalizzaSpazi(r.celle.slice(1).join(' '));
-      if (!corrente.dataNomina && mappaCarica(testoCarica) === corrente.carica) corrente.caricaTesto = testoCarica;
-      else corrente.poteri = [corrente.poteri, `altra carica: ${testoCarica}`].filter(Boolean).join('; ');
+      const codice = mappaCarica(testoCarica);
+      if (codice === corrente.carica) { corrente.caricaTesto = testoCarica; continue; }
+      if ((PESO_CARICA[codice] ?? 0) > (PESO_CARICA[corrente.carica] ?? 0)) {
+        corrente.poteri = [corrente.poteri, `altra carica: ${corrente.caricaTesto}`].filter(Boolean).join('; ');
+        corrente.carica = codice;
+        corrente.caricaTesto = testoCarica;
+      } else {
+        corrente.poteri = [corrente.poteri, `altra carica: ${testoCarica}`].filter(Boolean).join('; ');
+      }
       continue;
     }
     const mNomina = /Data (?:atto di )?nomina:\s*(\d{2}\/\d{2}\/\d{4})/i.exec(t);

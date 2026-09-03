@@ -107,6 +107,50 @@ describe('Visura vera — SRL con due soci persone fisiche (layout InfoCamere 20
   });
 });
 
+describe('Visure vere di Barbara (3.9.2026, anonimizzate) — catena reale su tre livelli', () => {
+  // AURIGA (50% PF + 50% holding) → VEGA CAPITAL HOLDING (100% società semplice) ; SEI SIGMA (100% VEGA).
+  it('SRL con socia persona fisica e holding al 50%: intestazione del CdA spezzata su due righe, cariche cumulate, consigliera, nascita all’estero sulla riga del nome', () => {
+    const v = leggiVisura(fx('srl-socio-pf-e-holding-cda.txt'));
+    expect(v.denominazione).toBe('AURIGA FORMAZIONE S.R.L.');
+    expect(v.ateco).toBe('85.59.20');
+    expect(v.soci.map((s) => [s.nome, s.tipo, s.quotaPercento])).toEqual([
+      ['ROVIGATTI ORNELLA', 'PERSONA_FISICA', 50],
+      ['VEGA CAPITAL HOLDING S.R.L.', 'PERSONA_GIURIDICA', 50],
+    ]);
+    const [presidente, consigliera] = v.cariche;
+    // «Presidente Consiglio» / «Amministrazione» su due righe, poi due blocchi «carica»: consigliere e presidente.
+    expect(presidente.nome).toBe('ROVIGATTI ETTORE');
+    expect(presidente.carica).toBe('PRESIDENTE_CDA');
+    expect(presidente.caricaTesto).toBe('presidente consiglio amministrazione');
+    expect(presidente.rappresentanzaLegale).toBe(true);
+    expect(presidente.poteri).toBe('altra carica: consigliere');
+    expect(consigliera.carica).toBe('CONSIGLIERE');
+    expect(consigliera.caricaTesto).toBe('consigliera');
+    expect(consigliera.rappresentanzaLegale).toBe(false);
+    expect(consigliera.natoA).toBe('ZURIGO SVIZZERA');
+    expect(consigliera.dataNascita).toBe('1971-02-26');
+    expect(v.campiNonTrovati).toEqual([]);
+    expect(v.avvisi).toEqual([]);
+  });
+
+  it('SRL unipersonale con socia holding al 100%', () => {
+    const v = leggiVisura(fx('srl-unipersonale-socio-holding.txt'));
+    expect(v.denominazione).toBe('SEI SIGMA ITALIA S.R.L.');
+    expect(v.soci).toHaveLength(1);
+    expect(v.soci[0]).toMatchObject({ nome: 'VEGA CAPITAL HOLDING S.R.L.', tipo: 'PERSONA_GIURIDICA', quotaPercento: 100, codiceFiscale: '51000029994' });
+    expect(v.cariche[0]).toMatchObject({ carica: 'AMMINISTRATORE_UNICO', rappresentanzaLegale: true, dataNomina: '2016-11-24' });
+    expect(v.dataElencoSoci).toBe('2022-02-17');
+  });
+
+  it('holding con socia unica società semplice e amministratrice unica (forma femminile)', () => {
+    const v = leggiVisura(fx('holding-socia-societa-semplice.txt'));
+    expect(v.denominazione).toBe('VEGA CAPITAL HOLDING S.R.L.');
+    expect(v.ateco).toBe('64.21.00');
+    expect(v.soci[0]).toMatchObject({ nome: 'ROVIGATTI & DAL MASO HOLDING S.S.', tipo: 'PERSONA_GIURIDICA', quotaPercento: 100 });
+    expect(v.cariche[0]).toMatchObject({ nome: 'DAL MASO CLOTILDE', carica: 'AMMINISTRATORE_UNICO', caricaTesto: 'amministratrice unica', rappresentanzaLegale: true, natoA: 'PRATO (FI)', dataNascita: '1976-10-29' });
+  });
+});
+
 describe('SRL con holding, nuda proprietà/usufrutto, capitale non versato, CdA, ATECO 2025 (sintetica)', () => {
   const v = leggiVisura(fx('srl-holding-usufrutto-cda.txt'));
 
