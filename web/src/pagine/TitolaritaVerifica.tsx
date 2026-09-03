@@ -401,13 +401,13 @@ function NuovaRichiestaModal({ fascicoloId, onChiudi, onCreata }: {
           {voce('documento', 'Copia del documento d’identità (upload)')}
           {voce('dichiarazioneTe', 'Dichiarazione art. 22 PRECOMPILATA dai dati camerali: compagine, titolari individuati, domande sul controllo, PEP (AR-M18)')}
           {!cosa.dichiarazioneTe && voce('titolari', 'Dichiarazione di titolarità effettiva compilata dal cliente da zero (per società ed enti)')}
-          {voce('pep', 'Dichiarazione sullo status di persona politicamente esposta')}
+          {!cosa.dichiarazioneTe && voce('pep', 'Dichiarazione sullo status di persona politicamente esposta')}
         </div>
         {cosa.dichiarazioneTe && (
           <Riquadro tipo="info">
             Il cliente vedrà la ricostruzione fatta dal programma (soci, quote, titolari effettivi individuati) e dovrà confermarla o correggerla,
-            rispondere alle domande che la visura non può dare (patti, vincoli, interposizioni) e dichiarare lo status di PEP. Al ritorno la dichiarazione
-            diventa un documento del fascicolo.
+            rispondere alle domande che la visura non può dare (patti, vincoli, interposizioni) e dichiarare lo status di PEP per ciascun titolare
+            effettivo e per l’esecutore (la domanda PEP generica è assorbita). Al ritorno la dichiarazione diventa un documento del fascicolo.
           </Riquadro>
         )}
         <div>

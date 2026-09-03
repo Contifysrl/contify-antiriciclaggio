@@ -66,6 +66,9 @@ worker/src/domain/     motore puro, senza dipendenze da runtime o database
   norme.ts             soglie art. 49 con vigenza temporale, termini, date
   titolare-effettivo.ts cascata dei criteri dell'art. 20 (soglia dal ruleset, diritti sulle quote, cariche)
   alert-titolarita.ts  alert A1-A8 sulla titolarità effettiva, bozza motivazione ex art. 20 co. 6 (AR-M17)
+  fascicolo-proposto.ts Tabella A proposta con motivazione e fonte, esecutore, checklist documenti, alert A9-A10 (AR-M18)
+  settori-esposti.ts   settori esposti al riciclaggio → punteggio A.2, fonte per voce (ANR 2024, UIF)
+  province.ts          anagrafica province + tabella di studio delle province a rischio contante (A.4)
   scadenze.ts          scadenzario, con distinzione legge / organizzazione
   indicatori-uif.ts    tassonomia del provvedimento UIF 12.5.2023
 worker/src/lib/        crittografia, sessioni, registro concatenato

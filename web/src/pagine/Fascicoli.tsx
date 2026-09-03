@@ -431,9 +431,11 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
   const [proposta, setProposta] = useState<ContestoProposta | null>(null);
   const [motivazioneScostamento, setMotivazioneScostamento] = useState('');
 
+  const [tick, setTick] = useState(0);
   const carica = () => {
     api.get<any>(`/fascicoli/${id}`).then(setD);
     api.get<any[]>(`/fascicoli/${id}/astensioni`).then(setAstensioni).catch(() => setAstensioni([]));
+    setTick((t) => t + 1);
   };
   useEffect(() => {
     carica();
@@ -682,6 +684,7 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
         clienteId={d.fascicolo.cliente_id}
         esente={Boolean(prestazione?.esenteAdeguataVerifica)}
         valutata={Boolean(ultima)}
+        aggiornaAl={tick}
         onApplicaTabellaA={(punteggi, contesto) => { setTabA((s) => ({ ...s, ...punteggi })); setProposta(contesto); }}
         onApplicaCircostanze={(chiavi) => setCirc((s) => ({ ...s, ...Object.fromEntries(chiavi.map((k) => [k, true])) }))}
         onEsecutoreRegistrato={carica}

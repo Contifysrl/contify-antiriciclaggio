@@ -15,6 +15,19 @@ export interface VoceNovita {
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-09-04-fascicolo-proposto',
+    data: '2026-09-04',
+    titolo: 'Il fascicolo proposto: Tabella A, esecutore, documenti e dichiarazione art. 22 dai dati camerali',
+    punti: [
+      'Quando apri un fascicolo per un cliente con la compagine in archivio, il programma propone la Tabella A: natura giuridica dalla struttura (soci, catene, esteri, fiduciarie), attività prevalente dalla tabella dei settori esposti — ogni voce cita l’Analisi nazionale dei rischi 2024 o gli indicatori UIF — e area geografica dai Paesi terzi ad alto rischio e dalle province a rischio contante. Il comportamento al conferimento resta sempre da valutare a te. Ogni punteggio ha motivazione e fonte; se ti scosti, scrivi il perché e resta nel verbale.',
+      'L’esecutore viene proposto dalle cariche già nel form del nuovo fascicolo (amministratore unico, presidente del CdA, liquidatore se la società è in liquidazione): confermalo o indica chi si è presentato.',
+      'La checklist dei documenti da raccogliere è dedotta dalla struttura del cliente: visura, identità dell’esecutore e di ogni titolare effettivo, dichiarazione art. 22, documentazione estera, mandato fiduciario, visura della controllante. Nella scheda del cliente scegli il tipo di documento quando lo alleghi: la checklist si aggiorna da sola.',
+      'La dichiarazione del cliente sul titolare effettivo (art. 22) nasce già compilata: ripartizione del capitale, titolari individuati, domande sul controllo che la visura non può dare, PEP per ciascuna persona. La scarichi in Word per la firma in presenza, oppure la invii con la verifica a distanza: il cliente conferma o corregge da casa e la dichiarazione torna nel fascicolo come documento. I titolari effettivi non si scrivono mai da soli.',
+      'Due nuovi alert: A9 per le società in liquidazione o in procedura e A10 per la costituzione recente, la sede in provincia a rischio contante e l’oggetto sociale molto ampio rispetto al capitale.',
+      'In Impostazioni chi amministra lo studio compila la tabella delle province con flussi anomali di contante leggendo la mappa dell’Analisi nazionale dei rischi (il collegamento è lì): l’Analisi non pubblica un elenco e il programma non lo inventa.',
+    ],
+  },
+  {
     id: '2026-09-03-anagrafiche-da-visura',
     data: '2026-09-03',
     titolo: 'Partire dalla visura camerale: anagrafica, compagine e titolari effettivi proposti',

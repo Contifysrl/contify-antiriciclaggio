@@ -108,6 +108,18 @@ function num(v: number | null | undefined): string {
   return String(Math.round(v * 10000) / 10000).replace('.', ',');
 }
 
+/** Esecutore registrato sul fascicolo (JSON; AR-M18 propone, il professionista registra). */
+function descriviEsecutore(raw: unknown): string {
+  if (!raw) return '—';
+  try {
+    const e = typeof raw === 'string' ? JSON.parse(raw) : (raw as any);
+    if (!e?.nominativo) return '—';
+    return [e.nominativo, e.caricaTesto ? `(${e.caricaTesto})` : null, e.codiceFiscale ? `CF ${e.codiceFiscale}` : null].filter(Boolean).join(' ');
+  } catch {
+    return '—';
+  }
+}
+
 function siNo(v: unknown): string {
   return v ? 'Sì' : 'No';
 }
@@ -337,6 +349,7 @@ export function corpoSchedaVerifica(dati: {
     ['Fascicolo', f.codice],
     ['Prestazione', f.prestazione_descrizione],
     ['Tipo di rapporto', f.tipo_rapporto === 'OCCASIONALE' ? 'Prestazione occasionale' : 'Rapporto continuativo'],
+    ['Esecutore (art. 1 co. 2 lett. p)', descriviEsecutore(f.esecutore)],
     ['Data di conferimento', dataIt(f.data_conferimento)],
     ['Importo dell’operazione', f.importo_operazione != null ? `€ ${num(f.importo_operazione)}` : '—'],
     ['Scopo e natura (art. 19 co. 1 lett. c)', f.scopo_natura ?? '—'],

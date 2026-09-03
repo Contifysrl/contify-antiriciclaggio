@@ -58,8 +58,10 @@ export function contestoDaProposta(p: PropostaFascicoloDto): ContestoProposta {
 
 const TONO: Record<string, 'red' | 'amber' | 'gray'> = { alta: 'red', media: 'amber', bassa: 'gray' };
 
-export function FascicoloProposto({ fascicoloId, clienteId, esente, valutata, onApplicaTabellaA, onApplicaCircostanze, onEsecutoreRegistrato, vaiA }: {
+export function FascicoloProposto({ fascicoloId, clienteId, esente, valutata, aggiornaAl = 0, onApplicaTabellaA, onApplicaCircostanze, onEsecutoreRegistrato, vaiA }: {
   fascicoloId: string;
+  /** Contatore che il fascicolo incrementa quando ricarica i dati: la proposta si ricalcola (documenti, esecutore). */
+  aggiornaAl?: number;
   clienteId: string;
   /** Prestazione esente dalla verifica: la Tabella A non serve. */
   esente: boolean;
@@ -77,7 +79,7 @@ export function FascicoloProposto({ fascicoloId, clienteId, esente, valutata, on
   const [invio, setInvio] = useState(false);
 
   const carica = () => api.get<PropostaFascicoloDto>(`/fascicoli/${fascicoloId}/proposta`).then(setP).catch((e) => setErrore(e.message));
-  useEffect(() => { carica(); /* eslint-disable-next-line */ }, [fascicoloId]);
+  useEffect(() => { carica(); /* eslint-disable-next-line */ }, [fascicoloId, aggiornaAl]);
 
   if (errore) return <Riquadro tipo="avviso">Proposta del fascicolo non disponibile: {errore}</Riquadro>;
   if (!p) return null;

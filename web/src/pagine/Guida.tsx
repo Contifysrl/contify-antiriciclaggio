@@ -263,6 +263,37 @@ const SEZIONI: Sezione[] = [
           esamini e acquisisci tu</K>: la titolarità dichiarata, in particolare, ti viene
           proposta nel modulo dei titolari effettivi dove scegli criterio e motivazione.
         </P>
+        <H>Il fascicolo proposto dai dati camerali</H>
+        <P>
+          Se il cliente ha una compagine in archivio (da una visura), il fascicolo nasce già{' '}
+          <K>proposto</K>: il riquadro in testa mostra la <K>Tabella A</K> con un punteggio proposto
+          per A.1 (natura giuridica: struttura piana, catena, soci esteri, fiduciarie, PEP), A.2
+          (attività prevalente, dalla tabella dei <K>settori esposti</K> che cita per ogni voce l'Analisi
+          nazionale dei rischi 2024 e gli indicatori UIF) e A.4 (area geografica: Paesi terzi ad alto
+          rischio e province con flussi anomali di contante). A.3, il comportamento al conferimento,
+          resta sempre <K>chiesto</K> a te: nessun documento può proporlo. Ogni punteggio porta con sé
+          motivazione e fonte.
+        </P>
+        <Punti punti={[
+          <><Btn>Usa i punteggi proposti nella Tabella A</Btn> li copia nella valutazione; se poi cambi un punteggio proposto, il programma chiede il <K>perché</K> prima di consolidare. Provenienza, motivazioni e scostamenti restano nella valutazione e nella scheda di verifica: in ispezione si vede che hai valutato la proposta, non che l'hai subita.</>,
+          <>L'<K>esecutore</K> <Norma>art. 1 co. 2 lett. p</Norma> viene proposto dalle cariche (amministratore unico, presidente, liquidatore se in liquidazione…) già nel form del nuovo fascicolo: confermalo o indica chi si è presentato davvero.</>,
+          <>La <K>checklist dei documenti</K> è dedotta dalla struttura: visura, identità dell'esecutore e di ciascun titolare effettivo, dichiarazione art. 22, documentazione estera per i soci esteri, mandato fiduciario, visura della controllante. Lo stato si aggiorna con i documenti conservati (carica i file con il tipo giusto).</>,
+          <>Alert <K>A9</K> (società in liquidazione o in procedura) e <K>A10</K> (costituzione da meno di dodici mesi, sede in provincia a rischio contante, oggetto sociale molto ampio rispetto al capitale) sono indicatori da considerare nella Tabella A: non bloccano nulla.</>,
+        ]} />
+        <H>La dichiarazione del cliente sul titolare effettivo (art. 22)</H>
+        <P>
+          È l'atto che la legge mette in capo al cliente: fornire per iscritto, sotto la propria
+          responsabilità, le informazioni sul titolare effettivo. Il programma la genera{' '}
+          <K>già compilata</K> dai dati camerali — ripartizione del capitale, titolari individuati con il
+          criterio applicato, domande sul controllo che la visura non può dare (patti, diritti
+          particolari, vincoli sulle quote, interposizioni), status PEP per ciascun titolare effettivo e
+          per l'esecutore — in due modi: <Btn>Dichiarazione art. 22 precompilata (.docx)</Btn> per la
+          firma in presenza, oppure <Btn>Nuova richiesta al cliente…</Btn> con la casella{' '}
+          <K>precompilata</K>: il cliente conferma o corregge da casa e la dichiarazione torna nel
+          fascicolo come documento con la trascrizione integrale. Le risposte «Sì», le correzioni e i PEP
+          dichiarati ti vengono segnalati: la dichiarazione <K>non scrive mai da sola</K> i titolari
+          effettivi, che restano una tua valutazione <Norma>artt. 20-22</Norma>.
+        </P>
         <P>
           <K>Registro dei titolari effettivi</K> (D.M. 122/2026, operativo dal 23.7.2026): in{' '}
           <K>Controlli automatici</K> registri l'accreditamento biennale dello studio presso la
@@ -504,6 +535,16 @@ const SEZIONI: Sezione[] = [
           ciascuno segue i propri clienti, ma non serve che tutti abbiano in mano licenza, backup e
           archivio. Per ciascun professionista si registrano i <K>dati d'albo</K> — qualifica, ODCEC,
           numero di iscrizione — che compaiono nell'intestazione dei verbali.
+        </P>
+        <H>Province con flussi anomali di contante</H>
+        <P>
+          Il criterio A.4 della Tabella A rinvia all'Analisi nazionale dei rischi, che pubblica
+          l'indicatore UIF sull'uso anomalo del contante <K>solo come mappa a colori</K>, senza un elenco
+          di province. Il programma non trascrive quella mappa: chi amministra lo studio la legge (il
+          collegamento è nel riquadro) e registra qui le province classificate <K>alto</K> e{' '}
+          <K>medio-alto</K>, con fonte e data. Le proposte di punteggio A.4 useranno la tabella citandola;
+          finché è vuota, il programma segnala la provincia «da verificare» e lascia il punteggio a te.
+          È una scelta documentata dello studio, non un elenco ufficiale.
         </P>
         <Punti punti={[
           <>Lo studio deve avere sempre <K>almeno un professionista attivo</K> e <K>almeno un amministratore attivo</K>: l'applicazione impedisce di rimuovere l'ultimo.</>,

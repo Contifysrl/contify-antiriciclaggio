@@ -1064,6 +1064,7 @@ api.post('/fascicoli/:id/verifica-remota', puoScrivere, async (c) => {
     const pre = await precompilaDichiarazione(c.env, tenantId, cliente, String(fascicoloId));
     richieste.precompilata = await cifra(c.env.MASTER_KEY, tenantId, JSON.stringify(pre));
     richieste.titolari = false; // la dichiarazione precompilata assorbe la sezione «titolari» libera
+    richieste.pep = false; // …e la domanda PEP generica: lo status si dichiara per ciascun titolare effettivo ed esecutore
   }
 
   const token = nuovoToken();
