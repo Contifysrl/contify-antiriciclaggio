@@ -18,7 +18,7 @@ ESEMPIO SRL
 	Data iscrizione	16/10/2025
 	Data ultimo protocollo	01/12/2025
 	XXXXXX
-	Amministratore Unico	ROSSI MARIO
+	Amministratore Unico	ESPOSITO MARIA
 	Rappresentante dell'Impresa
 Il QR Code consente di verificare la corrispondenza tra questo
 documento e quello archiviato al momento dell'estrazione. Per la
@@ -228,8 +228,8 @@ Sintesi della composizione societaria e degli altri titolari di diritti su azion
 Il grafico e la sottostante tabella sono una sintesi degli assetti proprietari dell’impresa relativa ai soli diritti di proprietà, che non
 sostituisce l’effettiva pubblicità legale fornita dall’elenco soci a seguire, dove sono riportati anche eventuali vincoli sulle quote.
 Socio	Valore	%	Tipo diritto
-ROSSI MARIO	7.000,00	70 %	proprieta'
-RSSMRA75S22B563H
+ESPOSITO MARIA	7.000,00	70 %	proprieta'
+SPSMRA75S62B563Q
 BIANCHI LUCA	3.000,00	30 %	proprieta'
 BNCLCU71L20L736W
 Elenco dei soci e degli altri
@@ -243,12 +243,12 @@ capitale sociale	Capitale sociale dichiarato sul modello con cui è stato deposi
 	Quota di nominali: 7.000,00 Euro
 Proprieta'
 	Di cui versati: 7.000,00
-ROSSI MARIO	Codice fiscale: RSSMRA75S22B563H
+ESPOSITO MARIA	Codice fiscale: SPSMRA75S62B563Q
 	Tipo di diritto: proprieta'
 	Domicilio del titolare o rappresentante
 	comune
 	VIGONZA (PD) VIA ROMA 1 CAP 35010
-	Indirizzo di posta certificata: mario.rossi@pec.it
+	Indirizzo di posta certificata: maria.esposito@pec.it
 	Quota di nominali: 3.000,00 Euro
 Proprieta'
 	Di cui versati: 3.000,00
@@ -265,17 +265,17 @@ BIANCHI LUCA	Codice fiscale: BNCLCU71L20L736W
 	comune
 	TREVISO (TV) VIA VERDI 5 CAP 31100
 5 Amministratori
-Amministratore Unico	ROSSI MARIO	Rappresentante dell'impresa
+Amministratore Unico	ESPOSITO MARIA	Rappresentante dell'impresa
 Organi amministrativi in carica
 amministratore unico	Numero componenti: 1
 Elenco amministratori
 Amministratore Unico
-ROSSI MARIO	Rappresentante dell'impresa
+ESPOSITO MARIA	Rappresentante dell'impresa
 	Nato a PADOVA (PD) il 22/11/1975
-	Codice fiscale: RSSMRA75S22B563H
+	Codice fiscale: SPSMRA75S62B563Q
 domicilio	VIGONZA (PD)
 	VIA ROMA 1 CAP 35010
-	Indirizzo di posta elettronica certificata: mario.rossi@pec.it
+	Indirizzo di posta elettronica certificata: maria.esposito@pec.it
 carica	amministratore unico
 	Data atto di nomina: 13/10/2025
 	Data iscrizione: 16/10/2025

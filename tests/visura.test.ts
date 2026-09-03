@@ -47,7 +47,7 @@ describe('utilità', () => {
   });
 
   it('tipo del soggetto da CF e denominazione', () => {
-    expect(tipoSoggetto('ROSSI MARIO', 'RSSMRA75S22B563H')).toBe('PERSONA_FISICA');
+    expect(tipoSoggetto('ESPOSITO MARIA', 'SPSMRA75S62B563Q')).toBe('PERSONA_FISICA');
     expect(tipoSoggetto('ALFA HOLDING SRL', '03456789012')).toBe('PERSONA_GIURIDICA');
     expect(tipoSoggetto('FIDUCIARIA LIGURE SPA', '08901234567')).toBe('FIDUCIARIA');
     expect(tipoSoggetto('THE FAMILY TRUST', null)).toBe('TRUST');
@@ -89,8 +89,8 @@ describe('Visura vera — SRL con due soci persone fisiche (layout InfoCamere 20
     expect(v.dataElencoSoci).toBe('2025-10-15');
     expect(v.soci).toHaveLength(2);
     expect(v.soci[0]).toMatchObject({
-      nome: 'ROSSI MARIO', codiceFiscale: 'RSSMRA75S22B563H', tipo: 'PERSONA_FISICA', quotaNominale: 7000, quotaPercento: 70,
-      versato: 7000, diritto: 'PROPRIETA', quoteProprie: false, comproprieta: false, paese: 'IT', pec: 'mario.rossi@pec.it',
+      nome: 'ESPOSITO MARIA', codiceFiscale: 'SPSMRA75S62B563Q', tipo: 'PERSONA_FISICA', quotaNominale: 7000, quotaPercento: 70,
+      versato: 7000, diritto: 'PROPRIETA', quoteProprie: false, comproprieta: false, paese: 'IT', pec: 'maria.esposito@pec.it',
     });
     expect(v.soci[0].domicilio).toBe('VIGONZA (PD) VIA ROMA 1 CAP 35010');
     expect(v.soci[1]).toMatchObject({ nome: 'BIANCHI LUCA', quotaPercento: 30, codiceFiscale: 'BNCLCU71L20L736W' });
@@ -99,7 +99,7 @@ describe('Visura vera — SRL con due soci persone fisiche (layout InfoCamere 20
   it('cariche: amministratore unico con rappresentanza, nascita, nomina, seconda carica accodata', () => {
     expect(v.cariche).toHaveLength(1);
     expect(v.cariche[0]).toMatchObject({
-      nome: 'ROSSI MARIO', codiceFiscale: 'RSSMRA75S22B563H', carica: 'AMMINISTRATORE_UNICO', rappresentanzaLegale: true,
+      nome: 'ESPOSITO MARIA', codiceFiscale: 'SPSMRA75S62B563Q', carica: 'AMMINISTRATORE_UNICO', rappresentanzaLegale: true,
       natoA: 'PADOVA (PD)', dataNascita: '1975-11-22', dataNomina: '2025-10-13',
     });
     expect(v.cariche[0].durata).toContain('31/12/2032');
@@ -132,7 +132,7 @@ describe('SRL con holding, nuda proprietà/usufrutto, capitale non versato, CdA,
   it('consiglio di amministrazione: presidente e delegato con rappresentanza, consigliere senza; poteri letti', () => {
     expect(v.cariche.map((c) => [c.nome, c.carica, c.rappresentanzaLegale])).toEqual([
       ['VERDI GIULIA', 'PRESIDENTE_CDA', true],
-      ['ROSSI MARIO', 'CONSIGLIERE_DELEGATO', true],
+      ['ESPOSITO MARIA', 'CONSIGLIERE_DELEGATO', true],
       ['GIALLI MARCO', 'CONSIGLIERE', false],
     ]);
     expect(v.cariche[0].poteri).toContain('FIRMA E RAPPRESENTANZA LEGALE');
@@ -170,10 +170,10 @@ describe('Impresa individuale (sintetica)', () => {
   const v = leggiVisura(fx('impresa-individuale.txt'));
   it('persona fisica: titolare al 100%, niente capitale fra i campi mancanti', () => {
     expect(v.tipoProposto).toBe('PERSONA_FISICA');
-    expect(v.codiceFiscale).toBe('RSSMRA75S22B563H');
+    expect(v.codiceFiscale).toBe('SPSMRA75S62B563Q');
     expect(v.partitaIva).toBe('06789012345');
     expect(v.soci).toHaveLength(1);
-    expect(v.soci[0]).toMatchObject({ nome: 'ROSSI MARIO', quotaPercento: 100, tipo: 'PERSONA_FISICA' });
+    expect(v.soci[0]).toMatchObject({ nome: 'ESPOSITO MARIA', quotaPercento: 100, tipo: 'PERSONA_FISICA' });
     expect(v.cariche[0]).toMatchObject({ carica: 'TITOLARE', rappresentanzaLegale: true });
     expect(v.campiNonTrovati).toEqual([]);
   });

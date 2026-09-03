@@ -1,15 +1,15 @@
 VISURA ORDINARIA IMPRESA INDIVIDUALE
 	DATI ANAGRAFICI
-ROSSI MARIO
+ESPOSITO MARIA
 	Indirizzo Sede legale	VIGONZA (PD) VIA
 	ROMA 1 CAP 35010
-	Domicilio digitale/PEC	mario.rossi@pec.it
+	Domicilio digitale/PEC	maria.esposito@pec.it
 	Numero REA	PD - 445566
-	Codice fiscale e n.iscr. al	RSSMRA75S22B563H
+	Codice fiscale e n.iscr. al	SPSMRA75S62B563Q
 	Registro Imprese
 	Partita IVA	06789012345
 	Forma giuridica	impresa individuale
-	Titolare	ROSSI MARIO
+	Titolare	ESPOSITO MARIA
 ATTIVITA'	L'IMPRESA IN CIFRE
 Stato attività	attiva
 Documento n . A 4444444444444444444 estratto dal Registro Imprese in data 20/08/2026
@@ -17,18 +17,18 @@ Documento n . A 4444444444444444444 estratto dal Registro Imprese in data 20/08/
 1 Sede
 Indirizzo Sede legale	VIGONZA (PD)
 	VIA ROMA 1 CAP 35010
-Domicilio digitale/PEC	mario.rossi@pec.it
+Domicilio digitale/PEC	maria.esposito@pec.it
 Partita IVA	06789012345
 2 Informazioni da statuto/atto costitutivo
-Registro Imprese	Codice fiscale e numero di iscrizione: RSSMRA75S22B563H
-informazioni costitutive	Denominazione: ROSSI MARIO
+Registro Imprese	Codice fiscale e numero di iscrizione: SPSMRA75S62B563Q
+informazioni costitutive	Denominazione: ESPOSITO MARIA
 3 Titolare
-Titolare	ROSSI MARIO	Rappresentante dell'impresa
+Titolare	ESPOSITO MARIA	Rappresentante dell'impresa
 Elenco titolari
 Titolare
-ROSSI MARIO	Rappresentante dell'impresa
+ESPOSITO MARIA	Rappresentante dell'impresa
 	Nato a PADOVA (PD) il 22/11/1975
-	Codice fiscale: RSSMRA75S22B563H
+	Codice fiscale: SPSMRA75S62B563Q
 carica	titolare firmatario
 4 Attività, albi ruoli e licenze
 attività prevalente esercitata	CONSULENZA INFORMATICA

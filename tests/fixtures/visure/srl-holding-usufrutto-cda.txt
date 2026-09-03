@@ -124,7 +124,7 @@ GIALLI MARCO	Codice fiscale: GLLMRC85C15L219K
 	TORINO (TO) VIA PO 7 CAP 10124
 5 Amministratori
 Presidente Consiglio Amministrazione	VERDI GIULIA	Rappresentante dell'impresa
-Amministratore Delegato	ROSSI MARIO	Rappresentante dell'impresa
+Amministratore Delegato	ESPOSITO MARIA	Rappresentante dell'impresa
 Consigliere	GIALLI MARCO
 Organi amministrativi in carica
 consiglio di amministrazione	Numero componenti: 3
@@ -141,9 +141,9 @@ carica	presidente consiglio amministrazione
 poteri	FIRMA E RAPPRESENTANZA LEGALE DELLA SOCIETA' DI FRONTE AI TERZI E IN GIUDIZIO
 	CON FIRMA SINGOLA PER TUTTI GLI ATTI DI ORDINARIA AMMINISTRAZIONE
 Amministratore Delegato
-ROSSI MARIO	Rappresentante dell'impresa
+ESPOSITO MARIA	Rappresentante dell'impresa
 	Nato a PADOVA (PD) il 22/11/1975
-	Codice fiscale: RSSMRA75S22B563H
+	Codice fiscale: SPSMRA75S62B563Q
 domicilio	VIGONZA (PD)
 	VIA ROMA 1 CAP 35010
 carica	amministratore delegato

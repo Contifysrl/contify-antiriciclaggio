@@ -28,6 +28,7 @@
 
 import type { Env } from './tipi';
 import { scriviAudit } from './audit';
+import { decifra } from './crypto';
 import { gunzipToText, gzipText } from './backup';
 
 export type FonteLista = 'UE' | 'ONU' | 'OFAC';
@@ -378,7 +379,7 @@ export type EsitoScreening = {
   daEsaminare: number;
 };
 
-type Soggetto = { tipo: 'CLIENTE' | 'TITOLARE_EFFETTIVO'; id: string; nominativo: string };
+export type SoggettoScreening = { tipo: 'CLIENTE' | 'TITOLARE_EFFETTIVO' | 'SOCIO' | 'CARICA'; id: string; nominativo: string };
 
 function indiceInverso(voci: VoceLista[]): Map<string, number[]> {
   const indice = new Map<string, number[]>();
@@ -390,6 +391,83 @@ function indiceInverso(voci: VoceLista[]): Map<string, number[]> {
     }
   });
   return indice;
+}
+
+/**
+ * Confronta un elenco di soggetti con le liste e registra le corrispondenze
+ * nuove. Riusato dalla corsa periodica e dallo screening immediato dei nomi
+ * estratti dalla visura (AR-M17, soci e titolari di cariche).
+ */
+export async function screeningSoggetti(
+  env: Env,
+  tenantId: string,
+  soggetti: SoggettoScreening[],
+  liste: ListeSanzioni,
+  indice?: Map<string, number[]>,
+): Promise<{ nuove: number; corrispondenze: Array<{ soggettoId: string; nominativo: string; fonte: FonteLista; punteggio: number }> }> {
+  const idx = indice ?? indiceInverso(liste.voci);
+  let nuove = 0;
+  const corrispondenze: Array<{ soggettoId: string; nominativo: string; fonte: FonteLista; punteggio: number }> = [];
+  for (const s of soggetti) {
+    const tokens = tokenUtili(tokenizzaNome(s.nominativo));
+    if (!tokens.length) continue;
+
+    // Prefiltro con l'indice inverso: si valutano solo le voci che
+    // condividono almeno un token utile con il soggetto.
+    const candidate = new Set<number>();
+    for (const t of tokens) for (const i of idx.get(t) ?? []) candidate.add(i);
+
+    for (const i of candidate) {
+      const voce = liste.voci[i];
+      const { corrisponde, punteggio } = confrontaNomi(tokens, voce.t);
+      if (!corrisponde) continue;
+      corrispondenze.push({ soggettoId: s.id, nominativo: s.nominativo, fonte: voce.fonte, punteggio: Math.round(punteggio * 100) / 100 });
+      const r = await env.DB.prepare(
+        `INSERT INTO screening_esiti (id, tenant_id, soggetto_tipo, soggetto_id, nominativo, fonte, voce_lista, voce_id, punteggio)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (tenant_id, soggetto_tipo, soggetto_id, fonte, voce_id) DO NOTHING`,
+      ).bind(
+        crypto.randomUUID().replace(/-/g, '').slice(0, 20),
+        tenantId, s.tipo, s.id, s.nominativo, voce.fonte, voce.nome, voce.id, Math.round(punteggio * 100) / 100,
+      ).run();
+      if (r.meta.changes) nuove++;
+    }
+  }
+  return { nuove, corrispondenze };
+}
+
+/**
+ * Soci persone fisiche e titolari di cariche vigenti (AR-M17): i nomi sono
+ * cifrati per tenant, si decifrano solo per il confronto. Chi non è
+ * decifrabile viene saltato senza fermare la corsa.
+ */
+export async function soggettiCompagine(env: Env, tenantId: string): Promise<SoggettoScreening[]> {
+  const out: SoggettoScreening[] = [];
+  const soci = (
+    await env.DB.prepare("SELECT id, socio_nome, socio_tipo FROM partecipazioni WHERE tenant_id = ? AND valido_al IS NULL AND quote_proprie = 0").bind(tenantId).all<any>()
+  ).results ?? [];
+  const cariche = (
+    await env.DB.prepare('SELECT id, nome FROM cariche WHERE tenant_id = ? AND valido_al IS NULL').bind(tenantId).all<any>()
+  ).results ?? [];
+  const leggi = async (v: string | null): Promise<string | null> => {
+    if (!v) return null;
+    try {
+      const j = JSON.parse(v);
+      if (j && typeof j === 'object' && 'contenuto' in j) return await decifra(env.MASTER_KEY, tenantId, j);
+      return typeof j === 'string' ? j : null;
+    } catch {
+      return v; // in chiaro (persone giuridiche)
+    }
+  };
+  for (const s of soci) {
+    const nome = await leggi(s.socio_nome);
+    if (nome) out.push({ tipo: 'SOCIO', id: s.id, nominativo: nome });
+  }
+  for (const c of cariche) {
+    const nome = await leggi(c.nome);
+    if (nome) out.push({ tipo: 'CARICA', id: c.id, nominativo: nome });
+  }
+  return out;
 }
 
 export async function eseguiScreeningTenant(
@@ -407,36 +485,13 @@ export async function eseguiScreeningTenant(
     await env.DB.prepare('SELECT id, nominativo FROM titolari_effettivi WHERE tenant_id = ? AND valido_al IS NULL').bind(tenantId).all<any>()
   ).results ?? [];
 
-  const soggetti: Soggetto[] = [
+  const soggetti: SoggettoScreening[] = [
     ...clienti.map((c: any) => ({ tipo: 'CLIENTE' as const, id: c.id, nominativo: c.denominazione })),
     ...titolari.map((t: any) => ({ tipo: 'TITOLARE_EFFETTIVO' as const, id: t.id, nominativo: t.nominativo })),
+    ...(await soggettiCompagine(env, tenantId)),
   ];
 
-  let nuove = 0;
-  for (const s of soggetti) {
-    const tokens = tokenUtili(tokenizzaNome(s.nominativo));
-    if (!tokens.length) continue;
-
-    // Prefiltro con l'indice inverso: si valutano solo le voci che
-    // condividono almeno un token utile con il soggetto.
-    const candidate = new Set<number>();
-    for (const t of tokens) for (const i of idx.get(t) ?? []) candidate.add(i);
-
-    for (const i of candidate) {
-      const voce = liste.voci[i];
-      const { corrisponde, punteggio } = confrontaNomi(tokens, voce.t);
-      if (!corrisponde) continue;
-      const r = await env.DB.prepare(
-        `INSERT INTO screening_esiti (id, tenant_id, soggetto_tipo, soggetto_id, nominativo, fonte, voce_lista, voce_id, punteggio)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (tenant_id, soggetto_tipo, soggetto_id, fonte, voce_id) DO NOTHING`,
-      ).bind(
-        crypto.randomUUID().replace(/-/g, '').slice(0, 20),
-        tenantId, s.tipo, s.id, s.nominativo, voce.fonte, voce.nome, voce.id, Math.round(punteggio * 100) / 100,
-      ).run();
-      if (r.meta.changes) nuove++;
-    }
-  }
+  const { nuove } = await screeningSoggetti(env, tenantId, soggetti, liste, idx);
 
   await env.DB.prepare(
     'INSERT INTO screening_corse (tenant_id, liste_aggiornate_il, soggetti, corrispondenze_nuove) VALUES (?, ?, ?, ?)',
@@ -455,14 +510,12 @@ export async function eseguiScreeningTenant(
         entita: 'sistema', dettaglio: { nuoveCorrispondenze: nuove, soggetti: soggetti.length },
       });
     } catch (e) {
-      console.error('audit screening non registrato:', e);
+      console.error('audit screening:', e);
     }
   }
-
   return { soggetti: soggetti.length, nuoveCorrispondenze: nuove, daEsaminare };
 }
 
-/** Screening notturno di tutti gli studi (con aggiornamento liste se serve). */
 export async function screeningSchedulato(env: Env): Promise<void> {
   if (await listeDaAggiornare(env)) {
     const esito = await aggiornaListeSanzioni(env);
