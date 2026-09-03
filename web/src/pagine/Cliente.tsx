@@ -3,6 +3,8 @@ import { api, formattaData } from '../api';
 import { PiedeLegale, Riquadro } from '../componenti';
 import { ConfermaEliminazione, HelpLink } from '../components/ui';
 import { CampoProfessionista, useProfessionisti } from '../lib/professionisti';
+import { ETICHETTA_CARICA, PropostaTitolaritaBox, TabellaCariche, VisuraModal, type PropostaDto } from './Visura';
+import { Badge } from '../components/ui';
 
 // ── Scheda del cliente (AR-M14) ─────────────────────────────────
 // Fino a M13 l'anagrafica si poteva creare e non si poteva più aprire:
@@ -140,13 +142,18 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
   const [confermaElimina, setConfermaElimina] = useState(false);
   const professionisti = useProfessionisti();
   const [inCorso, setInCorso] = useState(false);
+  // AR-M17: compagine, proposta di titolarità, documenti, «Aggiorna da visura».
+  const [compagine, setCompagine] = useState<(PropostaDto & { proposte: any[] }) | null>(null);
+  const [aggiornaVisura, setAggiornaVisura] = useState(false);
+  const [caricaDoc, setCaricaDoc] = useState(false);
 
   const carica = () =>
     api.get<any>(`/clienti/${id}`)
       .then((r) => { setD(r); setModifica(false); })
       .catch((e) => setErrore((e as Error).message));
+  const caricaCompagine = () => api.get<any>(`/clienti/${id}/compagine`).then(setCompagine).catch(() => setCompagine(null));
 
-  useEffect(() => { setD(null); setErrore(''); carica(); /* eslint-disable-next-line */ }, [id]);
+  useEffect(() => { setD(null); setErrore(''); setCompagine(null); carica(); caricaCompagine(); /* eslint-disable-next-line */ }, [id]);
 
   if (errore && !d) return <Riquadro tipo="critico">{errore}</Riquadro>;
   if (!d) return <div className="caricamento">Caricamento…</div>;
@@ -254,6 +261,11 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
             >
               Modifica l’anagrafica
             </button>
+            {!archiviato && (
+              <button className="azione secondaria" style={{ marginTop: 12, marginLeft: 8 }} onClick={() => setAggiornaVisura(true)} title="Carica una visura camerale più recente e applica solo le differenze che scegli">
+                Aggiorna da visura
+              </button>
+            )}
           </>
         )}
         {errore && <div className="errore">{errore}</div>}
@@ -303,6 +315,117 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
             Nessun titolare effettivo registrato. Si registra dal fascicolo, dove la ricostruzione della catena
             partecipativa è collegata alla prestazione (art. 20).
           </p>
+        )}
+      </div>
+
+      {/* ── Compagine e proposta (AR-M17) ────────────────────── */}
+      <div className="scheda">
+        <h3>Compagine e cariche dalla visura</h3>
+        {compagine && compagine.soci.length + compagine.cariche.length > 0 ? (
+          <>
+            <div className="aiuto">
+              Dati camerali al {d.compagine?.fonteData ? formattaData(d.compagine.fonteData) : '—'}, conservati cifrati come serie temporale. Al rinnovo della visura vedrai le differenze.
+            </div>
+            {compagine.soci.length > 0 && (
+              <table>
+                <thead><tr><th>Socio</th><th>Tipo</th><th>Quota</th><th>Diritto</th><th>Paese</th><th>Cliente dello studio</th></tr></thead>
+                <tbody>
+                  {compagine.soci.map((s: any) => (
+                    <tr key={s.id} style={{ opacity: s.quoteProprie ? 0.6 : 1 }}>
+                      <td><strong>{s.nome}</strong>{s.codiceFiscale && <div className="mono text-xs text-ink-400">{s.codiceFiscale}</div>}{s.quoteProprie && <Badge tone="gray">quote proprie</Badge>}</td>
+                      <td>{String(s.tipo).replace(/_/g, ' ').toLowerCase()}</td>
+                      <td className="mono">{s.quotaPercento != null ? `${s.quotaPercento}%` : '—'}</td>
+                      <td>{String(s.diritto ?? 'PROPRIETA').replace(/_/g, ' ').toLowerCase()}</td>
+                      <td className="mono">{s.paese ?? '—'}</td>
+                      <td>{s.socioClienteId ? <a href={`#cliente?id=${s.socioClienteId}`} onClick={(e) => { e.preventDefault(); vaiA(`cliente?id=${s.socioClienteId}`); }}>apri la scheda</a> : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {compagine.cariche.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <TabellaCariche cariche={compagine.cariche.map((c: any) => ({ ...c, carica: c.carica, caricaTesto: c.caricaTesto ?? ETICHETTA_CARICA[c.carica] }))} />
+              </div>
+            )}
+            <h4 style={{ marginTop: 18 }}>Titolari effettivi proposti dai dati camerali</h4>
+            <div className="aiuto">La visura non è il registro dei titolari effettivi (art. 21-ter): questa è l'applicazione dell'art. 20 co. 2 ai soci. Confermi, correggi o scarti; il registro si consulta dal fascicolo.</div>
+            <PropostaTitolaritaBox
+              clienteId={id}
+              proposta={{ ...compagine, id: compagine.proposte?.find((p: any) => p.ambito === 'TITOLARITA' && p.stato === 'PROPOSTA')?.id ?? null }}
+              vaiA={vaiA}
+              onRegistrata={() => { carica(); caricaCompagine(); }}
+            />
+            {compagine.proposte?.length > 0 && (
+              <details style={{ marginTop: 12 }}>
+                <summary className="text-sm text-ink-500 cursor-pointer">Storico delle proposte del programma ({compagine.proposte.length})</summary>
+                <table style={{ marginTop: 8 }}>
+                  <thead><tr><th>Data</th><th>Ambito</th><th>Alert</th><th>Stato</th><th>Rivista da</th></tr></thead>
+                  <tbody>
+                    {compagine.proposte.map((p: any) => (
+                      <tr key={p.id}>
+                        <td className="mono">{formattaData(p.creatoIl)}</td>
+                        <td>{p.ambito.toLowerCase()} · {p.origine.toLowerCase()}</td>
+                        <td>{p.alert.length ? p.alert.map((a: any) => a.codice).join(', ') : '—'}</td>
+                        <td>{p.stato.toLowerCase()}{p.esito?.motivazione ? <div className="text-xs text-ink-400">{p.esito.motivazione}</div> : null}</td>
+                        <td>{p.rivistaDa ?? '—'}{p.rivistaIl ? <div className="mono text-xs text-ink-400">{formattaData(p.rivistaIl)}</div> : null}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </details>
+            )}
+          </>
+        ) : (
+          <p className="caricamento">
+            Nessuna compagine registrata. Con «Aggiorna da visura» carichi il PDF della visura camerale: soci, cariche e titolari effettivi proposti arrivano da lì.
+          </p>
+        )}
+      </div>
+
+      {/* ── Documenti del cliente (AR-M17) ───────────────────── */}
+      <div className="scheda">
+        <h3>Documenti del cliente</h3>
+        <div className="aiuto">Visure e documenti legati al cliente, non a un singolo fascicolo. Impronta SHA-256 e conservazione decennale (art. 31).</div>
+        {d.documenti?.length ? (
+          <table>
+            <thead><tr><th>Tipo</th><th>File</th><th>Data documento</th><th>Acquisito il</th><th>Impronta</th></tr></thead>
+            <tbody>
+              {d.documenti.map((x: any) => (
+                <tr key={x.id}>
+                  <td>{String(x.tipo).replace(/_/g, ' ').toLowerCase()}</td>
+                  <td><a href={`/api/documenti/${x.id}`} target="_blank" rel="noreferrer">{x.nome_file}</a> <span className="text-xs text-ink-400">({Math.round(x.dimensione / 1024)} KB)</span></td>
+                  <td className="mono">{formattaData(x.data_riferimento)}</td>
+                  <td className="mono">{formattaData(x.data_acquisizione)}</td>
+                  <td className="mono text-xs text-ink-400">{String(x.sha256).slice(0, 16)}…</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="caricamento">Nessun documento agganciato al cliente.</p>
+        )}
+        {!archiviato && (
+          <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
+            <label className="btn btn-secondary btn-sm cursor-pointer" style={{ margin: 0 }}>
+              {caricaDoc ? 'Caricamento…' : 'Allega un documento…'}
+              <input type="file" className="hidden" disabled={caricaDoc} onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (!file) return;
+                setCaricaDoc(true); setErrore('');
+                try {
+                  const form = new FormData();
+                  form.append('file', file, file.name);
+                  form.append('tipo', /visura/i.test(file.name) ? 'VISURA' : 'ALTRO');
+                  const r = await fetch(`/api/clienti/${id}/documenti`, { method: 'POST', body: form, credentials: 'same-origin' });
+                  if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.errore ?? `Errore ${r.status}`);
+                  await carica();
+                } catch (err) { setErrore((err as Error).message); } finally { setCaricaDoc(false); }
+              }} />
+            </label>
+            <span className="text-xs text-ink-400">Per leggere una visura e proporre i titolari effettivi usa «Aggiorna da visura» qui sopra.</span>
+          </div>
         )}
       </div>
 
@@ -402,6 +525,16 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
             } catch (e) { setErrore((e as Error).message); }
           }}
           onClose={() => setConfermaElimina(false)}
+        />
+      )}
+
+      {aggiornaVisura && (
+        <VisuraModal
+          modo="aggiorna"
+          cliente={c}
+          onChiudi={() => setAggiornaVisura(false)}
+          onFatto={() => { setAggiornaVisura(false); carica(); caricaCompagine(); }}
+          vaiA={vaiA}
         />
       )}
 

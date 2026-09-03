@@ -12,6 +12,7 @@ import { ElencoVincoli, GruppoFattori, PiedeLegale, PillolaRischio, Riquadro, Te
 import { HelpLink } from '../components/ui';
 import { CampiCliente, etichettaTipo } from './Cliente';
 import { ImportClientiModal } from './ImportClienti';
+import { VisuraModal } from './Visura';
 import { TitolaritaEffettiva, VerificaADistanza } from './TitolaritaVerifica';
 import { BozzaAi } from './BozzaAi';
 import { CampoProfessionista, FiltroProfessionista, useProfessionisti } from '../lib/professionisti';
@@ -23,6 +24,7 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
   const [f, setF] = useState<any>({ tipo: 'SOCIETA_CAPITALI', paeseResidenza: 'IT' });
   const [errore, setErrore] = useState('');
   const [importa, setImporta] = useState(false);
+  const [daVisura, setDaVisura] = useState(false);
   const [cercaInCorso, setCercaInCorso] = useState(false);
   const [avvisiLookup, setAvvisiLookup] = useState<string[]>([]);
   const [conArchiviati, setConArchiviati] = useState(false);
@@ -82,7 +84,8 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
       <button className="azione" onClick={() => setNuovo(!nuovo)}>
         {nuovo ? 'Annulla' : 'Nuovo cliente'}
       </button>{' '}
-      <button className="azione secondaria" onClick={() => setImporta(true)}>Importa da CSV</button>
+      <button className="azione secondaria" onClick={() => setImporta(true)}>Importa da CSV</button>{' '}
+      <button className="azione secondaria" onClick={() => setDaVisura(true)} title="Carica il PDF della visura camerale: anagrafica, soci, cariche e titolari effettivi proposti">Nuovo da visura</button>
 
       {nuovo && (
         <div className="scheda" style={{ marginTop: 14 }}>
@@ -108,6 +111,9 @@ export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
 
       {importa && (
         <ImportClientiModal onChiudi={() => setImporta(false)} onImportati={() => { setImporta(false); carica(); }} />
+      )}
+      {daVisura && (
+        <VisuraModal modo="nuovo" onChiudi={() => setDaVisura(false)} onFatto={(id) => { setDaVisura(false); carica(); vaiA(`cliente?id=${id}`); }} vaiA={vaiA} />
       )}
 
       <div className="scheda" style={{ marginTop: 16 }}>
