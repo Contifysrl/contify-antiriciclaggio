@@ -79,6 +79,8 @@ export const TABELLE_ARCHIVIO = [
   'cariche',
   'proposte',
   'valutazioni_rischio',
+  // AR-M19: i controlli costanti eseguiti referenziano fascicoli e utenti.
+  'controlli_costanti',
   'operazioni',
   'segnalazioni_sospette',
   'astensioni',

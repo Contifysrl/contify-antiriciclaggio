@@ -298,3 +298,41 @@ describe('A4 in profondità — la holding è cliente ma la sua socia no (catena
     expect(a4[1].messaggio).toContain('Rovigatti & Dal Maso Holding S.S. detiene il 100% tramite Vega Holding Srl');
   });
 });
+
+// ── A11 — ricorrenza nel portafoglio (AR-M19) ───────────────────
+import { calcolaAlertRicorrenze } from '../worker/src/domain/alert-titolarita';
+
+describe('A11 ricorrenza nel portafoglio', () => {
+  const cli = (n: number, costituzione: string | null = null) =>
+    Array.from({ length: n }, (_, i) => ({ id: `c${i}`, denominazione: `SOCIETA ${i + 1} SRL`, ruolo: 'amministratore' as const, dataCostituzione: costituzione }));
+
+  it('sotto le soglie non scatta (4 clienti, nessuna neo-costituita)', () => {
+    expect(calcolaAlertRicorrenze([{ id: 'h', nome: 'ESPOSITO MARIA', clienti: cli(4) }], '2026-09-03')).toEqual([]);
+  });
+
+  it('cinque clienti: scatta, media gravità, non bloccante, con i clienti collegati', () => {
+    const a = calcolaAlertRicorrenze([{ id: 'h', nome: 'ESPOSITO MARIA', clienti: cli(5) }], '2026-09-03');
+    expect(a).toHaveLength(1);
+    expect(a[0].codice).toBe('A11');
+    expect(a[0].gravita).toBe('media');
+    expect(a[0].bloccante).toBe(false);
+    expect(a[0].messaggio).toMatch(/altri 5 clienti/);
+    expect(a[0].azione.tipo).toBe('VALUTA_RICORRENZA');
+    if (a[0].azione.tipo === 'VALUTA_RICORRENZA') expect(a[0].azione.clienti).toHaveLength(5);
+  });
+
+  it('due società costituite negli ultimi 24 mesi bastano', () => {
+    const a = calcolaAlertRicorrenze([{ id: 'h', nome: 'ESPOSITO MARIA', clienti: [...cli(1, '2020-01-01'), ...cli(2, '2025-06-01')] }], '2026-09-03');
+    expect(a).toHaveLength(1);
+    expect(a[0].messaggio).toMatch(/2 società clienti costituite negli ultimi 24 mesi/);
+    const vecchie = calcolaAlertRicorrenze([{ id: 'h', nome: 'ESPOSITO MARIA', clienti: cli(3, '2023-01-01') }], '2026-09-03');
+    expect(vecchie).toEqual([]);
+  });
+
+  it('un alert per persona ricorrente', () => {
+    const a = calcolaAlertRicorrenze([
+      { id: 'a', nome: 'UNO', clienti: cli(5) }, { id: 'b', nome: 'DUE', clienti: cli(2) }, { id: 'c', nome: 'TRE', clienti: cli(6) },
+    ], '2026-09-03');
+    expect(a.map((x) => (x.azione as any).soggetto)).toEqual(['UNO', 'TRE']);
+  });
+});

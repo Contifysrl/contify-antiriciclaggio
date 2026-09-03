@@ -78,6 +78,15 @@ export interface RigheVulnerabilita {
   sosTotali: number;
   sosNonConcluse: number;
   astensioniTotali: number;
+  /**
+   * AR-M19: dal cruscotto di completezza. Clienti attivi considerati e clienti
+   * senza nulla da completare. Facoltativi: senza di essi il calcolo resta
+   * quello di M15.
+   */
+  clientiConsiderati?: number;
+  clientiCompleti?: number;
+  /** Cose da completare di gravità alta (fascicolo mancante, TE assenti, termini scaduti, screening da decidere). */
+  mancanzeAlte?: number;
 }
 
 // ===========================================================================
@@ -295,9 +304,22 @@ function vulnerabilitaVerifica(v: RigheVulnerabilita): Indicatore {
   // I controlli costanti scaduti sono un difetto di organizzazione, non un
   // dettaglio: peggiorano il punteggio di un gradino.
   if (punteggio !== null && v.controlliScaduti > 0) punteggio = Math.min(4, punteggio + 1);
+  // AR-M19: il cruscotto di completezza misura l'organizzazione dell'adeguata
+  // verifica nel suo insieme (fascicolo, titolari, valutazione firmata,
+  // documenti, PEP, controllo costante). Con un archivio significativo, meno
+  // della metà dei clienti «a posto» peggiora il punteggio di un gradino:
+  // non è un giudizio sul singolo caso, è la fotografia del presidio.
+  const completezza = typeof v.clientiConsiderati === 'number' && typeof v.clientiCompleti === 'number' && v.clientiConsiderati >= MINIMO_SIGNIFICATIVO
+    ? pct(v.clientiCompleti, v.clientiConsiderati)
+    : null;
+  if (punteggio !== null && completezza !== null && completezza < 50) punteggio = Math.min(4, punteggio + 1);
   const pezzi = [`${v.fascicoliConValutazioneFirmata} fascicoli su ${v.fascicoliAttivi} hanno una valutazione firmata`];
   if (v.controlliScaduti > 0) pezzi.push(`${v.controlliScaduti} controlli costanti scaduti`);
   if (v.clientiSocietariSenzaTitolare > 0) pezzi.push(`${v.clientiSocietariSenzaTitolare} clienti societari senza titolarità effettiva registrata`);
+  if (typeof v.clientiConsiderati === 'number' && typeof v.clientiCompleti === 'number' && v.clientiConsiderati > 0) {
+    pezzi.push(`${v.clientiCompleti} clienti su ${v.clientiConsiderati} senza nulla da completare nel cruscotto` +
+      (completezza !== null ? ` (${completezza}%)` : '') + (v.mancanzeAlte ? `, ${v.mancanzeAlte} cose urgenti` : ''));
+  }
   return {
     codice: 'organizzazione_adeguata_verifica',
     etichetta: 'Organizzazione dell’adeguata verifica',

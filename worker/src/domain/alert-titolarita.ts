@@ -66,7 +66,7 @@ export interface InputAlert {
   dataElencoSoci?: string | null;
 }
 
-export type CodiceAlert = 'A1' | 'A2' | 'A3' | 'A4' | 'A5' | 'A6' | 'A7' | 'A8';
+export type CodiceAlert = 'A1' | 'A2' | 'A3' | 'A4' | 'A5' | 'A6' | 'A7' | 'A8' | 'A11';
 export type Gravita = 'alta' | 'media' | 'bassa';
 
 export type AzioneAlert =
@@ -78,7 +78,8 @@ export type AzioneAlert =
   | { tipo: 'DOCUMENTAZIONE_ESTERA'; etichetta: string; socioId: string; paese: string; altoRischio: boolean }
   | { tipo: 'ACQUISISCI_FIDUCIANTE'; etichetta: string; socioId: string; trust: boolean }
   | { tipo: 'PRENDI_ATTO'; etichetta: string }
-  | { tipo: 'DECIDI_SCREENING'; etichetta: string; nominativi: string[] };
+  | { tipo: 'DECIDI_SCREENING'; etichetta: string; nominativi: string[] }
+  | { tipo: 'VALUTA_RICORRENZA'; etichetta: string; soggetto: string; clienti: Array<{ id: string; denominazione: string; ruolo: string; neoCostituita: boolean }> };
 
 export interface Alert {
   codice: CodiceAlert;
@@ -336,4 +337,69 @@ export function calcolaAlertTitolarita(input: InputAlert): Alert[] {
 
   const ordine: Record<Gravita, number> = { alta: 0, media: 1, bassa: 2 };
   return out.sort((a, b) => ordine[a.gravita] - ordine[b.gravita] || a.codice.localeCompare(b.codice, undefined, { numeric: true }));
+}
+
+// ===========================================================================
+// A11 — Ricorrenza nel portafoglio (AR-M19)
+//
+// La stessa persona (stesso CF, confrontato via HMAC per tenant senza
+// decifrare) compare come socio o amministratore in molti clienti dello
+// studio, o in più società costituite di recente. Da solo non prova nulla —
+// un commercialista che amministra cinque srl di famiglia è normale — ma è
+// l'indicatore classico del prestanome negli indicatori di anomalia UIF, e
+// va valutato con cognizione. Media gravità, mai bloccante: chiede uno
+// sguardo, non una decisione.
+// ===========================================================================
+
+/** Sotto questo numero di clienti la ricorrenza non si segnala. */
+export const SOGLIA_RICORRENZA_CLIENTI = 5;
+/** Società costituite negli ultimi N mesi. */
+export const RICORRENZA_NEO_COSTITUITE_MESI = 24;
+/** Da quante società neo-costituite scatta la segnalazione. */
+export const SOGLIA_RICORRENZA_NEO = 2;
+
+export interface RicorrenzaSoggetto {
+  /** Identificativo del soggetto (cf_hash o nome normalizzato). */
+  id: string;
+  nome: string;
+  /** Altri clienti dello studio in cui compare (il cliente in esame escluso). */
+  clienti: Array<{ id: string; denominazione: string; ruolo: 'socio' | 'amministratore' | 'socio e amministratore'; dataCostituzione: string | null }>;
+}
+
+function mesiFra(daIso: string, aIso: string): number {
+  const a = new Date(`${daIso}T00:00:00Z`);
+  const b = new Date(`${aIso}T00:00:00Z`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return Number.POSITIVE_INFINITY;
+  return (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth()) - (b.getUTCDate() < a.getUTCDate() ? 1 : 0);
+}
+
+export function calcolaAlertRicorrenze(ricorrenze: RicorrenzaSoggetto[], oggi: string): Alert[] {
+  const out: Alert[] = [];
+  for (const r of ricorrenze) {
+    const clienti = r.clienti.map((c) => ({
+      id: c.id, denominazione: c.denominazione, ruolo: c.ruolo,
+      neoCostituita: Boolean(c.dataCostituzione) && mesiFra(c.dataCostituzione!, oggi) < RICORRENZA_NEO_COSTITUITE_MESI,
+    }));
+    const neo = clienti.filter((c) => c.neoCostituita);
+    const molti = clienti.length >= SOGLIA_RICORRENZA_CLIENTI;
+    const recenti = neo.length >= SOGLIA_RICORRENZA_NEO;
+    if (!molti && !recenti) continue;
+    const elenco = (l: typeof clienti) => l.slice(0, 6).map((c) => c.denominazione).join(', ') + (l.length > 6 ? ` e altre ${l.length - 6}` : '');
+    const messaggio = molti
+      ? `${r.nome} compare come socio o amministratore in altri ${clienti.length} clienti dello studio (${elenco(clienti)})` +
+        (recenti ? `, di cui ${neo.length} costituiti negli ultimi ${RICORRENZA_NEO_COSTITUITE_MESI} mesi. ` : '. ') +
+        'Valuta la coerenza del ruolo con il profilo della persona e con l’operatività delle società: la ricorrenza in sé non è un’anomalia, la sua assenza di spiegazione sì.'
+      : `${r.nome} compare in ${neo.length} società clienti costituite negli ultimi ${RICORRENZA_NEO_COSTITUITE_MESI} mesi (${elenco(neo)}). ` +
+        'Verifica che il ruolo sia coerente con il profilo della persona e che non ricorrano cariche formali in società di recente costituzione (indicatore dei prestanome).';
+    out.push({
+      codice: 'A11',
+      gravita: 'media',
+      titolo: 'Ricorrenza nel portafoglio dello studio',
+      messaggio,
+      norma: 'Indicatori di anomalia UIF (provv. 12.5.2023), sez. A — soggetti con cariche formali ricorrenti; art. 35 DLgs. 231/2007',
+      azione: { tipo: 'VALUTA_RICORRENZA', etichetta: 'Vedi i clienti collegati', soggetto: r.nome, clienti },
+      bloccante: false,
+    });
+  }
+  return out;
 }
