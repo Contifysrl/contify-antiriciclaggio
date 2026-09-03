@@ -381,4 +381,15 @@ export const CNDCEC_2025: Ruleset = {
     MOLTO_SIGNIFICATIVO: 12,
   },
   periodicitaControlloNormativa: false,
+
+  // AR-M17: soglia del criterio dominicale (art. 20 co. 2). «Più del 25%»:
+  // il 25% esatto NON basta. Caso reale e frequente nelle SRL familiari a
+  // quattro soci paritari: nessun titolare effettivo per proprietà, si
+  // scende al controllo (co. 3) e poi al residuale (co. 5).
+  titolaritaEffettiva: {
+    sogliaPartecipazione: 0.25,
+    sogliaInclusiva: false,
+    norma: 'art. 20 co. 2 DLgs. 231/2007',
+    etichettaSoglia: 'superiore al 25%',
+  },
 };

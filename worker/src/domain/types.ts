@@ -66,6 +66,25 @@ export interface Ruleset {
   };
   periodicitaControlloMesi: Record<ClasseRischio, number>;
   periodicitaControlloNormativa: boolean;
+  /**
+   * Parametri della titolarità effettiva per criterio dominicale (AR-M17).
+   * Oggi art. 20 co. 2 DLgs. 231/2007: «più del 25%» (soglia esclusiva).
+   * Dal 10.7.2027 il Regolamento (UE) 2024/1624, art. 52, dice «25% o più»:
+   * cambia il verso della disuguaglianza, e quattro soci al 25% esatto
+   * diventano tutti titolari effettivi. Vive nel ruleset, non nel motore.
+   */
+  titolaritaEffettiva: ParametriTitolarita;
+}
+
+export interface ParametriTitolarita {
+  /** Soglia in frazione (0.25 = 25%). */
+  sogliaPartecipazione: number;
+  /** true = «uguale o superiore» (2027); false = «superiore» (DLgs. 231/2007). */
+  sogliaInclusiva: boolean;
+  /** Riferimento normativo da riportare nelle motivazioni. */
+  norma: string;
+  /** Dicitura leggibile della soglia, per messaggi e verbali. */
+  etichettaSoglia: string;
 }
 
 // ---------------------------------------------------------------------------

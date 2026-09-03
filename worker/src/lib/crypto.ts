@@ -138,6 +138,31 @@ export async function decifra(masterKeyB64: string, tenantId: string, c: Cifrato
   return dec.decode(buf);
 }
 
+/**
+ * Impronta HMAC-SHA256 per tenant di un identificativo (AR-M17: `cf_hash`
+ * su partecipazioni e cariche). Serve agli incroci senza decifrare: «questa
+ * persona è socia di N clienti», «la holding socia di Alfa è il cliente Beta».
+ * La chiave deriva dalla MASTER_KEY con HKDF e info diversa da quella della
+ * cifratura: non invertibile e non confrontabile fra studi. Il testo viene
+ * normalizzato (maiuscolo, senza spazi) così che «rssmra…» e «RSSMRA…»
+ * diano la stessa impronta.
+ */
+export async function hmacTenant(masterKeyB64: string, tenantId: string, testo: string): Promise<string> {
+  const master = unb64(masterKeyB64);
+  if (master.length !== 32) throw new Error('MASTER_KEY non valida per HMAC');
+  const ikm = await crypto.subtle.importKey('raw', master, 'HKDF', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: enc.encode('contify-antiriciclaggio'), info: enc.encode(`cfhash:${tenantId}`) },
+    ikm,
+    { name: 'HMAC', hash: 'SHA-256', length: 256 },
+    false,
+    ['sign'],
+  );
+  const normalizzato = testo.replace(/\s+/g, '').toUpperCase();
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(normalizzato));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export function nuovoId(prefisso: string): string {
   return `${prefisso}_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
 }

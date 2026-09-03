@@ -161,3 +161,107 @@ describe('Casi limite', () => {
     expect(r.avvertenze.join(' ')).toContain('IGNOTO');
   });
 });
+
+// ── AR-M17: soglia dal ruleset, diritti sulle quote, quote proprie, cariche ──
+
+describe('AR-M17 — soglia dal ruleset vigente', () => {
+  const quattroSoci = () => [
+    pg('ALFA', 'Alfa Srl', [
+      { id: 'A', quota: 0.25 },
+      { id: 'B', quota: 0.25 },
+      { id: 'C', quota: 0.25 },
+      { id: 'D', quota: 0.25 },
+    ]),
+    pf('A', 'Socio A'),
+    pf('B', 'Socio B'),
+    pf('C', 'Socio C'),
+    pf('D', 'Socio D'),
+  ];
+
+  it('con il DLgs. 231/2007 il 25% esatto non basta e lo dice nelle avvertenze', () => {
+    const r = analizzaTitolaritaEffettiva('ALFA', quattroSoci(), { data: '2026-09-03' });
+    expect(r.parametri.rulesetId).toBe('cndcec-2025');
+    expect(r.criterioApplicato).toBe('NESSUNO');
+    expect(r.quotePersoneFisiche).toHaveLength(4);
+    expect(r.avvertenze.join(' ')).toContain('superiore al 25%');
+  });
+
+  it('dal 10.7.2027 (Reg. UE 2024/1624 art. 52) «25% o più»: tutti e quattro sono titolari effettivi', () => {
+    const r = analizzaTitolaritaEffettiva('ALFA', quattroSoci(), { data: '2027-07-10' });
+    expect(r.parametri.rulesetId).toBe('amlr-2027');
+    expect(r.parametri.sogliaInclusiva).toBe(true);
+    expect(r.titolari.map((t) => t.id).sort()).toEqual(['A', 'B', 'C', 'D']);
+    expect(r.titolari[0].norma).toContain('2024/1624');
+  });
+
+  it('25.000 su 100.000 non diventa 0,2499 per colpa dei decimali', () => {
+    const r = analizzaTitolaritaEffettiva('ALFA', [
+      pg('ALFA', 'Alfa Srl', [{ id: 'A', quota: 25000 / 100000 }, { id: 'B', quota: 75000 / 100000 }]),
+      pf('A', 'Socio A'), pf('B', 'Socio B'),
+    ], { data: '2027-08-01' });
+    expect(r.titolari.map((t) => t.id).sort()).toEqual(['A', 'B']);
+  });
+});
+
+describe('AR-M17 — diritti sulle quote', () => {
+  it('l’usufruttuario non conta per il co. 2 ma viene segnalato come vincolo (materia del co. 3)', () => {
+    const r = analizzaTitolaritaEffettiva('ALFA', [
+      pg('ALFA', 'Alfa Srl', [
+        { id: 'NUDO', quota: 0.6, diritto: 'NUDA_PROPRIETA' },
+        { id: 'USUF', quota: 0.6, diritto: 'USUFRUTTO' },
+        { id: 'ALTRO', quota: 0.4 },
+      ]),
+      pf('NUDO', 'Nudo Proprietario'), pf('USUF', 'Usufruttuario'), pf('ALTRO', 'Altro Socio'),
+    ]);
+    expect(r.titolari.map((t) => t.id).sort()).toEqual(['ALTRO', 'NUDO']);
+    expect(r.vincoliSulleQuote).toEqual([
+      expect.objectContaining({ soggettoId: 'USUF', diritto: 'USUFRUTTO', quota: 0.6, partecipataId: 'ALFA' }),
+    ]);
+  });
+
+  it('esclude le quote proprie dal denominatore (art. 2357-ter c.c.)', () => {
+    // Alfa detiene il 20% di sé stessa; Rossi ha il 24% nominale → 30% sul capitale votante.
+    const r = analizzaTitolaritaEffettiva('ALFA', [
+      pg('ALFA', 'Alfa Srl', [
+        { id: 'ALFA', quota: 0.2 },
+        { id: 'ROSSI', quota: 0.24 },
+        { id: 'BIANCHI', quota: 0.56 },
+      ]),
+      pf('ROSSI', 'Mario Rossi'), pf('BIANCHI', 'Luca Bianchi'),
+    ]);
+    expect(r.quoteProprie).toEqual([{ partecipataId: 'ALFA', quota: 0.2 }]);
+    const rossi = r.titolari.find((t) => t.id === 'ROSSI');
+    expect(rossi?.quotaEffettiva).toBe(0.3);
+    expect(r.avvertenze.join(' ')).toContain('2357-ter');
+  });
+
+  it('non risale le fiduciarie: interposizione, il titolare è il fiduciante', () => {
+    const r = analizzaTitolaritaEffettiva('ALFA', [
+      pg('ALFA', 'Alfa Srl', [{ id: 'FID', quota: 0.7 }, { id: 'ROSSI', quota: 0.3 }]),
+      { id: 'FID', denominazione: 'Fiduciaria Spa', tipo: 'PERSONA_GIURIDICA', fiduciaria: true, partecipazioni: [{ id: 'X', quota: 1 }] },
+      pf('X', 'Socio della fiduciaria'), pf('ROSSI', 'Mario Rossi'),
+    ]);
+    expect(r.titolari.map((t) => t.id)).toEqual(['ROSSI']);
+    expect(r.avvertenze.join(' ')).toContain('fiduciante');
+  });
+});
+
+describe('AR-M17 — cariche in ingresso per il criterio residuale', () => {
+  it('propone gli amministratori con poteri dalla visura, non i consiglieri senza deleghe', () => {
+    const r = analizzaTitolaritaEffettiva('ALFA', [
+      pg('ALFA', 'Alfa Srl', [{ id: 'A', quota: 0.2 }, { id: 'B', quota: 0.2 }, { id: 'C', quota: 0.2 }, { id: 'D', quota: 0.2 }, { id: 'E', quota: 0.2 }]),
+      pf('A', 'Socio A'), pf('B', 'Socio B'), pf('C', 'Socio C'), pf('D', 'Socio D'), pf('E', 'Socio E'),
+    ], {
+      cariche: [
+        { id: 'A', nome: 'Socio A', carica: 'PRESIDENTE_CDA', rappresentanzaLegale: true },
+        { id: 'B', nome: 'Socio B', carica: 'CONSIGLIERE_DELEGATO' },
+        { id: 'C', nome: 'Socio C', carica: 'CONSIGLIERE' },
+        { id: 'S1', nome: 'Sindaco Uno', carica: 'SINDACO' },
+      ],
+    });
+    expect(r.criterioApplicato).toBe('RESIDUALE_POTERI');
+    expect(r.titolari.map((t) => t.id).sort()).toEqual(['A', 'B']);
+    expect(r.titolari.find((t) => t.id === 'A')?.motivazione).toContain('presidente del consiglio');
+    expect(r.richiedeMotivazioneResiduale).toBe(true);
+  });
+});

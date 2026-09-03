@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { b64, cifra, decifra, unb64 } from '../worker/src/lib/crypto';
+import { b64, cifra, decifra, hmacTenant, unb64 } from '../worker/src/lib/crypto';
 
 // La MASTER_KEY arriva da `wrangler secret put`, cioè da un incolla umano:
 // può presentarsi in base64url o senza padding. La decodifica deve essere
@@ -45,5 +45,25 @@ describe('MASTER_KEY: diagnosi chiare invece di InvalidCharacterError', () => {
 
   it('valore non base64 (es. esadecimale con caratteri spuri): errore esplicito', async () => {
     await expect(cifra('!!!non-base64!!!', 'ten_prova', 'x')).rejects.toThrow(/non decodificabile come base64/);
+  });
+});
+
+describe('hmacTenant (AR-M17, cf_hash)', () => {
+  const chiave = b64(crypto.getRandomValues(new Uint8Array(32)));
+
+  it('è deterministico, normalizza maiuscole e spazi, e differisce per tenant', async () => {
+    const a = await hmacTenant(chiave, 'ten_a', 'rssmra80a01h501u');
+    const b = await hmacTenant(chiave, 'ten_a', ' RSSMRA80A01H501U ');
+    const c = await hmacTenant(chiave, 'ten_b', 'RSSMRA80A01H501U');
+    expect(a).toHaveLength(64);
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+  });
+
+  it('non coincide con l’impronta SHA-256 pura (serve la chiave)', async () => {
+    const h = await hmacTenant(chiave, 'ten_a', 'ABC');
+    const puro = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('ABC'));
+    const puroHex = [...new Uint8Array(puro)].map((x) => x.toString(16).padStart(2, '0')).join('');
+    expect(h).not.toBe(puroHex);
   });
 });

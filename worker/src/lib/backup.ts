@@ -73,6 +73,11 @@ export const TABELLE_ARCHIVIO = [
   // AR-M8: le richieste di verifica a distanza referenziano fascicoli e clienti.
   'richieste_verifica',
   'documenti',
+  // AR-M17: compagine e cariche referenziano clienti e documenti (fonte);
+  // le proposte referenziano clienti e utenti.
+  'partecipazioni',
+  'cariche',
+  'proposte',
   'valutazioni_rischio',
   'operazioni',
   'segnalazioni_sospette',
