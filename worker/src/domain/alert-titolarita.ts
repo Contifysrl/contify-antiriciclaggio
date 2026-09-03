@@ -153,9 +153,12 @@ export function calcolaAlertTitolarita(input: InputAlert): Alert[] {
   // INCOMPLETO. Dire «nessuno supera il 25%» prima di aver risalito la
   // holding sarebbe l'errore che A1 esiste per evitare: qui si chiede la
   // visura della controllante (A4/A5), e A1/A3 aspettano.
+  // Vale anche in profondità: la holding è cliente, ma la sua socia no
+  // (`nodiIrrisolti` dall'analisi della catena).
+  const irrisoltiProfondi = (analisi.nodiIrrisolti ?? []).filter((n) => !sociReali.some((s) => s.id === n.id));
   const catenaIncompleta = sociReali.some(
     (s) => (s.tipo === 'PERSONA_GIURIDICA' || s.tipo === 'ALTRO') && !s.clienteStudio,
-  );
+  ) || irrisoltiProfondi.length > 0;
   const proprietaVuota = haSoci && !catenaIncompleta && !['PROPRIETA_DIRETTA', 'PROPRIETA_INDIRETTA'].includes(analisi.criterioApplicato);
   const candidati = cariche
     .filter((c) => c.poteri ?? (CARICHE_CON_POTERI.has(c.carica) || Boolean(c.rappresentanzaLegale)))
@@ -276,6 +279,20 @@ export function calcolaAlertTitolarita(input: InputAlert): Alert[] {
         });
       }
     }
+  }
+
+  // A4 in profondità — la catena si ferma su una società che non è cliente
+  // dello studio, oltre il primo livello: serve la sua visura.
+  for (const n of irrisoltiProfondi) {
+    out.push({
+      codice: 'A4',
+      gravita: 'media',
+      titolo: 'Catena da risalire oltre la controllante',
+      messaggio: `${n.denominazione} detiene il ${pct(n.quotaEffettiva)} tramite ${n.tramite}: per individuare il titolare effettivo serve anche la sua compagine. Carica la sua visura, oppure inserisci i suoi soci a mano.`,
+      norma: 'art. 20 co. 2 lett. b) DLgs. 231/2007',
+      azione: { tipo: 'CARICA_VISURA', etichetta: `Carica la visura di ${n.denominazione}`, socioId: n.id, socioNome: n.denominazione },
+      bloccante: false,
+    });
   }
 
   // A7 — quote proprie, comproprietà, capitale non interamente versato.

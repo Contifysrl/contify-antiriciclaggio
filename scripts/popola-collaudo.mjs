@@ -21,8 +21,9 @@
  * lavora per contenuto; CF e P.IVA con checksum corretto ma di nessuno):
  *  - AI abilitata, tabella delle province a rischio contante, registro TE accreditato;
  *  - un secondo professionista associato (non amministratore) e una collaboratrice;
- *  - 6 società da visure sintetiche (SRL 70/30, holding con usufrutto e CdA, 4×25%, SPA senza soci,
- *    SRL in liquidazione con fiduciaria/estero/quote proprie, impresa individuale) con compagine,
+ *  - 9 società da visure (6 sintetiche: SRL 70/30, holding con usufrutto e CdA, 4×25%, SPA senza soci,
+ *    SRL in liquidazione con fiduciaria/estero/quote proprie, impresa individuale; 3 vere anonimizzate
+ *    che formano una catena su tre livelli: holding di una società semplice → SRL 50/50 e SRL unipersonale) con compagine,
  *    proposte di titolarità applicate/modificate/scartate, screening dei nomi, PDF conservati;
  *  - 14 clienti inseriti a mano (persone fisiche, società di persone, ente, trust; una PEP, una
  *    residente in paese terzo ad alto rischio, settori esposti: compro oro, gioco, cripto, immobiliare);
@@ -200,6 +201,11 @@ const VISURE = [
   { file: 'spa-senza-soci.txt', seme: 4102033, titolarita: 'RESIDUALE' },
   { file: 'srl-liquidazione-fiduciaria-estero-quote-proprie.txt', seme: 4102034, titolarita: 'SCARTA' },
   { file: 'impresa-individuale.txt', seme: null, titolarita: 'NESSUNA' },
+  // Catena vera su tre livelli (visure di Barbara, anonimizzate): la holding prima,
+  // così le partecipate la trovano già in archivio e la catena si risolve da sola.
+  { file: 'holding-socia-societa-semplice.txt', seme: null, titolarita: 'APPLICA' },
+  { file: 'srl-socio-pf-e-holding-cda.txt', seme: null, titolarita: 'APPLICA' },
+  { file: 'srl-unipersonale-socio-holding.txt', seme: null, titolarita: 'APPLICA' },
 ];
 
 // ── Esecuzione ─────────────────────────────────────────────────
@@ -280,8 +286,11 @@ passo('Società dalle visure camerali (compagine, titolarità, screening, PDF)')
 const clienti = {}; // denominazione → { id, tipo, proposta, esecutore }
 for (const v of VISURE) {
   const vis = fixture(v.file);
+  // Le fixture sintetiche hanno P.IVA non valide: si sostituiscono. Quelle della
+  // catena vera (già anonimizzate con P.IVA valide) restano com'è: i CF dei soci
+  // devono coincidere con quelli dei clienti perché la catena si risolva.
   if (v.seme) { vis.partitaIva = partitaIva(v.seme); vis.codiceFiscale = vis.partitaIva; }
-  else { vis.codiceFiscale = codiceFiscale('Esposito', 'Maria', '1975-11-22', 'F', 'B563'); vis.partitaIva = partitaIva(4102035); }
+  else if (v.file === 'impresa-individuale.txt') { vis.codiceFiscale = codiceFiscale('Esposito', 'Maria', '1975-11-22', 'F', 'B563'); vis.partitaIva = partitaIva(4102035); }
   const professionistaId = /holding|quattro/.test(v.file) ? idAssociata : idTitolare;
   const r = await amm.deve('POST', '/clienti/da-visura', corpoDaVisura(vis, { anagrafica: { professionistaId } }), null, [201]);
   const id = r.id;
@@ -375,6 +384,8 @@ const FASCICOLI = [
   { cliente: 'Sala Giochi La Lanterna Srl', prestazione: 'COSTITUZIONE_ENTI_TRUST', giorni: 250, tabellaA: { natura_giuridica: 2, prevalente_attivita: 4, comportamento: 2, area_geografica_cliente: 3 }, tabellaB: B(2), firma: 'TITOLARE' },
   { cliente: 'Cripto Nord Srl', prestazione: 'BUSINESS_PLAN', giorni: 35, tabellaA: { natura_giuridica: 2, prevalente_attivita: 4, comportamento: 3, area_geografica_cliente: 2 }, tabellaB: B(3), circostanze: { elevatoUsoContante: false }, firma: 'ASSOCIATA', verificaRemota: 'COMPLETATA' },
   { cliente: 'Sgarbossa Nives', prestazione: 'DICHIARAZIONI_FISCALI', giorni: 3, valutazione: false },
+  { cliente: 'AURIGA FORMAZIONE S.R.L.', prestazione: 'TENUTA_CONTABILITA', giorni: 20, proposta: 'APPLICA', A3: 1, tabellaB: B(2), firma: 'TITOLARE', esecutore: true },
+  { cliente: 'SEI SIGMA ITALIA S.R.L.', prestazione: 'CONSULENZA_TRIBUTARIA', giorni: 8, valutazione: false, esecutore: true },
 ];
 const fascicoli = [];
 let sosFascicolo = null, astensioneFascicolo = null, vrAperta = null, vrCompletata = null;

@@ -15,6 +15,15 @@ export interface VoceNovita {
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-09-05-visure-vere-catena',
+    data: '2026-09-05',
+    titolo: 'Visure: cariche al femminile e catene su più livelli',
+    punti: [
+      'Il lettore delle visure riconosce le cariche scritte al femminile («amministratrice unica», «consigliera», «liquidatrice»), le intestazioni spezzate su due righe («Presidente Consiglio» / «Amministrazione»), la nascita indicata sulla riga del nome e chi cumula più cariche: la principale (presidente del CdA prima di consigliere) diventa la carica, le altre restano nei poteri. Calibrato su tre visure vere di un gruppo a tre livelli.',
+      'Catena partecipativa: se la holding è già cliente ma la sua socia no, il programma non salta più al criterio residuale dell’art. 20 co. 5 — «nessuno supera il 25%» non si può dire senza aver risalito tutta la catena. Si ferma, lo scrive fra le avvertenze e apre un alert A4 «Catena da risalire oltre la controllante» con l’invito a caricare la visura mancante.',
+    ],
+  },
+  {
     id: '2026-09-05-scadenzario-termini-chiusi',
     data: '2026-09-05',
     titolo: 'Scadenzario: i termini dei trenta giorni si chiudono con la firma',

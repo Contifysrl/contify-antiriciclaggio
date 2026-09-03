@@ -293,8 +293,8 @@ export function PropostaTitolaritaBox({ clienteId, proposta, onRegistrata, vaiA 
       {/* Alert */}
       {alert.length > 0 && (
         <div className="space-y-2">
-          {alert.map((a) => (
-            <div key={a.codice} className={`rounded-lg border px-4 py-3 ${a.gravita === 'alta' ? 'border-red-200 bg-red-50/60' : a.gravita === 'media' ? 'border-amber-200 bg-amber-50/60' : 'border-ink-200'}`}>
+          {alert.map((a, i) => (
+            <div key={`${a.codice}-${i}`} className={`rounded-lg border px-4 py-3 ${a.gravita === 'alta' ? 'border-red-200 bg-red-50/60' : a.gravita === 'media' ? 'border-amber-200 bg-amber-50/60' : 'border-ink-200'}`}>
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <Badge tone={TONO[a.gravita]}>{a.codice}</Badge> <strong className="ml-1">{a.titolo}</strong>

@@ -148,6 +148,12 @@ export interface RisultatoAnalisiTitolarita {
    * dichiarazione art. 22 precompilata.
    */
   quotePersoneFisiche: Array<{ id: string; denominazione: string; quota: number }>;
+  /**
+   * Persone giuridiche raggiunte nella catena di cui NON si conosce la compagine
+   * (non clienti dello studio, nessun socio descritto): finché ci sono, il
+   * criterio della proprietà è incompleto, non fallito. Servono agli alert (A4).
+   */
+  nodiIrrisolti: Array<{ id: string; denominazione: string; quotaEffettiva: number; tramite: string }>;
   /** Vincoli sulle quote incontrati lungo la catena (usufrutto, pegno…): materia del co. 3. */
   vincoliSulleQuote: Array<{ soggettoId: string; denominazione: string; partecipataId: string; diritto: DirittoPartecipazione; quota: number }>;
   /** Quote proprie escluse dal denominatore, per partecipata. */
@@ -222,7 +228,7 @@ function percorriCatena(
   catena: string[],
   accumulatore: Map<string, Array<{ catena: string[]; quota: number }>>,
   visitatiNelPercorso: Set<string>,
-  risultato: Pick<RisultatoAnalisiTitolarita, 'vincoliSulleQuote' | 'quoteProprie' | 'avvertenze'>,
+  risultato: Pick<RisultatoAnalisiTitolarita, 'vincoliSulleQuote' | 'quoteProprie' | 'avvertenze' | 'nodiIrrisolti'>,
 ): void {
   const nodo = nodi.get(idCorrente);
   const avvertenze = risultato.avvertenze;
@@ -259,6 +265,13 @@ function percorriCatena(
           ? `"${figlio.denominazione}" è un trust: per la quota del ${(quota * 100).toFixed(2)}% si applica l'art. 22 co. 5 (costituente, trustee, guardiano, beneficiari).`
           : `"${figlio.denominazione}" è una società fiduciaria: interposizione ex art. 20 co. 2 lett. b). Il titolare effettivo della quota del ${(quota * 100).toFixed(2)}% è il fiduciante, da acquisire per iscritto.`,
       );
+    } else if (!figlio.partecipazioni?.length && !figlio.controlloNonDominicale) {
+      // Società di cui non si conosce la compagine: la catena si ferma qui,
+      // e questo NON significa che nessuno superi la soglia. Si segnala.
+      risultato.nodiIrrisolti.push({ id: figlio.id, denominazione: figlio.denominazione, quotaEffettiva: quota, tramite: nodo.denominazione });
+      avvertenze.push(
+        `"${figlio.denominazione}" (${(quota * 100).toFixed(2)}% tramite ${nodo.denominazione}) è una società di cui non si conosce la compagine: catena incompleta, serve la sua visura.`,
+      );
     } else {
       percorriCatena(nodi, p.id, quota, nuovaCatena, accumulatore, prossimiVisitati, risultato);
     }
@@ -290,6 +303,7 @@ export function analizzaTitolaritaEffettiva(
     quotePersoneFisiche: [] as RisultatoAnalisiTitolarita['quotePersoneFisiche'],
     vincoliSulleQuote: [] as RisultatoAnalisiTitolarita['vincoliSulleQuote'],
     quoteProprie: [] as RisultatoAnalisiTitolarita['quoteProprie'],
+    nodiIrrisolti: [] as RisultatoAnalisiTitolarita['nodiIrrisolti'],
   };
   const avvertenze = base.avvertenze;
 
@@ -406,6 +420,17 @@ export function analizzaTitolaritaEffettiva(
     avvertenze.push(
       `Nessuna persona fisica detiene una partecipazione ${parametri.etichettaSoglia} (${parametri.norma}): il criterio della proprietà non individua titolari effettivi.`,
     );
+  }
+
+  // Catena incompleta ≠ criterio della proprietà fallito: finché una società
+  // della catena non ha compagine nota, passare al controllo o al residuale
+  // sarebbe dire «nessuno supera la soglia» senza averlo verificato. Ci si
+  // ferma e si chiede la visura mancante (alert A4).
+  if (base.nodiIrrisolti.length > 0) {
+    avvertenze.push(
+      `Catena partecipativa incompleta (${base.nodiIrrisolti.map((n) => n.denominazione).join(', ')}): i criteri dei commi 3 e 5 si applicano solo dopo aver risalito tutte le società della catena.`,
+    );
+    return { ...base, titolari: [], criterioApplicato: 'NESSUNO', richiedeMotivazioneResiduale: false };
   }
 
   // Art. 20 co. 3: controllo non dominicale.

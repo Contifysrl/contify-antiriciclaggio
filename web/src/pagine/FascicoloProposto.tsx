@@ -120,7 +120,7 @@ export function FascicoloProposto({ fascicoloId, clienteId, esente, valutata, ag
       ))}
       {p.alertTitolarita.length > 0 && (
         <div className="riquadro info">
-          Titolarità effettiva: {p.alertTitolarita.map((a) => <Badge key={a.codice} tone={TONO[a.gravita] ?? 'gray'}>{a.codice}</Badge>)}{' '}
+          Titolarità effettiva: {p.alertTitolarita.map((a, i) => <Badge key={`${a.codice}-${i}`} tone={TONO[a.gravita] ?? 'gray'}>{a.codice}</Badge>)}{' '}
           {p.alertTitolarita.filter((a) => a.bloccante).length > 0 ? 'ci sono alert bloccanti da chiudere nella scheda del cliente prima di registrare i titolari effettivi.' : 'gli alert si gestiscono nella scheda del cliente.'}
         </div>
       )}

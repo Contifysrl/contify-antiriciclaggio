@@ -273,3 +273,28 @@ describe('A8 — screening e residenza', () => {
     expect(a8.messaggio).toContain('IR');
   });
 });
+
+describe('A4 in profondità — la holding è cliente ma la sua socia no (catena vera di tre livelli, 3.9.2026)', () => {
+  it('A1/A3 aspettano: la catena è incompleta al secondo livello, e si chiede la visura della socia della holding', () => {
+    const cariche: Carica[] = [{ id: 'AU', nome: 'Dal Maso Clotilde', carica: 'AMMINISTRATORE_UNICO', rappresentanzaLegale: true }];
+    const nodi: NodoPartecipazione[] = [
+      { id: 'CLI', denominazione: 'Sei Sigma Srl', tipo: 'PERSONA_GIURIDICA', partecipazioni: [{ id: 'HOLD', quota: 1, diritto: 'PROPRIETA' }] },
+      { id: 'HOLD', denominazione: 'Vega Holding Srl', tipo: 'PERSONA_GIURIDICA', partecipazioni: [{ id: 'SS', quota: 1, diritto: 'PROPRIETA' }] },
+      { id: 'SS', denominazione: 'Rovigatti & Dal Maso Holding S.S.', tipo: 'PERSONA_GIURIDICA' },
+    ];
+    const analisi = analizzaTitolaritaEffettiva('CLI', nodi, { cariche, data: '2026-09-03' });
+    expect(analisi.titolari).toEqual([]);
+    expect(analisi.nodiIrrisolti).toEqual([{ id: 'SS', denominazione: 'Rovigatti & Dal Maso Holding S.S.', quotaEffettiva: 1, tramite: 'Vega Holding Srl' }]);
+    expect(analisi.avvertenze.join(' ')).toContain('catena incompleta');
+    const soci: SocioCompagine[] = [{ id: 'HOLD', nome: 'Vega Holding Srl', tipo: 'PERSONA_GIURIDICA', diritto: 'PROPRIETA', quota: 1, paese: 'IT', clienteStudio: { id: 'cli_v', denominazione: 'Vega Holding Srl', visuraDel: '2026-03-24' } }];
+    const alert = calcolaAlertTitolarita({
+      denominazione: 'Sei Sigma Srl', tipoCliente: 'SOCIETA_CAPITALI', analisi, soci, cariche, paeseAltoRischio,
+      dataVisura: '2026-08-29', dataElencoSoci: '2022-02-17', capitale: { sottoscritto: 10000, versato: 10000 },
+    });
+    expect(codici(alert)).not.toContain('A1');
+    expect(codici(alert)).not.toContain('A3');
+    const a4 = alert.filter((a) => a.codice === 'A4');
+    expect(a4.map((a) => a.azione.tipo)).toEqual(['CATENA_RISOLTA', 'CARICA_VISURA']);
+    expect(a4[1].messaggio).toContain('Rovigatti & Dal Maso Holding S.S. detiene il 100% tramite Vega Holding Srl');
+  });
+});
