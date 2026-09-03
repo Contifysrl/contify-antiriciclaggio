@@ -90,6 +90,7 @@ npx wrangler dev --local   # porta 8787
 npm test                   # test di dominio (parser visura incluso: tests/visura.test.ts)
 node scripts/smoke-api.mjs # verifiche end-to-end; poi le suite per milestone smoke-api-m11…m17.mjs
 node scripts/ui-m17.mjs    # giro Playwright «Nuovo da visura» (dopo npm run build)
+node scripts/smoke-api-console-studi.mjs && node scripts/ui-console-studi.mjs   # console: «Nuovo studio»
 npm run typecheck
 ```
 

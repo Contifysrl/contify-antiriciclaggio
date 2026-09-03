@@ -323,6 +323,9 @@ function ConversazioneConsole({ id, onChiudi }: { id: string; onChiudi: () => vo
 interface StudioRiga {
   id: string;
   denominazione: string;
+  codiceFiscale: string | null;
+  partitaIva: string | null;
+  ordineIscrizione: string | null;
   stato: 'attivo' | 'sospeso' | 'cessato';
   dataAttivazione: string | null;
   dataScadenzaCanone: string | null;
@@ -356,6 +359,7 @@ function StudiConsole() {
   const [studi, setStudi] = useState<StudioRiga[] | null>(null);
   const [errore, setErrore] = useState('');
   const [aperto, setAperto] = useState<StudioRiga | null>(null);
+  const [nuovo, setNuovo] = useState(false);
 
   const carica = () => {
     api.get<{ studi: StudioRiga[] }>('/console/studi')
@@ -367,8 +371,18 @@ function StudiConsole() {
   return (
     <>
       {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
+      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+        <span className="text-sm text-ink-500">
+          {studi === null ? '' : `${studi.length} stud${studi.length === 1 ? 'io' : 'i'}`}
+        </span>
+        <button type="button" className="btn btn-primary btn-sm" onClick={() => setNuovo(true)}>
+          + Nuovo studio
+        </button>
+      </div>
       {studi === null ? (
         <Spinner />
+      ) : studi.length === 0 ? (
+        <div className="card p-8 text-center text-sm text-ink-400">Nessuno studio ancora: attiva il primo con «Nuovo studio».</div>
       ) : (
         <div className="card p-5">
           <table>
@@ -413,7 +427,195 @@ function StudiConsole() {
       {aperto && (
         <StudioModal studio={aperto} onChiudi={(ricarica) => { setAperto(null); if (ricarica) carica(); }} />
       )}
+      {nuovo && (
+        <NuovoStudioModal onChiudi={(creato) => { setNuovo(false); if (creato) carica(); }} />
+      )}
     </>
+  );
+}
+
+// ── Nuovo studio ───────────────────────────────────────────────
+// Attiva uno studio con il suo primo professionista amministratore.
+// La password temporanea si vede qui una volta sola: se l'email di
+// benvenuto non parte (o non arriva), va comunicata a voce.
+
+interface EsitoNuovoStudio {
+  id: string;
+  utenteId: string;
+  passwordTemporanea: string;
+  emailInviata: boolean;
+}
+
+function NuovoStudioModal({ onChiudi }: { onChiudi: (creato: boolean) => void }) {
+  const [denominazione, setDenominazione] = useState('');
+  const [codiceFiscale, setCodiceFiscale] = useState('');
+  const [partitaIva, setPartitaIva] = useState('');
+  const [ordineIscrizione, setOrdineIscrizione] = useState('');
+  const [attivazione, setAttivazione] = useState(new Date().toISOString().slice(0, 10));
+  const [scadenza, setScadenza] = useState('');
+  const [posti, setPosti] = useState('');
+  const [note, setNote] = useState('');
+  const [pNome, setPNome] = useState('');
+  const [pEmail, setPEmail] = useState('');
+  const [pQualifica, setPQualifica] = useState('Dott.');
+  const [pCf, setPCf] = useState('');
+  const [pOrdine, setPOrdine] = useState('');
+  const [pNumero, setPNumero] = useState('');
+  const [errore, setErrore] = useState('');
+  const [omonimo, setOmonimo] = useState(false);
+  const [invio, setInvio] = useState(false);
+  const [esito, setEsito] = useState<EsitoNuovoStudio | null>(null);
+  const [copiato, setCopiato] = useState(false);
+
+  const submit = async (e: FormEvent, confermaOmonimo = false) => {
+    e.preventDefault();
+    setErrore(''); setInvio(true);
+    try {
+      const r = await api.post<EsitoNuovoStudio>('/console/studi', {
+        denominazione, codiceFiscale, partitaIva, ordineIscrizione,
+        dataAttivazione: attivazione || null,
+        dataScadenzaCanone: scadenza || null,
+        professionistiInclusi: posti.trim() === '' ? null : Number(posti),
+        noteContratto: note.trim() || null,
+        confermaOmonimo,
+        professionista: { nome: pNome, email: pEmail, qualifica: pQualifica, codiceFiscale: pCf, ordine: pOrdine, numeroIscrizione: pNumero },
+      });
+      setEsito(r);
+    } catch (err) {
+      const msg = (err as Error).message;
+      setOmonimo(/gi[àa] uno studio chiamato/i.test(msg));
+      setErrore(msg);
+    } finally {
+      setInvio(false);
+    }
+  };
+
+  const copia = async () => {
+    if (!esito) return;
+    try {
+      await navigator.clipboard.writeText(`${pEmail}\n${esito.passwordTemporanea}`);
+      setCopiato(true);
+    } catch { /* clipboard non disponibile */ }
+  };
+
+  if (esito) {
+    return (
+      <Modal title={`Studio attivato — ${denominazione}`} onClose={() => onChiudi(true)}>
+        <div className="space-y-3 text-sm">
+          <div className={`riquadro ${esito.emailInviata ? 'info' : 'avviso'} !my-0`}>
+            {esito.emailInviata
+              ? <>L'email di benvenuto è partita verso <strong>{pEmail}</strong>.</>
+              : <>L'email di benvenuto <strong>non è partita</strong>: comunica le credenziali a voce o per altra via.</>}
+          </div>
+          <p>Credenziali di primo accesso di <strong>{pNome}</strong> (la password compare qui una volta sola e al primo accesso va cambiata):</p>
+          <div className="bg-ink-100 rounded-lg px-4 py-3 mono text-sm">
+            <div>Email: <strong>{pEmail}</strong></div>
+            <div>Password temporanea: <strong data-test="password-temporanea">{esito.passwordTemporanea}</strong></div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn btn-secondary btn-sm" onClick={copia}>{copiato ? 'Copiato' : 'Copia credenziali'}</button>
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => onChiudi(true)}>Chiudi</button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title="Nuovo studio" onClose={() => onChiudi(false)} wide>
+      {errore && <ErrorBanner message={errore} onDismiss={() => { setErrore(''); setOmonimo(false); }} />}
+      <form onSubmit={(e) => submit(e)} className="space-y-4 text-sm">
+        <fieldset className="space-y-3">
+          <legend className="font-semibold text-ink-700">Studio</legend>
+          <div>
+            <label className="label">Denominazione</label>
+            <input className="input" value={denominazione} onChange={(e) => setDenominazione(e.target.value)} required maxLength={200} autoFocus placeholder="Studio Rossi & Associati" />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <label className="label">Codice fiscale</label>
+              <input className="input mono" value={codiceFiscale} onChange={(e) => setCodiceFiscale(e.target.value.toUpperCase())} maxLength={16} />
+            </div>
+            <div>
+              <label className="label">Partita IVA</label>
+              <input className="input mono" value={partitaIva} onChange={(e) => setPartitaIva(e.target.value)} maxLength={11} inputMode="numeric" />
+            </div>
+            <div>
+              <label className="label">Ordine (ODCEC)</label>
+              <input className="input" value={ordineIscrizione} onChange={(e) => setOrdineIscrizione(e.target.value)} maxLength={120} placeholder="ODCEC Padova" />
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset className="space-y-3">
+          <legend className="font-semibold text-ink-700">Primo professionista (amministratore dello studio)</legend>
+          <div className="grid gap-3 sm:grid-cols-[100px_1fr_1fr]">
+            <div>
+              <label className="label">Qualifica</label>
+              <input className="input" value={pQualifica} onChange={(e) => setPQualifica(e.target.value)} maxLength={120} />
+            </div>
+            <div>
+              <label className="label">Nome e cognome</label>
+              <input className="input" value={pNome} onChange={(e) => setPNome(e.target.value)} required maxLength={120} />
+            </div>
+            <div>
+              <label className="label">Email (sarà il suo accesso)</label>
+              <input className="input" type="email" value={pEmail} onChange={(e) => setPEmail(e.target.value)} required autoComplete="off" />
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <label className="label">Codice fiscale</label>
+              <input className="input mono" value={pCf} onChange={(e) => setPCf(e.target.value.toUpperCase())} maxLength={16} />
+            </div>
+            <div>
+              <label className="label">Ordine di iscrizione</label>
+              <input className="input" value={pOrdine} onChange={(e) => setPOrdine(e.target.value)} maxLength={120} placeholder="Padova" />
+            </div>
+            <div>
+              <label className="label">Numero di iscrizione</label>
+              <input className="input" value={pNumero} onChange={(e) => setPNumero(e.target.value)} maxLength={120} />
+            </div>
+          </div>
+          <div className="aiuto">
+            Riceve una password temporanea da cambiare al primo accesso, e potrà aggiungere gli altri utenti da solo.
+            Qualifica, ordine e numero compaiono nell'intestazione dei verbali: si possono completare dopo.
+          </div>
+        </fieldset>
+
+        <fieldset className="space-y-3">
+          <legend className="font-semibold text-ink-700">Contratto</legend>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <label className="label">Attivazione</label>
+              <input className="input" type="date" value={attivazione} onChange={(e) => setAttivazione(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">Scadenza canone</label>
+              <input className="input" type="date" value={scadenza} onChange={(e) => setScadenza(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">Posti professionista</label>
+              <input className="input" type="number" min={1} max={999} value={posti} onChange={(e) => setPosti(e.target.value)} placeholder="vuoto = nessun limite" />
+            </div>
+          </div>
+          <div>
+            <label className="label">Note contratto (visibili solo a Contify)</label>
+            <textarea className="input min-h-[60px]" value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} placeholder="Numero offerta, referente, condizioni particolari…" />
+          </div>
+        </fieldset>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => onChiudi(false)}>Annulla</button>
+          {omonimo && (
+            <button type="button" className="btn btn-secondary btn-sm !text-amber-700" disabled={invio} onClick={(e) => submit(e as unknown as FormEvent, true)}>
+              È un altro studio: crea comunque
+            </button>
+          )}
+          <button className="btn btn-primary btn-sm" disabled={invio}>{invio ? 'Attivazione…' : 'Attiva lo studio'}</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -427,6 +629,29 @@ function StudioModal({ studio, onChiudi }: { studio: StudioRiga; onChiudi: (rica
   const [invio, setInvio] = useState(false);
   const [confermaStato, setConfermaStato] = useState<'sospeso' | 'cessato' | 'attivo' | null>(null);
   const [toccato, setToccato] = useState(false);
+  const [anag, setAnag] = useState({
+    denominazione: studio.denominazione,
+    codiceFiscale: studio.codiceFiscale ?? '',
+    partitaIva: studio.partitaIva ?? '',
+    ordineIscrizione: studio.ordineIscrizione ?? '',
+  });
+  const [salvaAnag, setSalvaAnag] = useState(false);
+  const [titolo, setTitolo] = useState(studio.denominazione);
+
+  const salvaAnagrafica = async (e: FormEvent) => {
+    e.preventDefault();
+    setErrore(''); setEsito(''); setSalvaAnag(true);
+    try {
+      await api.post(`/console/studi/${studio.id}/anagrafica`, anag);
+      setEsito('Anagrafica salvata.');
+      setTitolo(anag.denominazione.trim());
+      setToccato(true);
+    } catch (err) {
+      setErrore((err as Error).message);
+    } finally {
+      setSalvaAnag(false);
+    }
+  };
 
   const salva = async (e: FormEvent) => {
     e.preventDefault();
@@ -477,7 +702,7 @@ function StudioModal({ studio, onChiudi }: { studio: StudioRiga; onChiudi: (rica
   };
 
   return (
-    <Modal title={studio.denominazione} onClose={() => onChiudi(toccato)} wide>
+    <Modal title={titolo} onClose={() => onChiudi(toccato)} wide>
       <div className="flex items-center gap-2 mb-4">
         <Badge tone={STATO_STUDIO[studio.stato].tone}>{STATO_STUDIO[studio.stato].testo}</Badge>
         <span className="text-xs text-ink-400">
@@ -486,7 +711,35 @@ function StudioModal({ studio, onChiudi }: { studio: StudioRiga; onChiudi: (rica
       </div>
       {esito && <div className="riquadro info !my-2 text-sm">{esito}</div>}
       {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
+
+      <form onSubmit={salvaAnagrafica} className="space-y-3 text-sm mb-5 pb-5 border-b border-ink-100">
+        <div className="font-semibold text-ink-700">Anagrafica dello studio</div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <label className="label">Denominazione</label>
+            <input className="input" value={anag.denominazione} onChange={(e) => setAnag({ ...anag, denominazione: e.target.value })} required maxLength={200} />
+          </div>
+          <div>
+            <label className="label">Codice fiscale</label>
+            <input className="input mono" value={anag.codiceFiscale} onChange={(e) => setAnag({ ...anag, codiceFiscale: e.target.value.toUpperCase() })} maxLength={16} />
+          </div>
+          <div>
+            <label className="label">Partita IVA</label>
+            <input className="input mono" value={anag.partitaIva} onChange={(e) => setAnag({ ...anag, partitaIva: e.target.value })} maxLength={11} inputMode="numeric" />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="label">Ordine (ODCEC)</label>
+            <input className="input" value={anag.ordineIscrizione} onChange={(e) => setAnag({ ...anag, ordineIscrizione: e.target.value })} maxLength={120} />
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <button className="btn btn-secondary btn-sm" disabled={salvaAnag}>{salvaAnag ? 'Salvataggio…' : 'Salva anagrafica'}</button>
+        </div>
+        <div className="aiuto">Lo studio non può modificare da solo questi dati: compaiono nei verbali e nei backup.</div>
+      </form>
+
       <form onSubmit={salva} className="space-y-3 text-sm">
+        <div className="font-semibold text-ink-700">Licenza e contratto</div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <label className="label">Attivazione</label>

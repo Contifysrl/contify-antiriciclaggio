@@ -3533,7 +3533,8 @@ consoleApp.post('/ticket/:id/chiudi', async (c) => {
 
 consoleApp.get('/studi', async (c) => {
   const { results } = await c.env.DB.prepare(
-    `SELECT t.id, t.denominazione, t.stato, t.data_attivazione AS dataAttivazione,
+    `SELECT t.id, t.denominazione, t.codice_fiscale AS codiceFiscale, t.partita_iva AS partitaIva,
+            t.ordine_iscrizione AS ordineIscrizione, t.stato, t.data_attivazione AS dataAttivazione,
             t.data_scadenza_canone AS dataScadenzaCanone, t.note_contratto AS noteContratto,
             t.professionisti_inclusi AS professionistiInclusi,
             (SELECT COUNT(*) FROM utenti u WHERE u.tenant_id = t.id AND u.attivo = 1) AS nUtenti,
@@ -3602,6 +3603,159 @@ consoleApp.post('/studi/:id/stato', async (c) => {
     entita: 'tenants', entitaId: t.id, dettaglio: { operatore: o.email, da: t.stato, a: stato },
   });
   return c.json({ ok: true, stato });
+});
+
+// ── Studi: attivazione di un nuovo studio (AR-M18-pre) ─────────
+// Finora il tenant nasceva a mano in D1. Qui la console lo crea in un
+// colpo solo con il suo primo professionista amministratore: senza un
+// amministratore nessuno potrebbe entrare, e senza un professionista
+// nessuno potrebbe identificare e firmare. La password temporanea compare
+// nella risposta UNA SOLA VOLTA (come in POST /utenti); l'email di
+// benvenuto è best-effort e la risposta dice se è partita.
+
+/** Anagrafica dello studio dal corpo della richiesta; `base` = riga attuale (modifica). */
+function datiAnagraficaStudio(b: any, base: any = {}) {
+  const testo = (v: unknown, attuale: unknown, max: number): string | null =>
+    v === undefined ? (attuale == null ? null : String(attuale)) : (String(v ?? '').trim().slice(0, max) || null);
+  // Prima si normalizza (maiuscole, via spazi e punti), poi si tronca:
+  // «bnc lcu 80a01 l781 z» deve diventare BNCLCU80A01L781Z, non perdere la coda.
+  const cf = b.codiceFiscale === undefined ? base.codice_fiscale : String(b.codiceFiscale ?? '').toUpperCase().replace(/[\s.]+/g, '').slice(0, 16);
+  const piva = b.partitaIva === undefined ? base.partita_iva : String(b.partitaIva ?? '').replace(/\D/g, '').slice(0, 11);
+  return {
+    denominazione: testo(b.denominazione, base.denominazione, 200),
+    codiceFiscale: cf ? String(cf) : null,
+    partitaIva: piva ? String(piva) : null,
+    ordineIscrizione: testo(b.ordineIscrizione, base.ordine_iscrizione, 120),
+  };
+}
+
+function erroreAnagraficaStudio(a: ReturnType<typeof datiAnagraficaStudio>): string | null {
+  if (!a.denominazione) return 'La denominazione dello studio è obbligatoria';
+  if (a.codiceFiscale && !/^[A-Z0-9]{11}$|^[A-Z]{6}[0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]$/.test(a.codiceFiscale)) {
+    return 'Il codice fiscale dello studio non ha un formato valido (11 cifre o 16 caratteri)';
+  }
+  if (a.partitaIva && !/^\d{11}$/.test(a.partitaIva)) return 'La partita IVA deve avere 11 cifre';
+  return null;
+}
+
+consoleApp.post('/studi', async (c) => {
+  const o = c.get('operatore');
+  const b = await c.req.json<any>().catch(() => ({}));
+
+  const anagrafica = datiAnagraficaStudio(b);
+  const erroreAnag = erroreAnagraficaStudio(anagrafica);
+  if (erroreAnag || !anagrafica.denominazione) return c.json({ errore: erroreAnag ?? 'La denominazione dello studio è obbligatoria' }, 400);
+  const denominazione = anagrafica.denominazione;
+
+  // Primo professionista: obbligatorio, sempre TITOLARE e amministratore.
+  const p = b.professionista ?? {};
+  const email = String(p.email ?? '').toLowerCase().trim();
+  const nome = String(p.nome ?? '').trim();
+  if (!email.includes('@')) return c.json({ errore: 'L\'email del primo professionista non è valida' }, 400);
+  if (!nome) return c.json({ errore: 'Il nome del primo professionista è obbligatorio' }, 400);
+  const albo = datiAlbo(p);
+
+  // Contratto: stessi controlli di POST /studi/:id/contratto.
+  const data = (v: unknown) => {
+    if (v === null || v === undefined || v === '') return null;
+    const s = String(v).slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : undefined;
+  };
+  const attivazione = data(b.dataAttivazione);
+  const scadenza = data(b.dataScadenzaCanone);
+  if (attivazione === undefined || scadenza === undefined) return c.json({ errore: 'Le date vanno indicate come AAAA-MM-GG' }, 400);
+  const note = String(b.noteContratto ?? '').trim().slice(0, 2000) || null;
+  let posti: number | null = null;
+  if (b.professionistiInclusi !== null && b.professionistiInclusi !== undefined && b.professionistiInclusi !== '') {
+    const n = Number(b.professionistiInclusi);
+    if (!Number.isInteger(n) || n < 1 || n > 999) {
+      return c.json({ errore: 'I posti professionista vanno indicati come numero intero da 1 a 999, o lasciati vuoti per nessun limite' }, 400);
+    }
+    posti = n;
+  }
+
+  // L'email è unica in tutta la piattaforma (idx_utenti_email): un
+  // professionista non può stare in due studi con lo stesso indirizzo.
+  const esiste = await c.env.DB.prepare('SELECT id FROM utenti WHERE email = ?').bind(email).first();
+  if (esiste) return c.json({ errore: 'Esiste già un utente con questa email in un altro studio' }, 409);
+  const omonimo = await c.env.DB.prepare('SELECT id, denominazione FROM tenants WHERE lower(denominazione) = lower(?)')
+    .bind(denominazione).first<any>();
+  if (omonimo && !b.confermaOmonimo) {
+    return c.json({ errore: `Esiste già uno studio chiamato «${omonimo.denominazione}». Conferma se è davvero un altro studio.`, codice: 'omonimo' }, 409);
+  }
+
+  const tenantId = nuovoId('ten');
+  const utenteId = nuovoId('usr');
+  const passwordTemporanea = generaPasswordTemporanea();
+  const parametri = { giorniPreavviso: 30 };
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `INSERT INTO tenants (id, denominazione, codice_fiscale, partita_iva, ordine_iscrizione, piano, ruleset_default, parametri,
+         stato, data_attivazione, data_scadenza_canone, note_contratto, professionisti_inclusi)
+       VALUES (?, ?, ?, ?, ?, 'BASE', ?, ?, 'attivo', ?, ?, ?, ?)`,
+    ).bind(
+      tenantId, anagrafica.denominazione, anagrafica.codiceFiscale, anagrafica.partitaIva, anagrafica.ordineIscrizione,
+      CNDCEC_2025.id, JSON.stringify(parametri), attivazione, scadenza, note, posti,
+    ),
+    c.env.DB.prepare(
+      `INSERT INTO utenti (id, tenant_id, email, nome, password_hash, ruolo, cambio_password_richiesto,
+         amministratore, codice_fiscale, ordine, numero_iscrizione, qualifica)
+       VALUES (?, ?, ?, ?, ?, 'TITOLARE', 1, 1, ?, ?, ?, ?)`,
+    ).bind(utenteId, tenantId, email, nome, await hashPassword(passwordTemporanea), albo.codiceFiscale, albo.ordine, albo.numeroIscrizione, albo.qualifica),
+  ]);
+
+  // Prima voce del registro dello studio: chi lo ha attivato e con quale contratto.
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: null, azione: 'STUDIO_ATTIVATO', entita: 'tenants', entitaId: tenantId,
+    dettaglio: { operatore: o.email, denominazione: anagrafica.denominazione, dataAttivazione: attivazione, dataScadenzaCanone: scadenza, professionistiInclusi: posti },
+  });
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: null, azione: 'CREA_UTENTE', entita: 'utenti', entitaId: utenteId,
+    dettaglio: { email, nome, ruolo: 'TITOLARE', amministratore: true, operatore: o.email },
+  });
+
+  const emailInviata = await inviaEmailBenvenuto(c.env, {
+    destinatario: email, nome, passwordTemporanea, studio: denominazione,
+  }).catch(() => false);
+
+  return c.json({ id: tenantId, utenteId, passwordTemporanea, emailInviata }, 201);
+});
+
+consoleApp.get('/studi/:id', async (c) => {
+  const t = await c.env.DB.prepare(
+    `SELECT id, denominazione, codice_fiscale AS codiceFiscale, partita_iva AS partitaIva,
+            ordine_iscrizione AS ordineIscrizione, stato, creato_il AS creatoIl
+     FROM tenants WHERE id = ?`,
+  ).bind(c.req.param('id')).first<any>();
+  if (!t) return c.json({ errore: 'Studio non trovato' }, 404);
+  const { results: utenti } = await c.env.DB.prepare(
+    `SELECT id, email, nome, ruolo, amministratore, attivo, ultimo_accesso AS ultimoAccesso
+     FROM utenti WHERE tenant_id = ? ORDER BY ruolo = 'TITOLARE' DESC, nome`,
+  ).bind(t.id).all<any>();
+  return c.json({ studio: t, utenti: utenti.map((u: any) => ({ ...u, amministratore: !!u.amministratore, attivo: !!u.attivo })) });
+});
+
+consoleApp.post('/studi/:id/anagrafica', async (c) => {
+  const o = c.get('operatore');
+  const t = await c.env.DB.prepare('SELECT * FROM tenants WHERE id = ?').bind(c.req.param('id')).first<any>();
+  if (!t) return c.json({ errore: 'Studio non trovato' }, 404);
+  const b = await c.req.json<any>().catch(() => ({}));
+  const a = datiAnagraficaStudio(b, t);
+  const errore = erroreAnagraficaStudio(a);
+  if (errore) return c.json({ errore }, 400);
+  await c.env.DB.prepare(
+    'UPDATE tenants SET denominazione = ?, codice_fiscale = ?, partita_iva = ?, ordine_iscrizione = ? WHERE id = ?',
+  ).bind(a.denominazione, a.codiceFiscale, a.partitaIva, a.ordineIscrizione, t.id).run();
+  await scriviAudit(c.env.DB, {
+    tenantId: t.id, utenteId: null, azione: 'ANAGRAFICA_STUDIO_AGGIORNATA', entita: 'tenants', entitaId: t.id,
+    dettaglio: {
+      operatore: o.email,
+      prima: { denominazione: t.denominazione, codiceFiscale: t.codice_fiscale, partitaIva: t.partita_iva, ordineIscrizione: t.ordine_iscrizione },
+      dopo: a,
+    },
+  });
+  return c.json({ ok: true, studio: a });
 });
 
 api.route('/console', consoleApp);
