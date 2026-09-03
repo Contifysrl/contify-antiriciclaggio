@@ -45,6 +45,10 @@ export interface PropostaDto {
 function dettagliDaVisura(v: VisuraLetta): Record<string, unknown> {
   const d: Record<string, unknown> = {};
   if (v.sede.testo) d.sede = v.sede.testo;
+  if (v.sede.provincia) d.provincia = v.sede.provincia;
+  // AR-M18: servono al fascicolo proposto (A10 «oggetto sociale vs capitale», A9 liquidazione).
+  if (v.oggettoSociale) d.oggettoSociale = v.oggettoSociale.slice(0, 4000);
+  if (v.inLiquidazione) d.inLiquidazione = true;
   if (v.pec) d.pec = v.pec;
   if (v.rea) d.rea = v.rea;
   if (v.formaGiuridica) d.formaGiuridica = v.formaGiuridica;
@@ -633,12 +637,13 @@ function DettagliVisura({ dettagli }: { dettagli: Record<string, unknown> }) {
     sede: 'Sede legale', pec: 'PEC', rea: 'Numero REA', formaGiuridica: 'Forma giuridica', capitaleSociale: 'Capitale sottoscritto (€)',
     capitaleVersato: 'Capitale versato (€)', dataCostituzione: 'Data atto di costituzione', statoAttivita: 'Stato attività',
     proceduraConcorsuale: 'Procedura', visuraNumero: 'N. documento visura', visuraDel: 'Visura estratta il',
+    provincia: 'Provincia della sede', oggettoSociale: 'Oggetto sociale', inLiquidazione: 'In liquidazione',
   };
   return (
     <div className="rounded-lg border border-ink-100 px-4 py-3">
       <div className="text-xs uppercase tracking-wide text-ink-400 font-semibold mb-2">Dettagli conservati cifrati fra i dati identificativi</div>
       <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1 text-sm">
-        {voci.map(([k, v]) => <div key={k}><span className="text-ink-400">{etichette[k] ?? k}:</span> <strong>{typeof v === 'number' ? euro(v) : /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? formattaData(String(v)) : String(v)}</strong></div>)}
+        {voci.map(([k, v]) => <div key={k} className={k === 'oggettoSociale' ? 'sm:col-span-2' : ''}><span className="text-ink-400">{etichette[k] ?? k}:</span> <strong>{typeof v === 'number' ? euro(v) : v === true ? 'sì' : /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? formattaData(String(v)) : k === 'oggettoSociale' && String(v).length > 300 ? `${String(v).slice(0, 300)}…` : String(v)}</strong></div>)}
       </div>
     </div>
   );
@@ -660,6 +665,7 @@ function righeConfronto(cliente: any, v: VisuraLetta): Array<{ chiave: string; e
     ...Object.entries(d).map(([k, val]) => riga(`di.${k}`, ({
       sede: 'Sede legale', pec: 'PEC', rea: 'REA', formaGiuridica: 'Forma giuridica', capitaleSociale: 'Capitale sottoscritto', capitaleVersato: 'Capitale versato',
       dataCostituzione: 'Data costituzione', statoAttivita: 'Stato attività', proceduraConcorsuale: 'Procedura', visuraNumero: 'N. visura', visuraDel: 'Visura del',
+      provincia: 'Provincia', oggettoSociale: 'Oggetto sociale', inLiquidazione: 'In liquidazione',
     } as Record<string, string>)[k] ?? k, di[k], val)),
   ];
 }

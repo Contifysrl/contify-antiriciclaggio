@@ -15,6 +15,7 @@ import { ImportClientiModal } from './ImportClienti';
 import { VisuraModal } from './Visura';
 import { TitolaritaEffettiva, VerificaADistanza } from './TitolaritaVerifica';
 import { BozzaAi } from './BozzaAi';
+import { FascicoloProposto, type ContestoProposta } from './FascicoloProposto';
 import { CampoProfessionista, FiltroProfessionista, useProfessionisti } from '../lib/professionisti';
 
 // ===========================================================================
@@ -187,6 +188,26 @@ export function Fascicoli({ vaiA, cliente }: { vaiA: (p: string) => void; client
   }, []);
 
   const prestazioneScelta = prestazioni.find((p) => p.codice === f.prestazioneCodice);
+  // AR-M18: appena scelto il cliente, il programma propone l'esecutore dalle cariche in archivio.
+  const [esecutoreProposto, setEsecutoreProposto] = useState<any | null>(null);
+  useEffect(() => {
+    if (!nuovo || !f.clienteId) { setEsecutoreProposto(null); return; }
+    let attivo = true;
+    api.get<any>(`/clienti/${f.clienteId}/fascicolo-proposto`)
+      .then((r) => {
+        if (!attivo) return;
+        setEsecutoreProposto(r.esecutore ?? null);
+        setF((prev: any) => ({
+          ...prev,
+          esecutore: r.esecutore
+            ? { nominativo: r.esecutore.nominativo, codiceFiscale: r.esecutore.codiceFiscale ?? '', caricaTesto: r.esecutore.caricaTesto, carica: r.esecutore.carica, fonte: r.esecutore.fonte, daProposta: true }
+            : prev.esecutore,
+        }));
+      })
+      .catch(() => { if (attivo) setEsecutoreProposto(null); });
+    return () => { attivo = false; };
+    // eslint-disable-next-line
+  }, [f.clienteId, nuovo]);
   // Filtro per cliente: onorato anche quando arriva da un link vecchio
   // (#fascicoli?cliente=…), che fino a M13 veniva ignorato.
   const visibili = (cliente ? lista.filter((x) => x.cliente_id === cliente) : lista)
@@ -196,7 +217,8 @@ export function Fascicoli({ vaiA, cliente }: { vaiA: (p: string) => void; client
   async function salva() {
     setErrore('');
     try {
-      const r = await api.post<{ id: string; avvisi: string[] }>('/fascicoli', f);
+      const corpo = { ...f, esecutore: f.esecutore?.nominativo?.trim() ? f.esecutore : undefined };
+      const r = await api.post<{ id: string; avvisi: string[] }>('/fascicoli', corpo);
       setAvvisi(r.avvisi);
       setNuovo(false);
       carica();
@@ -310,6 +332,24 @@ export function Fascicoli({ vaiA, cliente }: { vaiA: (p: string) => void; client
               <div className="aiuto">Art. 19 co. 1 lett. a).</div>
             </div>
           </div>
+          {f.clienteId && clienti.find((c) => c.id === f.clienteId)?.tipo !== 'PERSONA_FISICA' && (
+            <div className="scheda" style={{ marginTop: 4 }} data-test="esecutore-form">
+              <h3 className="!mt-0">Esecutore (chi conferisce l’incarico in nome del cliente)</h3>
+              {esecutoreProposto ? (
+                <div className="aiuto">
+                  Proposto dai dati camerali: <strong>{esecutoreProposto.nominativo}</strong> — {esecutoreProposto.caricaTesto}{esecutoreProposto.rappresentanzaLegale ? ', rappresentante dell’impresa' : ''} ({esecutoreProposto.fonte}).
+                  Conferma o correggi: la visura non dice chi si presenta in studio (art. 1 co. 2 lett. p).
+                </div>
+              ) : (
+                <div className="aiuto">Nessuna carica con poteri in archivio: indica chi conferisce l’incarico, oppure lascia vuoto e completa dal fascicolo.</div>
+              )}
+              <div className="griglia c3">
+                <div className="campo"><label>Nome e cognome</label><input value={f.esecutore?.nominativo ?? ''} onChange={(e) => setF({ ...f, esecutore: { ...(f.esecutore ?? {}), nominativo: e.target.value, daProposta: false } })} /></div>
+                <div className="campo"><label>Codice fiscale</label><input value={f.esecutore?.codiceFiscale ?? ''} onChange={(e) => setF({ ...f, esecutore: { ...(f.esecutore ?? {}), codiceFiscale: e.target.value.toUpperCase() } })} /></div>
+                <div className="campo"><label>In qualità di</label><input value={f.esecutore?.caricaTesto ?? ''} onChange={(e) => setF({ ...f, esecutore: { ...(f.esecutore ?? {}), caricaTesto: e.target.value } })} /></div>
+              </div>
+            </div>
+          )}
           <div className="campo">
             <label>Scopo e natura della prestazione</label>
             <div className="aiuto">Art. 19 co. 1 lett. c): va acquisita e valutata la compatibilità con quanto lo studio conosce del cliente.</div>
@@ -387,6 +427,9 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
   const [astensioni, setAstensioni] = useState<any[]>([]);
   const [formAst, setFormAst] = useState<any>(null); // null = form chiuso
   const [titolariDichiarati, setTitolariDichiarati] = useState<any[] | null>(null); // dalla verifica a distanza
+  // AR-M18: contesto della proposta applicata alla Tabella A (id, punteggi proposti) e motivazione dello scostamento.
+  const [proposta, setProposta] = useState<ContestoProposta | null>(null);
+  const [motivazioneScostamento, setMotivazioneScostamento] = useState('');
 
   const carica = () => {
     api.get<any>(`/fascicoli/${id}`).then(setD);
@@ -426,6 +469,10 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
   const f = d.fascicolo;
   const ultima = d.valutazioni[0];
 
+  const scostamenti = proposta
+    ? Object.entries(proposta.punteggi).filter(([k, v]) => v != null && tabA[k] != null && Number(v) !== Number(tabA[k]))
+    : [];
+
   async function consolida() {
     setErrore('');
     try {
@@ -433,9 +480,10 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
         tabellaA: tabA,
         tabellaB: serveB ? tabB : undefined,
         circostanze: circ,
+        proposta: proposta ? { ...proposta, motivazioneScostamento } : undefined,
       });
       setAnteprima(null);
-      setTabA({}); setTabB({}); setCirc({});
+      setTabA({}); setTabB({}); setCirc({}); setProposta(null); setMotivazioneScostamento('');
       carica();
     } catch (e) { setErrore((e as Error).message); }
   }
@@ -629,6 +677,17 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
         </div>
       )}
 
+      <FascicoloProposto
+        fascicoloId={id}
+        clienteId={d.fascicolo.cliente_id}
+        esente={Boolean(prestazione?.esenteAdeguataVerifica)}
+        valutata={Boolean(ultima)}
+        onApplicaTabellaA={(punteggi, contesto) => { setTabA((s) => ({ ...s, ...punteggi })); setProposta(contesto); }}
+        onApplicaCircostanze={(chiavi) => setCirc((s) => ({ ...s, ...Object.fromEntries(chiavi.map((k) => [k, true])) }))}
+        onEsecutoreRegistrato={carica}
+        vaiA={vaiA}
+      />
+
       <h2>{ultima ? 'Nuova valutazione' : 'Valutazione del rischio'}</h2>
       {prestazione?.esenteAdeguataVerifica ? (
         <Riquadro tipo="info">
@@ -711,7 +770,17 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
               )}
               <p className="mono" style={{ color: 'var(--c-grey)' }}>{anteprima.formula}</p>
               <ElencoVincoli vincoli={anteprima.vincoli} />
-              <button className="azione" onClick={consolida}>Consolida la valutazione</button>
+              {proposta && (
+                <Riquadro tipo={scostamenti.length ? 'avviso' : 'info'}>
+                  {scostamenti.length === 0
+                    ? 'Tabella A: punteggi proposti dal programma confermati. La provenienza e le motivazioni restano nella valutazione e nel verbale.'
+                    : <>
+                        Ti sei scostato dalla proposta su {scostamenti.map(([k, v]) => `${k.replace(/_/g, ' ')} (proposto ${v}, valutato ${tabA[k]})`).join(', ')}: scrivi il perché.
+                        <textarea data-test="motivazione-scostamento" value={motivazioneScostamento} onChange={(e) => setMotivazioneScostamento(e.target.value)} placeholder="Motivazione dello scostamento dalla proposta" style={{ marginTop: 6 }} />
+                      </>}
+                </Riquadro>
+              )}
+              <button className="azione" onClick={consolida} disabled={scostamenti.length > 0 && !motivazioneScostamento.trim()} data-test="consolida">Consolida la valutazione</button>
               {errore && <div className="errore">{errore}</div>}
             </div>
           )}

@@ -98,6 +98,7 @@ export function Impostazioni({ sessione, onSessioneAggiornata }: {
       {amministratore && <LogoStudio sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} />}
       {amministratore && <GestioneUtenti ioId={sessione.utente.id} postiProfessionista={sessione.studio.professionistiInclusi ?? null} />}
       {amministratore && <AssistenteAi />}
+      {amministratore && <ProvinceContante />}
       <CambiaPassword />
       <AccessiDispositivi />
       <div className="grid gap-4 lg:grid-cols-3 my-4">
@@ -680,6 +681,114 @@ function AssistenteAi() {
           <button className="btn btn-primary btn-sm" onClick={() => imposta(true)} disabled={!accetto || invio}>
             {invio ? 'Attivazione…' : 'Abilita l’assistente'}
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── AR-M18: province con flussi anomali di contante (tabella di studio) ──
+// L'Analisi nazionale dei rischi pubblica l'indicatore UIF solo come mappa a
+// colori: il programma non la trascrive. Lo studio la legge e compila qui le
+// province «alto» e «medio-alto»; le proposte del fattore A.4 usano questa
+// tabella e ne citano fonte, data e autore.
+function ProvinceContante() {
+  const [dati, setDati] = useState<{ tabella: any | null; riferimento: { titolo: string; url: string; nota: string }; province: Array<{ sigla: string; nome: string; regione: string }> } | null>(null);
+  const [righe, setRighe] = useState<Array<{ sigla: string; livello: 'ALTO' | 'MEDIO_ALTO' }>>([]);
+  const [fonte, setFonte] = useState('');
+  const [dataFonte, setDataFonte] = useState('');
+  const [nuova, setNuova] = useState('');
+  const [modifica, setModifica] = useState(false);
+  const [errore, setErrore] = useState('');
+  const [invio, setInvio] = useState(false);
+  const [salvato, setSalvato] = useState(false);
+
+  const carica = () => api.get<any>('/studio/province-contante').then((r) => {
+    setDati(r);
+    setRighe(r.tabella?.province ?? []);
+    setFonte(r.tabella?.fonte ?? r.riferimento.titolo);
+    setDataFonte(r.tabella?.dataFonte ?? '');
+  }).catch((e) => setErrore(e.message));
+  useEffect(() => { carica(); }, []);
+
+  if (!dati) return null;
+  const nome = (sigla: string) => dati.province.find((p) => p.sigla === sigla)?.nome ?? sigla;
+  const salva = async () => {
+    setErrore(''); setInvio(true); setSalvato(false);
+    try {
+      await api.post('/studio/province-contante', { province: righe, fonte, dataFonte: dataFonte || null });
+      setModifica(false); setSalvato(true);
+      await carica();
+    } catch (e) { setErrore((e as Error).message); } finally { setInvio(false); }
+  };
+
+  return (
+    <div className="scheda" data-test="province-contante">
+      <h3 className="!mt-0">Province con flussi anomali di contante (Tabella A, fattore A.4)</h3>
+      <div className="aiuto">
+        Il criterio CNDCEC rinvia all’Analisi nazionale dei rischi, che pubblica l’indicatore UIF sull’uso anomalo del contante <strong>solo come mappa a colori</strong>,
+        senza un elenco di province. Il programma non inventa quell’elenco: lo studio legge la mappa e registra qui le province classificate
+        «alto» e «medio-alto». Le proposte di punteggio A.4 useranno questa tabella citandone fonte e data; finché è vuota, il programma
+        chiede di verificare la provincia a mano.
+      </div>
+      <p className="text-sm">
+        Mappa da consultare: <a href={dati.riferimento.url} target="_blank" rel="noreferrer">{dati.riferimento.titolo}</a>
+        <span className="block text-xs text-ink-400 mt-1">{dati.riferimento.nota}</span>
+      </p>
+      {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
+      {salvato && <div className="riquadro info !my-2">Tabella salvata: le prossime proposte A.4 la useranno.</div>}
+      {!modifica ? (
+        <>
+          {dati.tabella?.province?.length ? (
+            <p className="text-sm">
+              {dati.tabella.province.map((r: any) => <Badge key={r.sigla} tone={r.livello === 'ALTO' ? 'red' : 'amber'}>{nome(r.sigla)} ({r.sigla}) · {r.livello === 'ALTO' ? 'alto' : 'medio-alto'}</Badge>)}
+              <span className="block text-xs text-ink-400 mt-2">Fonte: {dati.tabella.fonte}{dati.tabella.dataFonte ? ` (${dataIt(dati.tabella.dataFonte)})` : ''} · aggiornata il {dataIt(dati.tabella.aggiornatoIl)}</span>
+            </p>
+          ) : (
+            <p className="text-sm text-ink-500">Tabella non ancora compilata.</p>
+          )}
+          <button className="btn btn-secondary btn-sm" onClick={() => setModifica(true)} data-test="province-modifica">{dati.tabella?.province?.length ? 'Modifica la tabella' : 'Compila la tabella'}</button>
+        </>
+      ) : (
+        <div className="space-y-2 text-sm">
+          <div className="flex gap-2 items-end flex-wrap">
+            <div>
+              <label className="label">Aggiungi provincia</label>
+              <select className="input" value={nuova} onChange={(e) => setNuova(e.target.value)} data-test="province-select">
+                <option value="">Seleziona…</option>
+                {dati.province.filter((p) => !righe.some((r) => r.sigla === p.sigla)).map((p) => <option key={p.sigla} value={p.sigla}>{p.nome} ({p.sigla}) — {p.regione}</option>)}
+              </select>
+            </div>
+            <button type="button" className="btn btn-secondary btn-sm" disabled={!nuova} onClick={() => { setRighe([...righe, { sigla: nuova, livello: 'ALTO' }]); setNuova(''); }}>Aggiungi come «alto»</button>
+            <button type="button" className="btn btn-secondary btn-sm" disabled={!nuova} onClick={() => { setRighe([...righe, { sigla: nuova, livello: 'MEDIO_ALTO' }]); setNuova(''); }}>Aggiungi come «medio-alto»</button>
+          </div>
+          {righe.length > 0 && (
+            <table>
+              <thead><tr><th>Provincia</th><th>Livello letto sulla mappa</th><th /></tr></thead>
+              <tbody>
+                {righe.map((r) => (
+                  <tr key={r.sigla}>
+                    <td>{nome(r.sigla)} <span className="mono text-ink-400">({r.sigla})</span></td>
+                    <td>
+                      <select className="input" value={r.livello} onChange={(e) => setRighe(righe.map((x) => x.sigla === r.sigla ? { ...x, livello: e.target.value as any } : x))}>
+                        <option value="ALTO">alto</option>
+                        <option value="MEDIO_ALTO">medio-alto</option>
+                      </select>
+                    </td>
+                    <td className="text-right"><button type="button" className="btn btn-ghost btn-sm" onClick={() => setRighe(righe.filter((x) => x.sigla !== r.sigla))}>Togli</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div><label className="label">Fonte letta</label><input className="input" value={fonte} onChange={(e) => setFonte(e.target.value)} /></div>
+            <div><label className="label">Data della fonte</label><input className="input" type="date" value={dataFonte} onChange={(e) => setDataFonte(e.target.value)} /></div>
+          </div>
+          <div className="flex gap-2">
+            <button className="btn btn-primary btn-sm" onClick={salva} disabled={invio} data-test="province-salva">{invio ? 'Salvataggio…' : 'Salva la tabella'}</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setModifica(false); carica(); }}>Annulla</button>
+          </div>
         </div>
       )}
     </div>

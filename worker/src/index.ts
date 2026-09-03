@@ -46,6 +46,10 @@ import { aggiornaListeSanzioni, caricaListe, eseguiScreeningTenant, listeDaAggio
 import { normalizzaPiva } from './lib/lookup/piva';
 import { leggiProposte, propostaTitolarita, registraProposta, salvaCompagine, screeningCompagine, type CaricaIn, type SocioIn } from './lib/compagine';
 import { ErroreAi, MODELLO_DEFAULT, aiAbilitata, generaBozza, rispostaChat, suggerisciIndicatori } from './lib/ai';
+import { parametriTenant, propostaFascicolo, tabellaProvince } from './lib/proposta-fascicolo';
+import { corpoDichiarazioneArt22, normalizzaRispostaArt22, precompilaDichiarazione, segnaliDaValutare, type PrecompilataArt22, type RispostaArt22 } from './lib/dichiarazione-art22';
+import { PROVINCE, RIFERIMENTO_MAPPA_ANR, normalizzaTabellaProvince } from './domain/province';
+import { SETTORI_ESPOSTI } from './domain/settori-esposti';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 
 import { CNDCEC_2025 } from './domain/rulesets/cndcec-2025';
@@ -1044,12 +1048,23 @@ api.post('/fascicoli/:id/verifica-remota', puoScrivere, async (c) => {
   ).bind(fascicoloId, tenantId).first<any>();
   if (!f) return c.json({ errore: 'Fascicolo non trovato' }, 404);
 
-  const richieste = {
+  const richieste: Record<string, unknown> = {
     datiIdentificativi: b.richieste?.datiIdentificativi !== false,
     documento: b.richieste?.documento !== false,
     titolari: Boolean(b.richieste?.titolari),
     pep: b.richieste?.pep !== false,
+    dichiarazioneTe: Boolean(b.richieste?.dichiarazioneTe),
   };
+  // AR-M18: la dichiarazione art. 22 parte dalla PROPOSTA (compagine, titolari
+  // individuati, domande di controllo, esecutore). Contiene nominativi: si
+  // conserva cifrata dentro `richieste`, e la pagina pubblica la decifra con
+  // la chiave dello studio.
+  if (richieste.dichiarazioneTe) {
+    const cliente = await c.env.DB.prepare('SELECT * FROM clienti WHERE id = ? AND tenant_id = ?').bind(f.cliente_id, tenantId).first<any>();
+    const pre = await precompilaDichiarazione(c.env, tenantId, cliente, String(fascicoloId));
+    richieste.precompilata = await cifra(c.env.MASTER_KEY, tenantId, JSON.stringify(pre));
+    richieste.titolari = false; // la dichiarazione precompilata assorbe la sezione «titolari» libera
+  }
 
   const token = nuovoToken();
   const id = nuovoId('vrf');
@@ -1105,8 +1120,10 @@ api.get('/verifiche-remote/:id', puoScrivere, async (c) => {
     tenantId, utenteId: c.get('utente').id, azione: 'LEGGI_VERIFICA_REMOTA', entita: 'richieste_verifica',
     entitaId: r.id, ip: c.get('ip'),
   });
+  const { richieste, precompilata } = await precompilataDaRichiesta(c.env, tenantId, r.richieste);
   return c.json({
-    id: r.id, stato: r.stato, richieste: JSON.parse(r.richieste), dati,
+    id: r.id, stato: r.stato, richieste, dati, precompilata,
+    segnali: dati?.dichiarazioneTe ? segnaliDaValutare(dati.dichiarazioneTe as RispostaArt22) : [],
     allegati: JSON.parse(r.allegati ?? '[]').map((a: any, i: number) => ({ indice: i, nome: a.nome, mime: a.mime, dimensione: a.dimensione, sha256: a.sha256 })),
     completataIl: r.completata_il, scadeIl: r.scade_il,
   });
@@ -1189,18 +1206,61 @@ api.post('/verifiche-remote/:id/acquisisci', puoScrivere, async (c) => {
     applicato.push(`documenti:${allegati.length}`);
   }
 
+  // AR-M18: la dichiarazione art. 22 resa a distanza diventa un documento del
+  // fascicolo (.docx con la trascrizione integrale, impronta, conservazione).
+  let segnali: string[] = [];
+  let titolariDichiarati: any[] = dati.titolari ?? [];
+  if (dati.dichiarazioneTe) {
+    const risposta = dati.dichiarazioneTe as RispostaArt22;
+    segnali = segnaliDaValutare(risposta);
+    const { precompilata } = await precompilataDaRichiesta(c.env, tenantId, r.richieste);
+    if (risposta.conferma === 'CORREGGE' && risposta.titolari?.length) titolariDichiarati = risposta.titolari;
+    else if (precompilata) titolariDichiarati = precompilata.titolariProposti.map((t) => ({ nominativo: t.nominativo, quota: t.quota != null ? String(t.quota) : '', confermato: true }));
+    if (b.acquisisciDichiarazione !== false && precompilata) {
+      const tenant = await tenantCorrente(c);
+      const fasc = await c.env.DB.prepare('SELECT codice, data_cessazione FROM fascicoli WHERE id = ? AND tenant_id = ?').bind(r.fascicolo_id, tenantId).first<any>();
+      const docx = costruisciDocx(corpoDichiarazioneArt22({ tenant, precompilata, risposta, fascicoloCodice: fasc?.codice ?? null }), { logoStudio: logoStudioDocx(tenant) });
+      const docId = nuovoId('doc');
+      const nome = `dichiarazione-art22-${(fasc?.codice ?? 'fascicolo').replace('/', '-')}.docx`;
+      const r2Key = `${tenantId}/cliente/${r.cliente_id}/${docId}-${nome}`;
+      await c.env.DOCS.put(r2Key, docx, { httpMetadata: { contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' } });
+      const conservaFinoAl = fasc?.data_cessazione ? aggiungiAnni(fasc.data_cessazione, TERMINI.CONSERVAZIONE_ANNI.valore) : null;
+      await c.env.DB.prepare(
+        `INSERT INTO documenti (id, tenant_id, fascicolo_id, cliente_id, tipo, nome_file, mime, dimensione, r2_key, sha256,
+          data_riferimento, data_acquisizione, conserva_fino_al, creato_da) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).bind(
+        docId, tenantId, r.fascicolo_id, r.cliente_id, 'DICHIARAZIONE_ART22', nome,
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document', docx.byteLength, r2Key, await sha256Hex(docx.buffer.slice(docx.byteOffset, docx.byteOffset + docx.byteLength) as ArrayBuffer),
+        (risposta.resaIl ?? oggi()).slice(0, 10), oggi(), conservaFinoAl, u.id,
+      ).run();
+      applicato.push('dichiarazione_art22');
+    }
+  }
+
   await c.env.DB.prepare(
     `UPDATE richieste_verifica SET stato = 'ACQUISITA', acquisita_da = ?, acquisita_il = datetime('now') WHERE id = ?`,
   ).bind(u.id, r.id).run();
 
   await scriviAudit(c.env.DB, {
     tenantId, utenteId: u.id, azione: 'ACQUISISCI_VERIFICA_REMOTA', entita: 'richieste_verifica', entitaId: r.id,
-    dettaglio: { applicato }, ip: c.get('ip'),
+    dettaglio: { applicato, segnali: segnali.length }, ip: c.get('ip'),
   });
   // I titolari effettivi dichiarati NON si scrivono da soli: tornano al
   // professionista, che li valuta nel modulo della titolarità (artt. 20-22).
-  return c.json({ ok: true, applicato, titolariDichiarati: dati.titolari ?? [] });
+  return c.json({ ok: true, applicato, titolariDichiarati, segnali });
 });
+
+/** Dichiarazione precompilata conservata cifrata dentro `richieste` (AR-M18). */
+async function precompilataDaRichiesta(env: Env, tenantId: string, richiesteJson: string): Promise<{ richieste: any; precompilata: PrecompilataArt22 | null }> {
+  let richieste: any = {};
+  try { richieste = JSON.parse(richiesteJson ?? '{}'); } catch { richieste = {}; }
+  let precompilata: PrecompilataArt22 | null = null;
+  if (richieste?.precompilata?.contenuto) {
+    try { precompilata = JSON.parse(await decifra(env.MASTER_KEY, tenantId, richieste.precompilata)); } catch { precompilata = null; }
+  }
+  const { precompilata: _p, ...pubbliche } = richieste;
+  return { richieste: pubbliche, precompilata };
+}
 
 // ── Rotte PUBBLICHE del cliente (nessuna sessione) ─────────────
 
@@ -1221,11 +1281,22 @@ api.get('/pubblico/verifica/:token', async (c) => {
   if (r.stato === 'ANNULLATA') return c.json({ errore: 'La richiesta è stata annullata dallo studio' }, 410);
   if (r.stato !== 'INVIATA') return c.json({ errore: 'Questa richiesta è già stata completata' }, 410);
   if (r.scade_il <= new Date().toISOString()) return c.json({ errore: 'Il collegamento è scaduto: chiedi allo studio un nuovo invito' }, 410);
+  const { richieste, precompilata } = await precompilataDaRichiesta(c.env, r.tenant_id, r.richieste);
   return c.json({
     studio: r.studio,
     logo: logoStudio(r.logo_url)?.dataUrl ?? null,
     cliente: r.cliente,
-    richieste: JSON.parse(r.richieste),
+    richieste,
+    // La dichiarazione precompilata mostra al cliente i dati della SUA società
+    // (compagine dal Registro Imprese, titolari individuati, domande): non
+    // espone nulla che il cliente non conosca già.
+    dichiarazioneTe: precompilata
+      ? {
+          cliente: precompilata.cliente, fonte: precompilata.fonte, ripartizione: precompilata.ripartizione, cariche: precompilata.cariche,
+          titolariProposti: precompilata.titolariProposti.map((t) => ({ nominativo: t.nominativo, etichettaCriterio: t.etichettaCriterio, quota: t.quota })),
+          criterioApplicato: precompilata.criterioApplicato, esecutore: precompilata.esecutore, domande: precompilata.domande, senzaCompagine: precompilata.senzaCompagine,
+        }
+      : null,
     scadeIl: r.scade_il,
   });
 });
@@ -1252,6 +1323,16 @@ api.post('/pubblico/verifica/:token', async (c) => {
   // gonfiare il database.
   if (JSON.stringify(dati).length > 20_000) return c.json({ errore: 'Dati troppo lunghi' }, 400);
   dati.dichiarazione.dataOra = new Date().toISOString();
+
+  // AR-M18: dichiarazione art. 22 precompilata → risposte validate contro la proposta.
+  const { richieste: richiesteAperte, precompilata } = await precompilataDaRichiesta(c.env, r.tenant_id, r.richieste);
+  if (richiesteAperte.dichiarazioneTe && precompilata) {
+    const esito = normalizzaRispostaArt22(dati.dichiarazioneTe, precompilata);
+    if (esito.errore) return c.json({ errore: esito.errore }, 400);
+    dati.dichiarazioneTe = { ...esito.risposta, resaIl: dati.dichiarazione.dataOra, dichiarante: { nome: String(dati.dichiarazione.nomeDichiarante ?? '').slice(0, 200) || null, qualita: precompilata.esecutore?.carica ?? null } };
+  } else {
+    delete dati.dichiarazioneTe;
+  }
 
   const allegati: Array<{ r2Key: string; nome: string; mime: string; dimensione: number; sha256: string }> = [];
   for (const [chiave, valore] of form.entries()) {
@@ -1509,6 +1590,43 @@ api.get('/catalogo/soglie', (c) => c.json({ soglie: SOGLIE, termini: TERMINI }))
 api.get('/catalogo/indicatori', (c) =>
   c.json({ indicatori: INDICATORI_UIF_2023, subIndici: SUB_INDICI_UIF_2023, avviso: AVVISO_INDICATORI }),
 );
+// AR-M18: anagrafica delle province e tabella dei settori esposti (fonte per voce).
+api.get('/catalogo/province', (c) => c.json({ province: PROVINCE, riferimento: RIFERIMENTO_MAPPA_ANR }));
+api.get('/catalogo/settori-esposti', (c) =>
+  c.json(SETTORI_ESPOSTI.map((s) => ({ ...s, voci: s.voci.map((v) => ({ ...v, parole: v.parole ? v.parole.source : null })) }))),
+);
+
+// ===========================================================================
+// PROVINCE CON FLUSSI ANOMALI DI CONTANTE — tabella di studio (AR-M18-02)
+//
+// L'Analisi nazionale dei rischi pubblica l'indicatore UIF solo come mappa a
+// colori, senza elenco: il programma non la trascrive. Lo studio compila la
+// tabella leggendo la mappa (link in RIFERIMENTO_MAPPA_ANR) e ne resta
+// responsabile: fonte, data e autore sono conservati e finiscono nelle
+// motivazioni del fattore A.4.
+// ===========================================================================
+
+api.get('/studio/province-contante', async (c) => {
+  const parametri = await parametriTenant(c.env, c.get('tenantId'));
+  return c.json({ tabella: tabellaProvince(parametri), riferimento: RIFERIMENTO_MAPPA_ANR, province: PROVINCE });
+});
+
+api.post('/studio/province-contante', soloAmministratore, async (c) => {
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const esito = normalizzaTabellaProvince(b.province ?? []);
+  if (esito.errore) return c.json({ errore: esito.errore }, 400);
+  const fonte = String(b.fonte ?? '').trim().slice(0, 300) || RIFERIMENTO_MAPPA_ANR.titolo;
+  const dataFonte = typeof b.dataFonte === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.dataFonte) ? b.dataFonte : null;
+  const parametri = await parametriTenant(c.env, u.tenant_id);
+  parametri.provinceContante = { fonte, dataFonte, aggiornatoIl: new Date().toISOString(), aggiornatoDa: u.id, province: esito.tabella };
+  await c.env.DB.prepare('UPDATE tenants SET parametri = ? WHERE id = ?').bind(JSON.stringify(parametri), u.tenant_id).run();
+  await scriviAudit(c.env.DB, {
+    tenantId: u.tenant_id, utenteId: u.id, azione: 'PROVINCE_CONTANTE_AGGIORNATE', entita: 'tenants', entitaId: u.tenant_id,
+    dettaglio: { fonte, dataFonte, province: esito.tabella!.length }, ip: c.get('ip'),
+  });
+  return c.json({ ok: true, tabella: tabellaProvince(parametri) });
+});
 
 // ===========================================================================
 // AUTOVALUTAZIONE DELLO STUDIO — artt. 15-16
@@ -2412,6 +2530,98 @@ api.get('/clienti/:id/documenti', async (c) => {
 });
 
 // ===========================================================================
+// IL FASCICOLO PROPOSTO (AR-M18)
+//
+// Dai dati camerali il programma propone Tabella A (A.1, A.2, A.4 con
+// motivazione e fonte; A.3 sempre chiesto), esecutore, checklist dei
+// documenti, circostanze di legge e alert A9-A10. Niente produce effetti
+// finché il professionista non consolida: le proposte restano in `proposte`
+// con il loro esito, come per la titolarità (M17).
+// ===========================================================================
+
+/** Proposta viva per il cliente: serve al form «Nuovo fascicolo» (esecutore) e alla scheda cliente. */
+api.get('/clienti/:id/fascicolo-proposto', async (c) => {
+  const tenantId = c.get('tenantId');
+  const cliente = await c.env.DB.prepare('SELECT * FROM clienti WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tenantId).first<any>();
+  if (!cliente) return c.json({ errore: 'Cliente non trovato' }, 404);
+  const p = await propostaFascicolo(c.env, tenantId, cliente, null);
+  const { titolarita, ...resto } = p;
+  return c.json({ ...resto, alertTitolarita: titolarita.alert, titolariProposti: titolarita.analisi.titolari });
+});
+
+/** Proposta viva per un fascicolo aperto + proposte registrate (RISCHIO_A, ESECUTORE) e loro stato. */
+api.get('/fascicoli/:id/proposta', async (c) => {
+  const tenantId = c.get('tenantId');
+  const id = c.req.param('id');
+  const f = await c.env.DB.prepare('SELECT id, cliente_id, esecutore FROM fascicoli WHERE id = ? AND tenant_id = ?').bind(id, tenantId).first<any>();
+  if (!f) return c.json({ errore: 'Fascicolo non trovato' }, 404);
+  const cliente = await c.env.DB.prepare('SELECT * FROM clienti WHERE id = ? AND tenant_id = ?').bind(f.cliente_id, tenantId).first<any>();
+  const p = await propostaFascicolo(c.env, tenantId, cliente, { id: String(f.id), esecutore: f.esecutore });
+  const tutte = await leggiProposte(c.env, tenantId, f.cliente_id);
+  const proposte = tutte.filter((x) => ['RISCHIO_A', 'ESECUTORE', 'DOCUMENTI'].includes(x.ambito) && x.contenuto?.fascicoloId === id);
+  const { titolarita, ...resto } = p;
+  return c.json({
+    ...resto, alertTitolarita: titolarita.alert, titolariProposti: titolarita.analisi.titolari, bozzaMotivazioneCo6: titolarita.bozzaMotivazione,
+    proposte, propostaRischioId: proposte.find((x) => x.ambito === 'RISCHIO_A' && x.stato === 'PROPOSTA')?.id ?? null,
+    esecutoreRegistrato: (() => { try { return f.esecutore ? JSON.parse(f.esecutore) : null; } catch { return null; } })(),
+  });
+});
+
+/** Esecutore del fascicolo (art. 1 co. 2 lett. p): registrato dal professionista, eventualmente dalla proposta. */
+api.post('/fascicoli/:id/esecutore', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const u = c.get('utente');
+  const id = c.req.param('id');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const f = await c.env.DB.prepare('SELECT id, cliente_id FROM fascicoli WHERE id = ? AND tenant_id = ?').bind(id, tenantId).first<any>();
+  if (!f) return c.json({ errore: 'Fascicolo non trovato' }, 404);
+  const esito = await registraEsecutore(c.env, tenantId, u.id, String(id), f.cliente_id, b.esecutore, b.propostaId ?? null);
+  if ('errore' in esito) return c.json({ errore: esito.errore }, 400);
+  await scriviAudit(c.env.DB, { tenantId, utenteId: u.id, azione: 'REGISTRA_ESECUTORE', entita: 'fascicoli', entitaId: id, dettaglio: { stato: esito.stato }, ip: c.get('ip') });
+  return c.json({ ok: true, esecutore: esito.esecutore, stato: esito.stato });
+});
+
+/**
+ * Scrive l'esecutore sul fascicolo e chiude l'eventuale proposta ESECUTORE:
+ * APPLICATA se coincide (per CF o nominativo), MODIFICATA altrimenti — con la
+ * ragione, che qui è nei fatti (chi si è presentato) e non va chiesta.
+ */
+async function registraEsecutore(env: Env, tenantId: string, utenteId: string, fascicoloId: string, clienteId: string, corpo: any, propostaId: string | null) {
+  if (corpo === null) {
+    await env.DB.prepare("UPDATE fascicoli SET esecutore = NULL, aggiornato_il = datetime('now') WHERE id = ? AND tenant_id = ?").bind(fascicoloId, tenantId).run();
+    return { esecutore: null, stato: 'RIMOSSO' as const };
+  }
+  const nominativo = String(corpo?.nominativo ?? '').trim();
+  if (!nominativo) return { errore: 'Indica il nominativo dell’esecutore (chi conferisce l’incarico in nome del cliente).' };
+  const esecutore = {
+    nominativo, codiceFiscale: String(corpo.codiceFiscale ?? '').trim().toUpperCase() || null, carica: corpo.carica ? String(corpo.carica) : null,
+    caricaTesto: corpo.caricaTesto ? String(corpo.caricaTesto).slice(0, 200) : null, fonte: corpo.fonte ? String(corpo.fonte).slice(0, 200) : null,
+    documento: corpo.documento ? String(corpo.documento).slice(0, 200) : null, note: corpo.note ? String(corpo.note).slice(0, 500) : null,
+    registratoIl: new Date().toISOString(),
+  };
+  await env.DB.prepare("UPDATE fascicoli SET esecutore = ?, aggiornato_il = datetime('now') WHERE id = ? AND tenant_id = ?")
+    .bind(JSON.stringify(esecutore), fascicoloId, tenantId).run();
+  let stato: 'APPLICATA' | 'MODIFICATA' | 'REGISTRATO' = 'REGISTRATO';
+  if (propostaId) {
+    const proposte = await leggiProposte(env, tenantId, clienteId);
+    const p = proposte.find((x) => x.id === propostaId && x.ambito === 'ESECUTORE' && x.stato === 'PROPOSTA');
+    if (p) {
+      const prop = p.contenuto?.esecutore ?? {};
+      const stesso = (esecutore.codiceFiscale && prop.codiceFiscale && esecutore.codiceFiscale === String(prop.codiceFiscale).toUpperCase())
+        || esecutore.nominativo.toUpperCase() === String(prop.nominativo ?? '').toUpperCase();
+      stato = stesso ? 'APPLICATA' : 'MODIFICATA';
+      const esito = JSON.stringify(await cifra(env.MASTER_KEY, tenantId, JSON.stringify({
+        motivazione: stesso ? null : `Esecutore diverso dalla proposta (${prop.nominativo ?? '—'}): indicato dal professionista al conferimento dell’incarico`,
+        dettaglio: { esecutore: esecutore.nominativo },
+      })));
+      await env.DB.prepare("UPDATE proposte SET stato = ?, esito = ?, rivista_da = ?, rivista_il = datetime('now') WHERE id = ? AND tenant_id = ? AND stato = 'PROPOSTA'")
+        .bind(stato, esito, utenteId, propostaId, tenantId).run();
+    }
+  }
+  return { esecutore, stato };
+}
+
+// ===========================================================================
 // FASCICOLI E VALUTAZIONE DEL RISCHIO — artt. 17-25
 // ===========================================================================
 
@@ -2478,6 +2688,36 @@ api.post('/fascicoli', puoScrivere, async (c) => {
 
   await scriviAudit(c.env.DB, { tenantId, utenteId: u.id, azione: 'CREA_FASCICOLO', entita: 'fascicoli', entitaId: id, dettaglio: { codice }, ip: c.get('ip') });
 
+  // AR-M18: il fascicolo nasce già «proposto». Le proposte di Tabella A ed
+  // esecutore restano in `proposte` con il fascicolo di riferimento; la
+  // checklist e gli alert si ricalcolano vivi. L'esecutore indicato nel form
+  // (di regola quello proposto) si registra subito con l'esito della proposta.
+  let propostaFascicoloId: string | null = null;
+  let esecutoreRegistratoStato: string | null = null;
+  try {
+    const cliente = await c.env.DB.prepare('SELECT * FROM clienti WHERE id = ? AND tenant_id = ?').bind(b.clienteId, tenantId).first<any>();
+    if (cliente && !prestazione.esenteAdeguataVerifica) {
+      const pf = await propostaFascicolo(c.env, tenantId, cliente, { id, esecutore: null });
+      const punteggi = Object.fromEntries(Object.values(pf.tabellaA).map((f) => [f.codice, f.punteggio]));
+      propostaFascicoloId = await registraProposta(c.env, tenantId, cliente.id, u.id, 'RISCHIO_A', 'VISURA',
+        { fascicoloId: id, tabellaA: pf.tabellaA, punteggi, circostanze: pf.circostanze, provenienza: pf.provenienza, data: pf.data },
+        pf.alert.map((a) => ({ codice: a.codice as any, gravita: a.gravita })) as any);
+      if (pf.esecutore) {
+        const pid = await registraProposta(c.env, tenantId, cliente.id, u.id, 'ESECUTORE', 'VISURA', { fascicoloId: id, esecutore: pf.esecutore }, []);
+        if (b.esecutore && typeof b.esecutore === 'object') {
+          const e = await registraEsecutore(c.env, tenantId, u.id, id, cliente.id, b.esecutore, pid);
+          if (!('errore' in e)) esecutoreRegistratoStato = e.stato;
+        }
+      } else if (b.esecutore && typeof b.esecutore === 'object') {
+        const e = await registraEsecutore(c.env, tenantId, u.id, id, cliente.id, b.esecutore, null);
+        if (!('errore' in e)) esecutoreRegistratoStato = e.stato;
+      }
+    }
+  } catch (e) {
+    // La proposta è un servizio: un suo errore non impedisce l'apertura del fascicolo.
+    console.error('proposta del fascicolo non registrata:', e);
+  }
+
   // Art. 17 co. 1 lett. b): l'operazione occasionale sopra soglia fa scattare
   // l'obbligo di verifica anche in assenza di rapporto continuativo.
   const avvisi: string[] = [];
@@ -2492,7 +2732,7 @@ api.post('/fascicoli', puoScrivere, async (c) => {
     avvisi.push('Prestazione esente da adeguata verifica ex art. 17 co. 7. L’esenzione riguarda questa sola prestazione: per altre prestazioni allo stesso cliente la verifica è dovuta.');
   }
 
-  return c.json({ id, codice, prestazione, avvisi }, 201);
+  return c.json({ id, codice, prestazione, avvisi, propostaFascicoloId, esecutore: esecutoreRegistratoStato }, 201);
 });
 
 api.get('/fascicoli/:id', async (c) => {
@@ -2610,6 +2850,34 @@ api.post('/fascicoli/:id/valutazioni', puoScrivere, async (c) => {
     rs,
   );
 
+  // AR-M18: se la Tabella A parte da una proposta, lo scostamento va motivato
+  // (è la prova del giudizio esercitato) e la provenienza finisce nella
+  // motivazione della valutazione, che il verbale stampa.
+  let motivazione: string | null = b.motivazione ?? null;
+  let esitoProposta: { id: string; stato: 'APPLICATA' | 'MODIFICATA'; scostamenti: string[] } | null = null;
+  if (b.proposta && typeof b.proposta === 'object' && b.proposta.punteggi && typeof b.proposta.punteggi === 'object') {
+    const proposti = b.proposta.punteggi as Record<string, number | null>;
+    const scostamenti: string[] = [];
+    for (const f of rs.adeguataVerifica.tabellaA) {
+      const p = proposti[f.codice];
+      const dato = (b.tabellaA ?? {})[f.codice];
+      if (p != null && dato != null && Number(p) !== Number(dato)) scostamenti.push(`${f.etichetta}: proposto ${p}, valutato ${dato}`);
+    }
+    const motivazioneScostamento = String(b.proposta.motivazioneScostamento ?? '').trim();
+    if (scostamenti.length && !motivazioneScostamento) {
+      return c.json({ errore: `Ti sei scostato dalla proposta (${scostamenti.join('; ')}): scrivi il perché, è ciò che documenta la tua valutazione.`, scostamenti }, 400);
+    }
+    const provenienza = String(b.proposta.provenienza ?? 'dati camerali in archivio').slice(0, 300);
+    const testo =
+      `Tabella A proposta dal programma (${provenienza}) e valutata dal professionista il ${oggi().split('-').reverse().join('/')}` +
+      (scostamenti.length ? `. Scostamenti dalla proposta: ${scostamenti.join('; ')}. Motivazione: ${motivazioneScostamento}` : ': punteggi proposti confermati') +
+      (b.proposta.motivazioni ? `. ${String(b.proposta.motivazioni).slice(0, 2000)}` : '');
+    motivazione = [testo, motivazione].filter(Boolean).join('\n');
+    if (typeof b.proposta.id === 'string' && b.proposta.id) {
+      esitoProposta = { id: b.proposta.id, stato: scostamenti.length ? 'MODIFICATA' : 'APPLICATA', scostamenti };
+    }
+  }
+
   const ultima = await c.env.DB.prepare('SELECT MAX(versione) AS v FROM valutazioni_rischio WHERE fascicolo_id = ?')
     .bind(fascicoloId).first<{ v: number | null }>();
   const versione = (ultima?.v ?? 0) + 1;
@@ -2629,9 +2897,18 @@ api.post('/fascicoli/:id/valutazioni', puoScrivere, async (c) => {
       esito.rischioInerente, esito.rischioSpecifico, esito.rischioEffettivo, esito.classe,
       esito.livelloCalcolato, esito.livelloApplicabile, esito.livelloInnalzatoDaNorma ? 1 : 0,
       JSON.stringify(esito.vincoli), esito.astensioneDovuta ? 1 : 0, esito.valutareSos ? 1 : 0,
-      esito.controlloCostanteMesi, esito.formula, b.motivazione ?? null, u.id,
+      esito.controlloCostanteMesi, esito.formula, motivazione, u.id,
     )
     .run();
+
+  if (esitoProposta) {
+    const cifrato = JSON.stringify(await cifra(c.env.MASTER_KEY, tenantId, JSON.stringify({
+      motivazione: esitoProposta.scostamenti.length ? String(b.proposta.motivazioneScostamento ?? '').trim() : null,
+      dettaglio: { valutazioneId: id, tabellaA: b.tabellaA ?? {}, scostamenti: esitoProposta.scostamenti },
+    })));
+    await c.env.DB.prepare("UPDATE proposte SET stato = ?, esito = ?, rivista_da = ?, rivista_il = datetime('now') WHERE id = ? AND tenant_id = ? AND stato = 'PROPOSTA'")
+      .bind(esitoProposta.stato, cifrato, u.id, esitoProposta.id, tenantId).run();
+  }
 
   const nuovoStato = esito.astensioneDovuta ? 'ASTENSIONE' : 'IN_VERIFICA';
   await c.env.DB.prepare('UPDATE fascicoli SET stato = ?, aggiornato_il = ? WHERE id = ?')
@@ -3858,6 +4135,20 @@ api.get('/fascicoli/:id/scheda-verifica', async (c) => {
   });
   await scriviAudit(c.env.DB, { tenantId, utenteId: c.get('utente').id, azione: 'VERBALE_SCHEDA_VERIFICA', entita: 'fascicoli', entitaId: d.fascicolo.id, ip: c.get('ip') });
   return rispostaDocx(costruisciDocx(corpo, { logoStudio: logoStudioDocx(tenant) }), `scheda-verifica-${d.fascicolo.codice.replace('/', '-')}.docx`);
+});
+
+/** AR-M18: dichiarazione art. 22 precompilata per la firma in presenza (.docx brand Contify). */
+api.get('/clienti/:id/dichiarazione-art22', async (c) => {
+  const tenantId = c.get('tenantId');
+  const cliente = await c.env.DB.prepare('SELECT * FROM clienti WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tenantId).first<any>();
+  if (!cliente) return c.json({ errore: 'Cliente non trovato' }, 404);
+  const fascicoloId = c.req.query('fascicolo') || null;
+  const fasc = fascicoloId ? await c.env.DB.prepare('SELECT codice FROM fascicoli WHERE id = ? AND tenant_id = ?').bind(fascicoloId, tenantId).first<any>() : null;
+  const tenant = await tenantCorrente(c);
+  const precompilata = await precompilaDichiarazione(c.env, tenantId, cliente, fascicoloId);
+  const corpo = corpoDichiarazioneArt22({ tenant, precompilata, risposta: null, fascicoloCodice: fasc?.codice ?? null });
+  await scriviAudit(c.env.DB, { tenantId, utenteId: c.get('utente').id, azione: 'DICHIARAZIONE_ART22_GENERATA', entita: 'clienti', entitaId: cliente.id, dettaglio: { fascicoloId, titolariProposti: precompilata.titolariProposti.length }, ip: c.get('ip') });
+  return rispostaDocx(costruisciDocx(corpo, { logoStudio: logoStudioDocx(tenant) }), `dichiarazione-art22-${String(cliente.denominazione).replace(/[^\w]+/g, '-').slice(0, 40)}.docx`);
 });
 
 api.get('/fascicoli/:id/astensioni/:idAst/verbale', soloTitolare, async (c) => {

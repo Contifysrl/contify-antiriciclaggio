@@ -146,6 +146,7 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
   const [compagine, setCompagine] = useState<(PropostaDto & { proposte: any[] }) | null>(null);
   const [aggiornaVisura, setAggiornaVisura] = useState(false);
   const [caricaDoc, setCaricaDoc] = useState(false);
+  const [tipoDoc, setTipoDoc] = useState('VISURA');
 
   const carica = () =>
     api.get<any>(`/clienti/${id}`)
@@ -348,6 +349,12 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
                 <TabellaCariche cariche={compagine.cariche.map((c: any) => ({ ...c, carica: c.carica, caricaTesto: c.caricaTesto ?? ETICHETTA_CARICA[c.carica] }))} />
               </div>
             )}
+            <div style={{ marginTop: 12 }}>
+              <button className="btn btn-secondary btn-sm" data-test="cliente-art22" onClick={() => api.scarica(`/clienti/${id}/dichiarazione-art22`).catch((e) => setErrore(e.message))}>
+                Dichiarazione art. 22 precompilata (.docx)
+              </button>
+              <span className="text-xs text-ink-400" style={{ marginLeft: 8 }}>Da far firmare al cliente in presenza; a distanza si invia dal fascicolo (AR-M18).</span>
+            </div>
             <h4 style={{ marginTop: 18 }}>Titolari effettivi proposti dai dati camerali</h4>
             <div className="aiuto">La visura non è il registro dei titolari effettivi (art. 21-ter): questa è l'applicazione dell'art. 20 co. 2 ai soci. Confermi, correggi o scarti; il registro si consulta dal fascicolo.</div>
             <PropostaTitolaritaBox
@@ -417,13 +424,24 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
                 try {
                   const form = new FormData();
                   form.append('file', file, file.name);
-                  form.append('tipo', /visura/i.test(file.name) ? 'VISURA' : 'ALTRO');
+                  form.append('tipo', tipoDoc);
                   const r = await fetch(`/api/clienti/${id}/documenti`, { method: 'POST', body: form, credentials: 'same-origin' });
                   if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.errore ?? `Errore ${r.status}`);
                   await carica();
                 } catch (err) { setErrore((err as Error).message); } finally { setCaricaDoc(false); }
               }} />
             </label>
+            <select className="input" style={{ width: 'auto' }} value={tipoDoc} onChange={(e) => setTipoDoc(e.target.value)} title="Tipo di documento: alimenta la checklist del fascicolo">
+              <option value="VISURA">Visura camerale</option>
+              <option value="DICHIARAZIONE_ART22">Dichiarazione art. 22 firmata</option>
+              <option value="DOCUMENTO_IDENTITA">Documento d’identità</option>
+              <option value="DOCUMENTAZIONE_ESTERA">Documentazione estera equivalente</option>
+              <option value="MANDATO_FIDUCIARIO">Mandato fiduciario</option>
+              <option value="ATTO_TRUST">Atto istitutivo del trust</option>
+              <option value="PROCURA">Procura</option>
+              <option value="INCARICO">Lettera d’incarico</option>
+              <option value="ALTRO">Altro</option>
+            </select>
             <span className="text-xs text-ink-400">Per leggere una visura e proporre i titolari effettivi usa «Aggiorna da visura» qui sopra.</span>
           </div>
         )}

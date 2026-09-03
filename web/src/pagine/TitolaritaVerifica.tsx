@@ -364,7 +364,7 @@ function NuovaRichiestaModal({ fascicoloId, onChiudi, onCreata }: {
   onChiudi: () => void;
   onCreata: (r: { url: string; scadeIl: string; emailInviata: boolean }) => void;
 }) {
-  const [cosa, setCosa] = useState({ datiIdentificativi: true, documento: true, titolari: false, pep: true });
+  const [cosa, setCosa] = useState({ datiIdentificativi: true, documento: true, titolari: false, pep: true, dichiarazioneTe: false });
   const [email, setEmail] = useState('');
   const [errore, setErrore] = useState('');
   const [invio, setInvio] = useState(false);
@@ -399,9 +399,17 @@ function NuovaRichiestaModal({ fascicoloId, onChiudi, onCreata }: {
         <div className="space-y-2">
           {voce('datiIdentificativi', 'Dati identificativi (nome, nascita, residenza, estremi documento)')}
           {voce('documento', 'Copia del documento d’identità (upload)')}
-          {voce('titolari', 'Dichiarazione di titolarità effettiva (per società ed enti)')}
+          {voce('dichiarazioneTe', 'Dichiarazione art. 22 PRECOMPILATA dai dati camerali: compagine, titolari individuati, domande sul controllo, PEP (AR-M18)')}
+          {!cosa.dichiarazioneTe && voce('titolari', 'Dichiarazione di titolarità effettiva compilata dal cliente da zero (per società ed enti)')}
           {voce('pep', 'Dichiarazione sullo status di persona politicamente esposta')}
         </div>
+        {cosa.dichiarazioneTe && (
+          <Riquadro tipo="info">
+            Il cliente vedrà la ricostruzione fatta dal programma (soci, quote, titolari effettivi individuati) e dovrà confermarla o correggerla,
+            rispondere alle domande che la visura non può dare (patti, vincoli, interposizioni) e dichiarare lo status di PEP. Al ritorno la dichiarazione
+            diventa un documento del fascicolo.
+          </Riquadro>
+        )}
         <div>
           <label className="label">Email del cliente (facoltativa: se la indichi, l’invito parte da qui)</label>
           <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="cliente@esempio.it" />
@@ -422,7 +430,7 @@ function EsaminaModal({ richiestaId, onChiudi, onAcquisita }: {
   onAcquisita: (titolariDichiarati: any[]) => void;
 }) {
   const [dettaglio, setDettaglio] = useState<any>(null);
-  const [applica, setApplica] = useState({ applicaDatiIdentificativi: true, applicaPep: true, acquisisciDocumenti: true });
+  const [applica, setApplica] = useState({ applicaDatiIdentificativi: true, applicaPep: true, acquisisciDocumenti: true, acquisisciDichiarazione: true });
   const [errore, setErrore] = useState('');
   const [invio, setInvio] = useState(false);
 
@@ -470,6 +478,22 @@ function EsaminaModal({ richiestaId, onChiudi, onAcquisita }: {
                 {d.pep.dichiarato
                   ? <Riquadro tipo="critico">Il cliente SI DICHIARA politicamente esposto{d.pep.dettagli ? `: ${d.pep.dettagli}` : ''}. L’acquisizione imposta la qualifica sul cliente (verifica rafforzata, art. 24 co. 5).</Riquadro>
                   : <p>Il cliente dichiara di NON essere persona politicamente esposta.</p>}
+              </section>
+            )}
+            {d?.dichiarazioneTe && (
+              <section data-test="dichiarazione-ricevuta">
+                <h3 className="!mt-0 !mb-2">Dichiarazione art. 22 (precompilata)</h3>
+                {dettaglio.segnali?.length > 0
+                  ? <Riquadro tipo="avviso"><strong>Da valutare:</strong><ul className="list-disc ml-5">{dettaglio.segnali.map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></Riquadro>
+                  : <Riquadro tipo="info">Il cliente ha <strong>confermato</strong> la ricostruzione, ha risposto «No» a tutte le domande sul controllo e nessuno è dichiarato PEP.</Riquadro>}
+                {d.dichiarazioneTe.conferma === 'CORREGGE' && d.dichiarazioneTe.correzioni && <p><span className="text-ink-400">Correzioni:</span> {d.dichiarazioneTe.correzioni}</p>}
+                <details className="text-sm">
+                  <summary className="cursor-pointer text-ink-500">Risposte alle domande sul controllo ({d.dichiarazioneTe.risposte?.length ?? 0})</summary>
+                  <ul className="list-disc ml-5 mt-1">
+                    {(d.dichiarazioneTe.risposte ?? []).map((r: any, i: number) => <li key={i}><strong>{r.risposta}</strong> — {r.domanda}{r.dettagli ? ` (${r.dettagli})` : ''}</li>)}
+                  </ul>
+                  <div className="mt-1">PEP: {(d.dichiarazioneTe.pep ?? []).map((x: any) => `${x.nominativo}: ${x.pep ? 'SÌ' : 'no'}`).join(' · ') || '—'}</div>
+                </details>
               </section>
             )}
             {Array.isArray(d?.titolari) && d.titolari.length > 0 && (
@@ -524,6 +548,12 @@ function EsaminaModal({ richiestaId, onChiudi, onAcquisita }: {
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" className="!w-4" checked={applica.acquisisciDocumenti} onChange={(e) => setApplica({ ...applica, acquisisciDocumenti: e.target.checked })} />
                   Allegati come documenti del fascicolo (conservazione decennale, impronta inclusa)
+                </label>
+              )}
+              {d?.dichiarazioneTe && (
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" className="!w-4" checked={applica.acquisisciDichiarazione} onChange={(e) => setApplica({ ...applica, acquisisciDichiarazione: e.target.checked })} />
+                  Dichiarazione art. 22 come documento del fascicolo (.docx con la trascrizione integrale)
                 </label>
               )}
             </section>
