@@ -170,7 +170,8 @@ const pB = cB.dati?.proposta;
 verifica('catena innestata con la holding', pB?.catena?.[0]?.clienteId === idH, pB?.catena);
 verifica('Giulia Verdi titolare per proprietà INDIRETTA al 60%', pB?.analisi?.titolari?.some((t) => t.denominazione === 'VERDI GIULIA' && t.criterio === 'PROPRIETA_INDIRETTA' && t.quotaEffettiva === 0.6), pB?.analisi?.titolari);
 verifica('Neri Anna (nuda proprietà 25%) NON supera la soglia; usufrutto segnalato', !pB?.analisi?.titolari?.some((t) => t.denominazione === 'NERI ANNA') && pB?.analisi?.vincoliSulleQuote?.[0]?.diritto === 'USUFRUTTO', pB?.analisi?.vincoliSulleQuote);
-const codiciB = (pB?.alert ?? []).map((a) => a.codice).sort();
+// A11 (AR-M19) dipende dal portafoglio: sulle corse ripetute le stesse persone ricorrono in molti clienti.
+const codiciB = (pB?.alert ?? []).map((a) => a.codice).filter((k) => k !== 'A11').sort();
 verifica('alert: A2 (usufrutto), A4 catena risolta, A7 capitale non versato; niente A1/A3/A5', JSON.stringify(codiciB) === '["A2","A4","A7"]', pB?.alert?.map((a) => [a.codice, a.titolo]));
 verifica('A4 dice «catena risolta» e rimanda alla scheda della holding', pB?.alert?.find((a) => a.codice === 'A4')?.azione?.tipo === 'CATENA_RISOLTA', pB?.alert?.find((a) => a.codice === 'A4'));
 

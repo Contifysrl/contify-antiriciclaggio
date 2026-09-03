@@ -28,7 +28,7 @@ import {
   type NodoPartecipazione,
   type RisultatoAnalisiTitolarita,
 } from '../domain/titolare-effettivo';
-import { bozzaMotivazioneCo6, calcolaAlertTitolarita, type Alert, type SocioCompagine, type TipoSocio } from '../domain/alert-titolarita';
+import { bozzaMotivazioneCo6, calcolaAlertRicorrenze, calcolaAlertTitolarita, type Alert, type RicorrenzaSoggetto, type SocioCompagine, type TipoSocio } from '../domain/alert-titolarita';
 
 export interface SocioIn {
   nome: string;
@@ -109,7 +109,7 @@ async function leggiNome(env: Env, tenantId: string, v: string): Promise<string>
 }
 
 /** Il socio è già cliente dello studio? Si cerca per CF o P.IVA in chiaro sull'anagrafica. */
-async function trovaClientePerCf(env: Env, tenantId: string, cf: string | null, escludi: string): Promise<{ id: string; denominazione: string } | null> {
+export async function trovaClientePerCf(env: Env, tenantId: string, cf: string | null, escludi: string): Promise<{ id: string; denominazione: string } | null> {
   if (!cf) return null;
   const r = await env.DB.prepare(
     'SELECT id, denominazione FROM clienti WHERE tenant_id = ? AND id != ? AND (codice_fiscale = ? OR partita_iva = ?) ORDER BY attivo DESC LIMIT 1',
@@ -284,12 +284,16 @@ export async function propostaTitolarita(
   env: Env,
   tenantId: string,
   cliente: { id: string; denominazione: string; tipo: string; codice_fiscale?: string | null },
-  opzioni: { capitale?: { sottoscritto?: number | null; versato?: number | null } | null; dataVisura?: string | null; dataElencoSoci?: string | null } = {},
+  opzioni: {
+    capitale?: { sottoscritto?: number | null; versato?: number | null } | null; dataVisura?: string | null; dataElencoSoci?: string | null;
+    /** AR-M19: compagine non ancora persistita (coda di revisione): si usa al posto dell'archivio. */
+    compagine?: { soci: SocioLetto[]; cariche: CaricaLetta[] } | null;
+  } = {},
 ): Promise<PropostaTitolarita> {
   const data = oggi();
   const nodi = new Map<string, NodoPartecipazione>();
   const catena: PropostaTitolarita['catena'] = [];
-  const radice = await leggiCompagine(env, tenantId, cliente.id);
+  const radice = opzioni.compagine ?? (await leggiCompagine(env, tenantId, cliente.id));
 
   const idSocio = (s: SocioLetto) => s.cfHash ?? `${s.nome.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
 
@@ -345,6 +349,18 @@ export async function propostaTitolarita(
     dataVisura, dataElencoSoci: opzioni.dataElencoSoci ?? null,
   };
   const alert = calcolaAlertTitolarita(input);
+  // AR-M19, A11: la stessa persona in molti clienti dello studio (via cf_hash, senza decifrare).
+  try {
+    const soggetti = [
+      ...radice.soci.filter((s) => !s.quoteProprie && s.cfHash && s.tipo === 'PERSONA_FISICA').map((s) => ({ cfHash: s.cfHash!, nome: s.nome })),
+      ...radice.cariche.filter((c) => c.cfHash).map((c) => ({ cfHash: c.cfHash!, nome: c.nome })),
+    ];
+    alert.push(...calcolaAlertRicorrenze(await ricorrenzePortafoglio(env, tenantId, cliente.id, soggetti), data));
+    const ordine = { alta: 0, media: 1, bassa: 2 } as const;
+    alert.sort((a, b) => ordine[a.gravita] - ordine[b.gravita] || a.codice.localeCompare(b.codice, undefined, { numeric: true }));
+  } catch (e) {
+    console.error('ricorrenze di portafoglio non calcolate:', e);
+  }
   const a3 = alert.find((a) => a.codice === 'A3');
   const bozza = a3 && a3.azione.tipo === 'CONFERMA_RESIDUALE' ? a3.azione.bozzaMotivazione : analisi.richiedeMotivazioneResiduale && radice.soci.length ? bozzaMotivazioneCo6(input, []) : null;
   return { analisi, alert, bozzaMotivazione: bozza, soci: radice.soci, cariche: radice.cariche, catena };
@@ -417,4 +433,95 @@ export async function screeningCompagine(env: Env, tenantId: string, clienteId: 
     });
   }
   return { eseguito: true, nuove };
+}
+
+/**
+ * AR-M19, A11 — Per ciascun soggetto (cf_hash) gli ALTRI clienti dello studio
+ * in cui compare come socio o titolare di carica, con la data di costituzione
+ * (nei dettagli cifrati del cliente) per riconoscere le neo-costituite.
+ * Si confrontano solo gli HMAC: nessun CF viene decifrato.
+ */
+export async function ricorrenzePortafoglio(
+  env: Env,
+  tenantId: string,
+  clienteId: string,
+  soggetti: Array<{ cfHash: string; nome: string }>,
+): Promise<RicorrenzaSoggetto[]> {
+  const unici = new Map<string, string>();
+  for (const s of soggetti) if (s.cfHash && !unici.has(s.cfHash)) unici.set(s.cfHash, s.nome);
+  if (!unici.size) return [];
+  const hashes = [...unici.keys()];
+  const segnaposto = hashes.map(() => '?').join(',');
+  const { results } = await env.DB.prepare(
+    `SELECT x.cf_hash, x.cliente_id, x.ruolo, c.denominazione, c.dati_identificativi FROM (
+       SELECT socio_cf_hash AS cf_hash, cliente_id, 'socio' AS ruolo FROM partecipazioni
+        WHERE tenant_id = ? AND valido_al IS NULL AND quote_proprie = 0 AND socio_cf_hash IN (${segnaposto})
+       UNION ALL
+       SELECT cf_hash, cliente_id, 'amministratore' AS ruolo FROM cariche
+        WHERE tenant_id = ? AND valido_al IS NULL AND cf_hash IN (${segnaposto})
+     ) x JOIN clienti c ON c.id = x.cliente_id
+     WHERE c.tenant_id = ? AND c.attivo = 1 AND x.cliente_id != ?`,
+  ).bind(tenantId, ...hashes, tenantId, ...hashes, tenantId, clienteId).all<any>();
+
+  const costituzioni = new Map<string, string | null>();
+  const dataCostituzione = async (r: any): Promise<string | null> => {
+    if (costituzioni.has(r.cliente_id)) return costituzioni.get(r.cliente_id)!;
+    let d: string | null = null;
+    try {
+      const raw = r.dati_identificativi ? JSON.parse(r.dati_identificativi) : null;
+      const det = raw && typeof raw === 'object' && 'contenuto' in raw ? JSON.parse(await decifra(env.MASTER_KEY, tenantId, raw)) : raw;
+      d = typeof det?.dataCostituzione === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(det.dataCostituzione) ? det.dataCostituzione : null;
+    } catch { d = null; }
+    costituzioni.set(r.cliente_id, d);
+    return d;
+  };
+
+  const perSoggetto = new Map<string, Map<string, { id: string; denominazione: string; ruoli: Set<string>; dataCostituzione: string | null }>>();
+  for (const r of results ?? []) {
+    const m = perSoggetto.get(r.cf_hash) ?? new Map();
+    perSoggetto.set(r.cf_hash, m);
+    const voce = m.get(r.cliente_id) ?? { id: r.cliente_id, denominazione: r.denominazione, ruoli: new Set<string>(), dataCostituzione: await dataCostituzione(r) };
+    voce.ruoli.add(r.ruolo);
+    m.set(r.cliente_id, voce);
+  }
+  const out: RicorrenzaSoggetto[] = [];
+  for (const [cfHash, clienti] of perSoggetto) {
+    out.push({
+      id: cfHash, nome: unici.get(cfHash) ?? '(soggetto)',
+      clienti: [...clienti.values()].map((c) => ({
+        id: c.id, denominazione: c.denominazione, dataCostituzione: c.dataCostituzione,
+        ruolo: c.ruoli.size > 1 ? 'socio e amministratore' : c.ruoli.has('socio') ? 'socio' : 'amministratore',
+      })),
+    });
+  }
+  return out;
+}
+
+/**
+ * AR-M19 — Compagine «in memoria» per la coda di revisione: soci e cariche
+ * appena letti da una visura, non ancora persistiti, nella stessa forma di
+ * `leggiCompagine` (cf_hash calcolato, socio già cliente risolto) così che
+ * `propostaTitolarita` possa ragionarci sopra senza scrivere nulla.
+ */
+export async function compagineInMemoria(
+  env: Env,
+  tenantId: string,
+  clienteId: string | null,
+  dati: { soci: SocioIn[]; cariche: CaricaIn[]; fonteData: string | null },
+): Promise<{ soci: SocioLetto[]; cariche: CaricaLetta[] }> {
+  const data = oggi();
+  const fonteData = dati.fonteData ?? data;
+  const soci: SocioLetto[] = [];
+  for (const [i, s] of dati.soci.entries()) {
+    const cf = normCf(s.codiceFiscale);
+    const cfHash = cf ? await hmacTenant(env.MASTER_KEY, tenantId, cf) : null;
+    const socioCliente = s.tipo !== 'PERSONA_FISICA' && !s.quoteProprie ? await trovaClientePerCf(env, tenantId, cf, clienteId ?? '') : null;
+    soci.push({ ...s, id: `mem-soc-${i}`, codiceFiscale: cf, paese: s.paese ?? (cf ? 'IT' : null), socioClienteId: socioCliente?.id ?? null, fonte: 'VISURA', fonteData, validoDal: data, cfHash });
+  }
+  const cariche: CaricaLetta[] = [];
+  for (const [i, c] of dati.cariche.entries()) {
+    const cf = normCf(c.codiceFiscale);
+    cariche.push({ ...c, id: `mem-car-${i}`, codiceFiscale: cf, fonte: 'VISURA', fonteData, validoDal: data, cfHash: cf ? await hmacTenant(env.MASTER_KEY, tenantId, cf) : null });
+  }
+  return { soci, cariche };
 }

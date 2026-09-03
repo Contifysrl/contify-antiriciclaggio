@@ -44,9 +44,14 @@ import { SOGLIE_AVVISO_CANONE, bloccoPerStato, giorniAllaScadenza, statoValido }
 import { cercaAnagrafica, limiteSuperato } from './lib/lookup';
 import { aggiornaListeSanzioni, caricaListe, eseguiScreeningTenant, listeDaAggiornare, screeningSchedulato } from './lib/sanzioni';
 import { normalizzaPiva } from './lib/lookup/piva';
+import { registraTitolari } from './lib/titolarita';
+import { TIPI_CLIENTE, aggiornaClienteDaVisura, clienteDoppione, creaClienteDaVisura, risolviProfessionista } from './lib/da-visura';
 import { leggiProposte, propostaTitolarita, registraProposta, salvaCompagine, screeningCompagine, type CaricaIn, type SocioIn } from './lib/compagine';
 import { ErroreAi, MODELLO_DEFAULT, aiAbilitata, generaBozza, rispostaChat, suggerisciIndicatori } from './lib/ai';
 import { parametriTenant, propostaFascicolo, tabellaProvince } from './lib/proposta-fascicolo';
+import { completezzaStudio } from './lib/completezza';
+import { accodaVisure, applicaTuttoCoda, applicaVoceCoda, caricaPdfCoda, leggiCoda, scartaVoceCoda } from './lib/coda';
+import { REGOLE_COMPLETEZZA } from './domain/completezza';
 import { corpoDichiarazioneArt22, normalizzaRispostaArt22, precompilaDichiarazione, segnaliDaValutare, type PrecompilataArt22, type RispostaArt22 } from './lib/dichiarazione-art22';
 import { PROVINCE, RIFERIMENTO_MAPPA_ANR, normalizzaTabellaProvince } from './domain/province';
 import { SETTORI_ESPOSTI } from './domain/settori-esposti';
@@ -531,21 +536,6 @@ api.get('/studio/professionisti', async (c) => {
  * Se non è indicato nulla si usa l'utente corrente quando è professionista:
  * è il caso normale (il professionista carica i propri clienti).
  */
-async function risolviProfessionista(
-  db: D1Database, tenantId: string, indicato: unknown, utente: any,
-): Promise<{ id: string } | { errore: string }> {
-  const id = indicato === undefined || indicato === null || indicato === '' ? null : String(indicato);
-  if (!id) {
-    if (utente.ruolo === 'TITOLARE') return { id: utente.id };
-    return { errore: 'Indicare il professionista incaricato: chi inserisce non firma.' };
-  }
-  const r = await db.prepare(
-    "SELECT id FROM utenti WHERE id = ? AND tenant_id = ? AND ruolo = 'TITOLARE' AND attivo = 1",
-  ).bind(id, tenantId).first<any>();
-  if (!r) return { errore: 'Il professionista indicato non esiste, non è attivo o non appartiene allo studio.' };
-  return { id: String(r.id) };
-}
-
 api.get('/utenti', soloAmministratore, async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT id, email, nome, ruolo, attivo, amministratore, cambio_password_richiesto, ultimo_accesso, creato_il,
@@ -1729,12 +1719,16 @@ async function leggiIndicatori(c: Ctx | Context<{ Bindings: Env; Variables: Vari
 
   const scadenzario = await calcolaScadenzario(db, tenantId);
   const controlliScaduti = scadenzario.scadute.filter((v: any) => v.tipo === 'CONTROLLO_COSTANTE').length;
+  // AR-M19: il cruscotto di completezza alimenta il fattore «organizzazione
+  // dell'adeguata verifica» (Modello AV.0), dove pertinente.
+  const completezza = await completezzaStudio(c.env, tenantId);
 
   const vuln: RigheVulnerabilita = {
     utentiAttivi, formazioneUltimoAnno, formazionePartecipanti, fascicoliAttivi,
     fascicoliConValutazione, fascicoliConValutazioneFirmata, controlliScaduti,
     clientiSocietariSenzaTitolare, documentiTotali, documentiEntro30Giorni,
     fascicoliSenzaDocumenti, sosTotali, sosNonConcluse, astensioniTotali,
+    clientiConsiderati: completezza.clientiAttivi, clientiCompleti: completezza.clientiCompleti, mancanzeAlte: completezza.perGravita.alta,
   };
 
   return calcolaIndicatori(fascicoli, vuln, oggi());
@@ -1909,7 +1903,6 @@ api.post('/studio/autovalutazioni/:id/firma', soloTitolare, async (c) => {
 // ===========================================================================
 
 /** Nature giuridiche ammesse: la stessa lista del CHECK sulla tabella clienti. */
-const TIPI_CLIENTE = ['PERSONA_FISICA', 'SOCIETA_CAPITALI', 'SOCIETA_PERSONE', 'ENTE_NON_PROFIT', 'TRUST', 'ALTRO'];
 
 /**
  * Che cosa resta appeso a un cliente (AR-M14). Serve a decidere se può essere
@@ -2193,59 +2186,10 @@ api.post('/clienti/:id/titolarita/analizza', puoScrivere, async (c) => {
 });
 
 api.post('/clienti/:id/titolarita', puoScrivere, async (c) => {
-  const tenantId = c.get('tenantId');
-  const u = c.get('utente');
-  const clienteId = c.req.param('id');
   const b = await c.req.json<any>();
-  if (!Array.isArray(b.titolari) || b.titolari.length === 0) {
-    return c.json({ errore: 'Indicare almeno un titolare effettivo, oppure documentare l’impossibilità e valutare l’astensione ex art. 42.' }, 400);
-  }
-
-  const adesso = new Date().toISOString();
-  const stmts: D1PreparedStatement[] = [
-    // La titolarità effettiva è storicizzata: la precedente si chiude, non si
-    // sovrascrive (art. 32 co. 2 lett. d, mantenimento della storicità).
-    c.env.DB.prepare('UPDATE titolari_effettivi SET valido_al = ? WHERE cliente_id = ? AND tenant_id = ? AND valido_al IS NULL')
-      .bind(oggi(), clienteId, tenantId),
-  ];
-
-  for (const t of b.titolari) {
-    if (t.criterio === 'RESIDUALE_POTERI' && !t.motivazione) {
-      return c.json({ errore: 'Il criterio residuale dell’art. 20 co. 5 richiede la motivazione scritta prevista dall’art. 20 co. 6.' }, 400);
-    }
-    stmts.push(
-      c.env.DB.prepare(
-        `INSERT INTO titolari_effettivi (id, tenant_id, cliente_id, nominativo, codice_fiscale, criterio, norma, quota,
-          percorsi, motivazione, pep, registro_consultato, registro_data, registro_incongruenza, registro_note, valido_dal, creato_da)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      ).bind(
-        nuovoId('te'), tenantId, clienteId, t.nominativo, t.codiceFiscale ?? null, t.criterio, t.norma,
-        t.quota ?? null, JSON.stringify(t.percorsi ?? []), t.motivazione ?? '', t.pep ? 1 : 0,
-        b.registroConsultato ? 1 : 0, b.registroData ?? null, b.registroIncongruenza ? 1 : 0, b.registroNote ?? null,
-        oggi(), u.id,
-      ),
-    );
-  }
-
-  await c.env.DB.batch(stmts);
-  // AR-M17: se la fotografia nasce da una proposta del programma, la proposta
-  // si chiude con l'esito (applicata tale e quale, o modificata: e allora si
-  // dice il perché). È ciò che in ispezione dimostra la valutazione.
-  let propostaEsito: string | null = null;
-  if (typeof b.propostaId === 'string' && b.propostaId) {
-    propostaEsito = b.propostaModificata ? 'MODIFICATA' : 'APPLICATA';
-    const esito = JSON.stringify(await cifra(c.env.MASTER_KEY, tenantId, JSON.stringify({
-      motivazione: b.propostaMotivazione ?? null, titolariRegistrati: b.titolari.map((t: any) => ({ nominativo: t.nominativo, criterio: t.criterio, quota: t.quota ?? null })),
-    })));
-    await c.env.DB.prepare(
-      "UPDATE proposte SET stato = ?, esito = ?, rivista_da = ?, rivista_il = datetime('now') WHERE id = ? AND tenant_id = ? AND cliente_id = ? AND stato = 'PROPOSTA'",
-    ).bind(propostaEsito, esito, u.id, b.propostaId, tenantId, clienteId).run();
-  }
-  await scriviAudit(c.env.DB, {
-    tenantId, utenteId: u.id, azione: 'AGGIORNA_TITOLARITA', entita: 'clienti', entitaId: clienteId,
-    dettaglio: { numeroTitolari: b.titolari.length, adesso, propostaId: b.propostaId ?? null, propostaEsito }, ip: c.get('ip'),
-  });
-  return c.json({ ok: true, propostaEsito });
+  const r = await registraTitolari(c.env, c.get('tenantId'), c.get('utente'), c.get('ip'), c.req.param('id') as string, b);
+  if ('errore' in r) return c.json({ errore: r.errore }, 400);
+  return c.json(r);
 });
 
 // ===========================================================================
@@ -2255,66 +2199,6 @@ api.post('/clienti/:id/titolarita', puoScrivere, async (c) => {
 // professionista conferma: nessuna proposta produce effetti da sola.
 // ===========================================================================
 
-/** Campi dell'anagrafica accettati dal flusso «da visura» (stessi di POST/PATCH /clienti). */
-function anagraficaDaCorpo(b: any) {
-  const t = (v: unknown): string | null => (typeof v === 'string' ? v.trim() : v == null ? null : String(v));
-  return {
-    denominazione: t(b.denominazione) || '', tipo: String(b.tipo ?? ''), codiceFiscale: t(b.codiceFiscale)?.toUpperCase() || null, partitaIva: t(b.partitaIva) || null,
-    paeseResidenza: String(b.paeseResidenza ?? 'IT').trim().toUpperCase() || 'IT', attivitaPrevalente: t(b.attivitaPrevalente) || null,
-    ateco: t(b.ateco) || null, pep: Boolean(b.pep), pepOrganoPubblico: Boolean(b.pepOrganoPubblico), note: t(b.note) || null,
-    datiIdentificativi: b.datiIdentificativi && typeof b.datiIdentificativi === 'object' ? b.datiIdentificativi : null,
-  };
-}
-
-/** Soci e cariche dal corpo (già rivisti nel browser), con validazione minima. */
-function compagineDaCorpo(b: any): { soci: SocioIn[]; cariche: CaricaIn[] } {
-  const DIRITTI = ['PROPRIETA', 'NUDA_PROPRIETA', 'USUFRUTTO', 'PEGNO', 'SEQUESTRO', 'PIGNORAMENTO', 'COMPROPRIETA', 'ALTRO'];
-  const TIPI = ['PERSONA_FISICA', 'PERSONA_GIURIDICA', 'FIDUCIARIA', 'TRUST', 'ALTRO'];
-  const soci: SocioIn[] = (Array.isArray(b.soci) ? b.soci : [])
-    .filter((s: any) => s && typeof s.nome === 'string' && s.nome.trim() && Number.isFinite(Number(s.quotaPercento)))
-    .map((s: any) => ({
-      nome: String(s.nome).trim(), codiceFiscale: s.codiceFiscale ? String(s.codiceFiscale).trim().toUpperCase() : null,
-      tipo: TIPI.includes(s.tipo) ? s.tipo : 'ALTRO', quotaNominale: s.quotaNominale != null ? Number(s.quotaNominale) : null,
-      quotaPercento: Math.max(0, Math.min(100, Number(s.quotaPercento))), diritto: DIRITTI.includes(s.diritto) ? s.diritto : 'PROPRIETA',
-      quoteProprie: Boolean(s.quoteProprie), comproprieta: Boolean(s.comproprieta), paese: s.paese ? String(s.paese).toUpperCase().slice(0, 2) : null,
-      domicilio: s.domicilio ?? null, pec: s.pec ?? null, versato: s.versato != null ? Number(s.versato) : null,
-    }));
-  const cariche: CaricaIn[] = (Array.isArray(b.cariche) ? b.cariche : [])
-    .filter((c: any) => c && typeof c.nome === 'string' && c.nome.trim())
-    .map((c: any) => ({
-      nome: String(c.nome).trim(), codiceFiscale: c.codiceFiscale ? String(c.codiceFiscale).trim().toUpperCase() : null,
-      carica: typeof c.carica === 'string' ? c.carica : 'ALTRO', caricaTesto: c.caricaTesto ?? null, rappresentanzaLegale: Boolean(c.rappresentanzaLegale),
-      dataNomina: c.dataNomina ?? null, durata: c.durata ?? null, natoA: c.natoA ?? null, dataNascita: c.dataNascita ?? null,
-      domicilio: c.domicilio ?? null, pec: c.pec ?? null, poteri: c.poteri ?? null, paese: c.paese ?? null,
-    }));
-  return { soci, cariche };
-}
-
-/** Telemetria ANONIMA del parser (M17-14): etichette non trovate, mai valori. */
-async function audioVisuraLetta(c: Context<{ Bindings: Env; Variables: Variabili }>, tenantId: string, clienteId: string | null, b: any) {
-  const t = b?.telemetria ?? {};
-  await scriviAudit(c.env.DB, {
-    tenantId, utenteId: c.get('utente').id, azione: 'VISURA_LETTA', entita: 'clienti', entitaId: clienteId ?? undefined,
-    dettaglio: {
-      tipoVisura: t.tipoVisura ?? null, formaVisura: t.formaVisura ?? null, pagine: Number(t.pagine) || null,
-      campiNonTrovati: Array.isArray(t.campiNonTrovati) ? t.campiNonTrovati.slice(0, 30).map(String) : [],
-      avvisi: Number(t.avvisi) || 0, soci: Number(t.soci) || 0, cariche: Number(t.cariche) || 0,
-      tipoIncerto: Boolean(t.tipoIncerto), dataEstrazione: t.dataEstrazione ?? null,
-    },
-    ip: c.get('ip'),
-  });
-}
-
-/** Doppioni: stesso CF o stessa P.IVA già in anagrafica (anche archiviati). */
-async function clienteDoppione(db: D1Database, tenantId: string, cf: string | null, piva: string | null, escludi?: string) {
-  if (!cf && !piva) return null;
-  const r = await db.prepare(
-    `SELECT id, denominazione, attivo FROM clienti WHERE tenant_id = ? ${escludi ? 'AND id != ?' : ''}
-     AND ((? IS NOT NULL AND codice_fiscale = ?) OR (? IS NOT NULL AND partita_iva = ?)) ORDER BY attivo DESC LIMIT 1`,
-  ).bind(...(escludi ? [tenantId, escludi] : [tenantId]), cf, cf, piva, piva).first<any>();
-  return r ? { id: String(r.id), denominazione: String(r.denominazione), attivo: r.attivo === 1 } : null;
-}
-
 /**
  * Nuovo cliente da visura. Il corpo porta l'anagrafica rivista, soci e
  * cariche letti dal PDF, i dettagli per `dati_identificativi` e la data della
@@ -2323,55 +2207,10 @@ async function clienteDoppione(db: D1Database, tenantId: string, cf: string | nu
  * si carica subito dopo con POST /clienti/:id/documenti.
  */
 api.post('/clienti/da-visura', puoScrivere, async (c) => {
-  const tenantId = c.get('tenantId');
-  const u = c.get('utente');
   const b = await c.req.json<any>();
-  const a = anagraficaDaCorpo(b.anagrafica ?? {});
-  if (!a.denominazione || !a.tipo) return c.json({ errore: 'Denominazione e natura giuridica sono obbligatorie.' }, 400);
-  if (!TIPI_CLIENTE.includes(a.tipo)) return c.json({ errore: 'Natura giuridica non ammessa.' }, 400);
-  if (a.partitaIva && !normalizzaPiva(a.partitaIva)) return c.json({ errore: 'La partita IVA non è formalmente valida.' }, 400);
-
-  const doppione = await clienteDoppione(c.env.DB, tenantId, a.codiceFiscale, a.partitaIva);
-  if (doppione) {
-    return c.json({
-      codice: 'doppione', clienteId: doppione.id, denominazione: doppione.denominazione, attivo: doppione.attivo,
-      errore: `${doppione.denominazione} è già in anagrafica con lo stesso codice fiscale o partita IVA${doppione.attivo ? '' : ' (archiviato)'}: apri la scheda e usa «Aggiorna da visura».`,
-    }, 409);
-  }
-  const prof = await risolviProfessionista(c.env.DB, tenantId, b.anagrafica?.professionistaId, u);
-  if ('errore' in prof) return c.json({ errore: prof.errore }, 400);
-
-  const id = nuovoId('cli');
-  const dati = a.datiIdentificativi ? await cifra(c.env.MASTER_KEY, tenantId, JSON.stringify(a.datiIdentificativi)) : null;
-  await c.env.DB.prepare(
-    `INSERT INTO clienti (id, tenant_id, tipo, denominazione, codice_fiscale, partita_iva, dati_identificativi,
-      paese_residenza, attivita_prevalente, ateco, pep, pep_organo_pubblico, note, creato_da, professionista_id)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-  ).bind(
-    id, tenantId, a.tipo, a.denominazione, a.codiceFiscale, a.partitaIva, dati ? JSON.stringify(dati) : null, a.paeseResidenza,
-    a.attivitaPrevalente, a.ateco, a.pep ? 1 : 0, a.pepOrganoPubblico ? 1 : 0, a.note, u.id, prof.id,
-  ).run();
-
-  const { soci, cariche } = compagineDaCorpo(b);
-  const dataVisura = typeof b.dataVisura === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.dataVisura) ? b.dataVisura : null;
-  const diff = await salvaCompagine(c.env, tenantId, id, u.id, { soci, cariche, fonte: 'VISURA', fonteData: b.dataElencoSoci ?? dataVisura });
-  await registraProposta(c.env, tenantId, id, u.id, 'ANAGRAFICA', 'VISURA', { anagrafica: a, dataVisura, applicataAllaCreazione: true }, [], 'APPLICATA');
-
-  const screening = await screeningCompagine(c.env, tenantId, id).catch(() => ({ eseguito: false, nuove: 0 }));
-  const proposta = await propostaTitolarita(c.env, tenantId, { id, denominazione: a.denominazione, tipo: a.tipo, codice_fiscale: a.codiceFiscale },
-    { capitale: b.capitale ?? null, dataVisura, dataElencoSoci: b.dataElencoSoci ?? null });
-  let propostaId: string | null = null;
-  if (soci.length || cariche.length) {
-    propostaId = await registraProposta(c.env, tenantId, id, u.id, 'TITOLARITA', 'VISURA',
-      { titolari: proposta.analisi.titolari, criterio: proposta.analisi.criterioApplicato, bozzaMotivazione: proposta.bozzaMotivazione, dataVisura }, proposta.alert);
-  }
-
-  await audioVisuraLetta(c, tenantId, id, b);
-  await scriviAudit(c.env.DB, {
-    tenantId, utenteId: u.id, azione: 'CREA_CLIENTE', entita: 'clienti', entitaId: id,
-    dettaglio: { origine: 'VISURA', dataVisura, soci: soci.length, cariche: cariche.length, alert: proposta.alert.map((x) => x.codice) }, ip: c.get('ip'),
-  });
-  return c.json({ id, diff, proposta: { ...proposta, id: propostaId }, screening }, 201);
+  const r = await creaClienteDaVisura(c.env, c.get('tenantId'), c.get('utente'), c.get('ip'), b);
+  if ('errore' in r) return c.json(r, r.stato);
+  return c.json(r, 201);
 });
 
 /**
@@ -2381,72 +2220,10 @@ api.post('/clienti/da-visura', puoScrivere, async (c) => {
  * risposta operativa al controllo costante.
  */
 api.post('/clienti/:id/da-visura', puoScrivere, async (c) => {
-  const tenantId = c.get('tenantId');
-  const u = c.get('utente');
-  const id = c.req.param('id') as string;
   const b = await c.req.json<any>();
-  const cliente = await c.env.DB.prepare('SELECT id, denominazione, tipo, codice_fiscale, partita_iva, dati_identificativi FROM clienti WHERE id = ? AND tenant_id = ?')
-    .bind(id, tenantId).first<any>();
-  if (!cliente) return c.json({ errore: 'Cliente non trovato' }, 404);
-
-  // 1. Campi dell'anagrafica scelti dall'utente.
-  const campi = b.campi && typeof b.campi === 'object' ? b.campi : {};
-  const set: string[] = [];
-  const valori: unknown[] = [];
-  const applicati: string[] = [];
-  const testo = (chiave: string, colonna: string) => {
-    if (campi[chiave] === undefined) return;
-    const v = typeof campi[chiave] === 'string' ? campi[chiave].trim() : campi[chiave];
-    set.push(`${colonna} = ?`); valori.push(v === '' ? null : v); applicati.push(chiave);
-  };
-  if (campi.tipo !== undefined && !TIPI_CLIENTE.includes(campi.tipo)) return c.json({ errore: 'Natura giuridica non ammessa.' }, 400);
-  if (campi.codiceFiscale || campi.partitaIva) {
-    const dopp = await clienteDoppione(c.env.DB, tenantId, campi.codiceFiscale ?? null, campi.partitaIva ?? null, id);
-    if (dopp) return c.json({ codice: 'doppione', clienteId: dopp.id, errore: `Codice fiscale o partita IVA già presenti su ${dopp.denominazione}.` }, 409);
-  }
-  testo('tipo', 'tipo'); testo('denominazione', 'denominazione'); testo('codiceFiscale', 'codice_fiscale'); testo('partitaIva', 'partita_iva');
-  testo('attivitaPrevalente', 'attivita_prevalente'); testo('ateco', 'ateco'); testo('note', 'note');
-  if (campi.paeseResidenza !== undefined) { set.push('paese_residenza = ?'); valori.push(String(campi.paeseResidenza).trim().toUpperCase() || 'IT'); applicati.push('paeseResidenza'); }
-  if (b.datiIdentificativi && typeof b.datiIdentificativi === 'object' && Object.keys(b.datiIdentificativi).length) {
-    // I dettagli si FONDONO con quelli esistenti: la visura non sa nulla del documento d'identità.
-    let attuali: Record<string, unknown> = {};
-    if (cliente.dati_identificativi) {
-      try { attuali = JSON.parse(await decifra(c.env.MASTER_KEY, tenantId, JSON.parse(cliente.dati_identificativi))); } catch { attuali = {}; }
-    }
-    const nuovi = { ...attuali, ...b.datiIdentificativi };
-    set.push('dati_identificativi = ?'); valori.push(JSON.stringify(await cifra(c.env.MASTER_KEY, tenantId, JSON.stringify(nuovi))));
-    applicati.push(...Object.keys(b.datiIdentificativi).map((k) => `datiIdentificativi.${k}`));
-  }
-  if (set.length) {
-    set.push("aggiornato_il = datetime('now')");
-    await c.env.DB.prepare(`UPDATE clienti SET ${set.join(', ')} WHERE id = ? AND tenant_id = ?`).bind(...valori, id, tenantId).run();
-  }
-
-  // 2. Compagine e cariche: diff temporale.
-  const { soci, cariche } = compagineDaCorpo(b);
-  const dataVisura = typeof b.dataVisura === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.dataVisura) ? b.dataVisura : null;
-  const diff = (soci.length || cariche.length || b.svuotaCompagine)
-    ? await salvaCompagine(c.env, tenantId, id, u.id, { soci, cariche, fonte: 'VISURA', fonteData: b.dataElencoSoci ?? dataVisura })
-    : { partecipazioni: { aperte: 0, chiuse: 0, invariate: 0 }, cariche: { aperte: 0, chiuse: 0, invariate: 0 } };
-
-  const screening = await screeningCompagine(c.env, tenantId, id).catch(() => ({ eseguito: false, nuove: 0 }));
-  const denominazione = campi.denominazione ?? cliente.denominazione;
-  const tipo = campi.tipo ?? cliente.tipo;
-  const proposta = await propostaTitolarita(c.env, tenantId, { id, denominazione, tipo, codice_fiscale: campi.codiceFiscale ?? cliente.codice_fiscale },
-    { capitale: b.capitale ?? null, dataVisura, dataElencoSoci: b.dataElencoSoci ?? null });
-  let propostaId: string | null = null;
-  const compagineCambiata = diff.partecipazioni.aperte + diff.partecipazioni.chiuse + diff.cariche.aperte + diff.cariche.chiuse > 0;
-  if (compagineCambiata || b.forzaProposta) {
-    propostaId = await registraProposta(c.env, tenantId, id, u.id, 'TITOLARITA', 'VISURA',
-      { titolari: proposta.analisi.titolari, criterio: proposta.analisi.criterioApplicato, bozzaMotivazione: proposta.bozzaMotivazione, dataVisura, diff }, proposta.alert);
-  }
-
-  await audioVisuraLetta(c, tenantId, id, b);
-  await scriviAudit(c.env.DB, {
-    tenantId, utenteId: u.id, azione: 'AGGIORNA_CLIENTE', entita: 'clienti', entitaId: id,
-    dettaglio: { origine: 'VISURA', dataVisura, campi: applicati, diff, alert: proposta.alert.map((x) => x.codice) }, ip: c.get('ip'),
-  });
-  return c.json({ ok: true, applicati, diff, compagineCambiata, proposta: { ...proposta, id: propostaId }, screening });
+  const r = await aggiornaClienteDaVisura(c.env, c.get('tenantId'), c.get('utente'), c.get('ip'), c.req.param('id') as string, b);
+  if ('errore' in r) return c.json(r, r.stato);
+  return c.json(r);
 });
 
 /** Compagine, cariche, proposta di titolarità viva (ricalcolata) e storico delle proposte. */
@@ -3355,8 +3132,15 @@ api.get('/cruscotto', async (c) => {
     c.env.DB.prepare('SELECT eseguito_il, soggetti FROM screening_corse WHERE tenant_id = ? ORDER BY id DESC LIMIT 1').bind(tenantId).first<any>(),
   ]);
   const paesiDaRivalutare = await clientiPaesiDaRivalutare(c.env.DB, tenantId);
+  // AR-M19: riepilogo del cruscotto di completezza («oggi ti mancano N cose»).
+  let completezza: any = null;
+  try {
+    const e = await completezzaStudio(c.env, tenantId);
+    completezza = { clientiAttivi: e.clientiAttivi, clientiCompleti: e.clientiCompleti, avanzamento: e.avanzamento, totaleMancanze: e.totaleMancanze, perGravita: e.perGravita, iniziaDa: e.iniziaDa };
+  } catch (err) { console.error('completezza non calcolata:', err); }
 
   return c.json({
+    completezza,
     screening: {
       daEsaminare: screeningDaEsaminare?.n ?? 0,
       ultimaCorsa: ultimaCorsa ?? null,
@@ -3373,6 +3157,211 @@ api.get('/cruscotto', async (c) => {
       : null,
   });
 });
+
+
+// ===========================================================================
+// AR-M19 — CRUSCOTTO DI COMPLETEZZA, CONTROLLO COSTANTE, CESSAZIONE, FORMAZIONE
+//
+// «Oggi ti mancano 14 cose, queste 3 sono urgenti, inizia da qui»: per ogni
+// cliente attivo il programma calcola cosa manca perché sia a posto, con le
+// regole di `domain/completezza.ts` (norma e modulistica citate per ciascuna).
+// Le tre rotte di scrittura chiudono lacune emerse nel collaudo: senza un
+// modo per registrare il controllo costante eseguito, la cessazione del
+// rapporto e la formazione, il cruscotto segnalerebbe cose che non si
+// possono completare.
+// ===========================================================================
+
+api.get('/completezza', async (c) => {
+  const esito = await completezzaStudio(c.env, c.get('tenantId'));
+  return c.json({ ...esito, regole: REGOLE_COMPLETEZZA });
+});
+
+api.get('/catalogo/regole-completezza', (c) => c.json(REGOLE_COMPLETEZZA));
+
+const VERIFICHE_CONTROLLO = ['ANAGRAFICA', 'COMPAGINE', 'TITOLARI', 'OPERATIVITA', 'LISTE', 'PEP', 'DOCUMENTI'];
+
+/** Controllo costante eseguito (art. 19 co. 1 lett. d): lascia una riga e sposta la prossima scadenza. */
+api.post('/fascicoli/:id/controllo-costante', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const u = c.get('utente');
+  const id = c.req.param('id');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const f = await c.env.DB.prepare('SELECT id, codice, stato, data_cessazione, data_conferimento FROM fascicoli WHERE id = ? AND tenant_id = ?').bind(id, tenantId).first<any>();
+  if (!f) return c.json({ errore: 'Fascicolo non trovato' }, 404);
+  if (f.stato === 'CESSATO' || f.data_cessazione) return c.json({ errore: 'Il rapporto è cessato: il controllo costante non è più dovuto.' }, 400);
+  const esito = String(b.esito ?? '');
+  if (!['INVARIATO', 'DA_RIVALUTARE'].includes(esito)) return c.json({ errore: 'Esito non valido: INVARIATO (nulla è cambiato) o DA_RIVALUTARE (serve una nuova valutazione).' }, 400);
+  const data = String(b.dataControllo ?? oggi()).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return c.json({ errore: 'La data del controllo va indicata come AAAA-MM-GG' }, 400);
+  if (data > oggi()) return c.json({ errore: 'La data del controllo non può essere futura.' }, 400);
+  if (data < String(f.data_conferimento).slice(0, 10)) return c.json({ errore: 'La data del controllo precede il conferimento dell’incarico.' }, 400);
+  const verifiche = (Array.isArray(b.verifiche) ? b.verifiche : []).map(String).filter((v: string) => VERIFICHE_CONTROLLO.includes(v));
+  if (!verifiche.length) return c.json({ errore: 'Indica almeno una cosa che hai controllato (anagrafica, compagine, titolari, operatività, liste, PEP, documenti).' }, 400);
+  const note = String(b.note ?? '').trim().slice(0, 2000) || null;
+  if (esito === 'DA_RIVALUTARE' && !note) return c.json({ errore: 'Se qualcosa è cambiato, scrivi cosa: è ciò che motiva la nuova valutazione.' }, 400);
+
+  const cid = nuovoId('ctl');
+  await c.env.DB.batch([
+    c.env.DB.prepare('INSERT INTO controlli_costanti (id, tenant_id, fascicolo_id, data_controllo, esito, verifiche, note, eseguito_da) VALUES (?,?,?,?,?,?,?,?)')
+      .bind(cid, tenantId, id, data, esito, JSON.stringify(verifiche), note, u.id),
+    c.env.DB.prepare("UPDATE fascicoli SET ultimo_controllo = ?, aggiornato_il = datetime('now') WHERE id = ? AND tenant_id = ? AND (ultimo_controllo IS NULL OR ultimo_controllo < ?)")
+      .bind(data, id, tenantId, data),
+  ]);
+  await scriviAudit(c.env.DB, { tenantId, utenteId: u.id, azione: 'CONTROLLO_COSTANTE', entita: 'fascicoli', entitaId: id, dettaglio: { data, esito, verifiche }, ip: c.get('ip') });
+  return c.json({ id: cid, data, esito, prossimaValutazione: esito === 'DA_RIVALUTARE' }, 201);
+});
+
+api.get('/fascicoli/:id/controlli-costanti', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT k.id, k.data_controllo, k.esito, k.verifiche, k.note, k.creato_il, u.nome AS eseguito_da
+     FROM controlli_costanti k LEFT JOIN utenti u ON u.id = k.eseguito_da
+     WHERE k.tenant_id = ? AND k.fascicolo_id = ? ORDER BY k.data_controllo DESC, k.creato_il DESC`,
+  ).bind(c.get('tenantId'), c.req.param('id')).all<any>();
+  return c.json((results ?? []).map((r) => ({ ...r, verifiche: (() => { try { return JSON.parse(r.verifiche ?? '[]'); } catch { return []; } })() })));
+});
+
+/**
+ * Cessazione del rapporto: da qui decorre la conservazione decennale (art. 31).
+ * Nulla si cancella: il fascicolo resta leggibile, i suoi documenti ricevono
+ * il termine di conservazione, e i documenti del cliente lo ricevono solo se
+ * non resta alcun altro rapporto in essere.
+ */
+api.post('/fascicoli/:id/cessazione', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const u = c.get('utente');
+  const id = c.req.param('id');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const f = await c.env.DB.prepare('SELECT id, cliente_id, codice, stato, data_conferimento, data_cessazione FROM fascicoli WHERE id = ? AND tenant_id = ?').bind(id, tenantId).first<any>();
+  if (!f) return c.json({ errore: 'Fascicolo non trovato' }, 404);
+  if (f.stato === 'CESSATO') return c.json({ errore: 'Il fascicolo è già cessato.' }, 400);
+  const data = String(b.dataCessazione ?? oggi()).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return c.json({ errore: 'La data di cessazione va indicata come AAAA-MM-GG' }, 400);
+  if (data < String(f.data_conferimento).slice(0, 10)) return c.json({ errore: 'La cessazione precede il conferimento dell’incarico.' }, 400);
+  const motivo = String(b.motivo ?? '').trim().slice(0, 500) || null;
+  const conservaFinoAl = aggiungiAnni(data, TERMINI.CONSERVAZIONE_ANNI.valore);
+
+  const stmts = [
+    c.env.DB.prepare("UPDATE fascicoli SET stato = 'CESSATO', data_cessazione = ?, aggiornato_il = datetime('now') WHERE id = ? AND tenant_id = ?").bind(data, id, tenantId),
+    c.env.DB.prepare('UPDATE documenti SET conserva_fino_al = ? WHERE tenant_id = ? AND fascicolo_id = ? AND conserva_fino_al IS NULL').bind(conservaFinoAl, tenantId, id),
+  ];
+  const altri = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM fascicoli WHERE tenant_id = ? AND cliente_id = ? AND id != ? AND stato != 'CESSATO' AND data_cessazione IS NULL")
+    .bind(tenantId, f.cliente_id, id).first<{ n: number }>();
+  const ultimoRapporto = (altri?.n ?? 0) === 0;
+  if (ultimoRapporto) {
+    stmts.push(c.env.DB.prepare('UPDATE documenti SET conserva_fino_al = ? WHERE tenant_id = ? AND cliente_id = ? AND fascicolo_id IS NULL AND conserva_fino_al IS NULL').bind(conservaFinoAl, tenantId, f.cliente_id));
+  }
+  await c.env.DB.batch(stmts);
+  await scriviAudit(c.env.DB, { tenantId, utenteId: u.id, azione: 'CESSA_FASCICOLO', entita: 'fascicoli', entitaId: id, dettaglio: { data, motivo, conservaFinoAl, ultimoRapporto }, ip: c.get('ip') });
+  return c.json({ ok: true, dataCessazione: data, conservaFinoAl, ultimoRapporto });
+});
+
+/** Persone dello studio (solo id e nome): servono al registro della formazione. */
+api.get('/studio/persone', async (c) => {
+  const { results } = await c.env.DB.prepare('SELECT id, nome, ruolo FROM utenti WHERE tenant_id = ? AND attivo = 1 ORDER BY nome COLLATE NOCASE').bind(c.get('tenantId')).all();
+  return c.json(results ?? []);
+});
+
+/** Registro della formazione (art. 16 co. 3): alimenta il fattore «formazione» del Modello AV.0. */
+api.get('/studio/formazione', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT f.id, f.utente_id, f.partecipante, f.titolo, f.ente, f.data_evento, f.ore, f.attestato_documento_id, f.creato_il, u.nome AS utente
+     FROM formazione f LEFT JOIN utenti u ON u.id = f.utente_id WHERE f.tenant_id = ? ORDER BY f.data_evento DESC, f.creato_il DESC LIMIT 500`,
+  ).bind(c.get('tenantId')).all();
+  return c.json(results ?? []);
+});
+
+api.post('/studio/formazione', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const titolo = String(b.titolo ?? '').trim().slice(0, 300);
+  const data = String(b.dataEvento ?? '').slice(0, 10);
+  if (titolo.length < 3) return c.json({ errore: 'Indica il titolo dell’evento formativo.' }, 400);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return c.json({ errore: 'La data dell’evento va indicata come AAAA-MM-GG' }, 400);
+  if (data > oggi()) return c.json({ errore: 'La data dell’evento non può essere futura.' }, 400);
+  const ore = Number(b.ore ?? 0);
+  if (!Number.isFinite(ore) || ore < 0 || ore > 100) return c.json({ errore: 'Le ore vanno indicate come numero (0-100).' }, 400);
+  const partecipanti: Array<{ utenteId: string | null; nome: string }> = [];
+  const ids: string[] = Array.isArray(b.utentiIds) ? b.utentiIds.map(String) : b.utenteId ? [String(b.utenteId)] : [];
+  if (ids.length) {
+    const segnaposto = ids.map(() => '?').join(',');
+    const { results } = await c.env.DB.prepare(`SELECT id, nome FROM utenti WHERE tenant_id = ? AND id IN (${segnaposto})`).bind(tenantId, ...ids).all<any>();
+    for (const r of results ?? []) partecipanti.push({ utenteId: r.id, nome: r.nome });
+  }
+  for (const nome of Array.isArray(b.partecipanti) ? b.partecipanti : b.partecipante ? [b.partecipante] : []) {
+    const n = String(nome).trim().slice(0, 120);
+    if (n) partecipanti.push({ utenteId: null, nome: n });
+  }
+  if (!partecipanti.length) return c.json({ errore: 'Indica almeno un partecipante (un utente dello studio o un nome).' }, 400);
+  const ente = String(b.ente ?? '').trim().slice(0, 200) || null;
+  const creati: string[] = [];
+  const stmts = partecipanti.map((p) => {
+    const id = nuovoId('for');
+    creati.push(id);
+    return c.env.DB.prepare('INSERT INTO formazione (id, tenant_id, utente_id, partecipante, titolo, ente, data_evento, ore) VALUES (?,?,?,?,?,?,?,?)')
+      .bind(id, tenantId, p.utenteId, p.nome, titolo, ente, data, ore);
+  });
+  await c.env.DB.batch(stmts);
+  await scriviAudit(c.env.DB, { tenantId, utenteId: u.id, azione: 'REGISTRA_FORMAZIONE', entita: 'formazione', entitaId: creati[0], dettaglio: { titolo, data, ore, partecipanti: partecipanti.length }, ip: c.get('ip') });
+  return c.json({ ids: creati, partecipanti: partecipanti.length }, 201);
+});
+
+api.delete('/studio/formazione/:id', soloAmministratore, async (c) => {
+  const r = await c.env.DB.prepare('DELETE FROM formazione WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), c.get('tenantId')).run();
+  if (!r.meta.changes) return c.json({ errore: 'Evento non trovato' }, 404);
+  await scriviAudit(c.env.DB, { tenantId: c.get('tenantId'), utenteId: c.get('utente').id, azione: 'ELIMINA_FORMAZIONE', entita: 'formazione', entitaId: c.req.param('id'), ip: c.get('ip') });
+  return c.json({ ok: true });
+});
+
+
+// ===========================================================================
+// AR-M19 — CODA DI REVISIONE
+// Ingestione separata dalla conferma: le visure caricate in blocco diventano
+// proposte cifrate; nessuna produce effetti finché il professionista non la
+// rivede. «Applica tutto» solo per le proposte senza alert di gravità alta.
+// ===========================================================================
+
+api.post('/coda/visure', puoScrivere, async (c) => {
+  const b = await c.req.json<any>().catch(() => ({}));
+  const voci = Array.isArray(b.voci) ? b.voci : [];
+  if (!voci.length) return c.json({ errore: 'Nessuna visura da accodare.' }, 400);
+  if (voci.length > 60) return c.json({ errore: 'Al massimo 60 visure per volta.' }, 400);
+  const esiti = await accodaVisure(c.env, c.get('tenantId'), c.get('utente'), c.get('ip'), voci);
+  return c.json({ esiti }, 201);
+});
+
+api.get('/coda', async (c) => c.json(await leggiCoda(c.env, c.get('tenantId'))));
+
+api.get('/coda/conteggio', async (c) => {
+  const r = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM proposte WHERE tenant_id = ? AND stato = 'PROPOSTA' AND ambito IN ('ANAGRAFICA','TITOLARITA')").bind(c.get('tenantId')).first<{ n: number }>();
+  return c.json({ n: r?.n ?? 0 });
+});
+
+api.post('/coda/:id/pdf', puoScrivere, async (c) => {
+  const form = await c.req.formData();
+  const campo = form.get('file');
+  if (typeof campo === 'string' || campo === null) return c.json({ errore: 'File mancante' }, 400);
+  const r = await caricaPdfCoda(c.env, c.get('tenantId'), c.req.param('id') as string, campo as File);
+  if ('errore' in r) return c.json(r, r.stato);
+  return c.json(r);
+});
+
+api.post('/coda/:id/applica', puoScrivere, async (c) => {
+  const b = await c.req.json<any>().catch(() => ({}));
+  const r = await applicaVoceCoda(c.env, c.get('tenantId'), c.get('utente'), c.get('ip'), c.req.param('id') as string,
+    { anagrafica: b.anagrafica, professionistaId: b.professionistaId ?? null, chiavi: Array.isArray(b.chiavi) ? b.chiavi : undefined, motivazione: b.motivazione ?? null });
+  if ('errore' in r) return c.json(r, r.stato);
+  return c.json(r);
+});
+
+api.post('/coda/:id/scarta', puoScrivere, async (c) => {
+  const b = await c.req.json<any>().catch(() => ({}));
+  const r = await scartaVoceCoda(c.env, c.get('tenantId'), c.get('utente'), c.get('ip'), c.req.param('id') as string, String(b.motivazione ?? ''));
+  if ('errore' in r) return c.json(r, r.stato);
+  return c.json(r);
+});
+
+api.post('/coda/applica-tutto', puoScrivere, async (c) => c.json(await applicaTuttoCoda(c.env, c.get('tenantId'), c.get('utente'), c.get('ip'))));
 
 // ===========================================================================
 // INTEGRITÀ DEL REGISTRO
