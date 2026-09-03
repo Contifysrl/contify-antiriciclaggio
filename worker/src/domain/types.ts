@@ -85,6 +85,20 @@ export interface ParametriTitolarita {
   norma: string;
   /** Dicitura leggibile della soglia, per messaggi e verbali. */
   etichettaSoglia: string;
+  /**
+   * AR-M20-04. Regime dei criteri:
+   *  - CASCATA_ART20 (DLgs. 231/2007): proprietà → controllo → residuale, in ordine;
+   *  - PARALLELO_AMLR (Reg. UE 2024/1624, artt. 51-54): proprietà e controllo si
+   *    individuano indipendentemente e in parallelo; nelle strutture a più
+   *    livelli l'art. 54 attribuisce la titolarità a chi controlla (>50%)
+   *    un'intermedia con quota diretta rilevante e a chi ha una quota
+   *    rilevante nell'entità che controlla il cliente.
+   */
+  regime?: 'CASCATA_ART20' | 'PARALLELO_AMLR';
+  /** Soglia del controllo tramite partecipazione (frazione, esclusiva: «50% più uno»). Solo PARALLELO_AMLR. */
+  sogliaControllo?: number;
+  normaControllo?: string;
+  normaResiduale?: string;
 }
 
 // ---------------------------------------------------------------------------

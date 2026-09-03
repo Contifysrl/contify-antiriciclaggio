@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { analizzaTitolaritaEffettiva, type NodoPartecipazione } from '../worker/src/domain/titolare-effettivo';
+import { analizzaTitolaritaEffettiva, type NodoPartecipazione, type Partecipazione } from '../worker/src/domain/titolare-effettivo';
+import { calcolaAlertTitolarita } from '../worker/src/domain/alert-titolarita';
 
 const pf = (id: string, denominazione: string, extra: Partial<NodoPartecipazione> = {}): NodoPartecipazione => ({
   id,
@@ -263,5 +264,132 @@ describe('AR-M17 — cariche in ingresso per il criterio residuale', () => {
     expect(r.titolari.map((t) => t.id).sort()).toEqual(['A', 'B']);
     expect(r.titolari.find((t) => t.id === 'A')?.motivazione).toContain('presidente del consiglio');
     expect(r.richiedeMotivazioneResiduale).toBe(true);
+  });
+});
+
+describe('AR-M20-04 — Reg. (UE) 2024/1624 dal 10.7.2027: controllo in parallelo e art. 54', () => {
+  const D = { data: '2027-07-10' };
+  const oggi = { data: '2026-09-03' };
+  const pf2 = (id: string, nome: string, extra: Partial<NodoPartecipazione> = {}): NodoPartecipazione => ({ id, denominazione: nome, tipo: 'PERSONA_FISICA', ...extra });
+  const pg2 = (id: string, nome: string, partecipazioni: Partecipazione[]): NodoPartecipazione => ({ id, denominazione: nome, tipo: 'PERSONA_GIURIDICA', partecipazioni });
+
+  // Holding al 30% del cliente, controllata al 51% da Tizio: prodotto 15,3%.
+  const struttura54a = () => [
+    pg2('CLI', 'Cliente Srl', [{ id: 'HOLD', quota: 0.3 }, { id: 'A', quota: 0.35 }, { id: 'B', quota: 0.35 }]),
+    pg2('HOLD', 'Holding Srl', [{ id: 'TIZIO', quota: 0.51 }, { id: 'CAIO', quota: 0.49 }]),
+    pf2('A', 'Socio A'), pf2('B', 'Socio B'), pf2('TIZIO', 'Tizio'), pf2('CAIO', 'Caio'),
+  ];
+
+  it('oggi (art. 20): Tizio al 15,3% non è titolare effettivo', () => {
+    const r = analizzaTitolaritaEffettiva('CLI', struttura54a(), oggi);
+    expect(r.titolari.map((t) => t.id).sort()).toEqual(['A', 'B']);
+  });
+
+  it('dal 2027 (art. 54 lett. a): Tizio controlla la holding che ha il 30% diretto → titolare effettivo per controllo', () => {
+    const r = analizzaTitolaritaEffettiva('CLI', struttura54a(), D);
+    expect(r.parametri.regime).toBe('PARALLELO_AMLR');
+    expect(r.titolari.map((t) => t.id).sort()).toEqual(['A', 'B', 'TIZIO']);
+    const tizio = r.titolari.find((t) => t.id === 'TIZIO')!;
+    expect(tizio.criterio).toBe('CONTROLLO');
+    expect(tizio.norma).toContain('art. 54 lett. a)');
+    expect(tizio.motivazione).toContain('30.00%');
+    expect(r.criterioApplicato).toBe('PROPRIETA_DIRETTA');
+    expect(r.richiedeMotivazioneResiduale).toBe(false);
+  });
+
+  it('art. 54 lett. a) non scatta se la quota diretta dell’intermedia è sotto soglia (20%)', () => {
+    const nodi = struttura54a();
+    nodi[0] = pg2('CLI', 'Cliente Srl', [{ id: 'HOLD', quota: 0.2 }, { id: 'A', quota: 0.4 }, { id: 'B', quota: 0.4 }]);
+    const r = analizzaTitolaritaEffettiva('CLI', nodi, D);
+    expect(r.titolari.map((t) => t.id).sort()).toEqual(['A', 'B']);
+  });
+
+  // Holding al 60% del cliente (controllo); Sempronio ha il 30% della holding: prodotto 18%.
+  const struttura54b = () => [
+    pg2('CLI', 'Cliente Srl', [{ id: 'HOLD', quota: 0.6 }, { id: 'A', quota: 0.4 }]),
+    pg2('HOLD', 'Holding Srl', [{ id: 'SEMP', quota: 0.3 }, { id: 'MEVIO', quota: 0.7 }]),
+    pf2('A', 'Socio A'), pf2('SEMP', 'Sempronio'), pf2('MEVIO', 'Mevio'),
+  ];
+
+  it('oggi: Sempronio (18% indiretto) non è titolare; Mevio (42%) sì', () => {
+    const r = analizzaTitolaritaEffettiva('CLI', struttura54b(), oggi);
+    expect(r.titolari.map((t) => t.id).sort()).toEqual(['A', 'MEVIO']);
+  });
+
+  it('dal 2027 (art. 54 lett. b): Sempronio ha il 30% della holding che controlla il cliente → titolare effettivo', () => {
+    const r = analizzaTitolaritaEffettiva('CLI', struttura54b(), D);
+    expect(r.titolari.map((t) => t.id).sort()).toEqual(['A', 'MEVIO', 'SEMP']);
+    const s = r.titolari.find((t) => t.id === 'SEMP')!;
+    expect(s.norma).toContain('art. 54 lett. b)');
+    // Mevio resta per proprietà (42%), con la nota del controllo.
+    const m = r.titolari.find((t) => t.id === 'MEVIO')!;
+    expect(m.criterio).toBe('PROPRIETA_INDIRETTA');
+    expect(m.motivazione).toContain('art. 54 lett. b)');
+  });
+
+  it('art. 54 lett. b) a catena: chi controlla la controllante della controllante', () => {
+    const nodi = [
+      pg2('CLI', 'Cliente Srl', [{ id: 'H1', quota: 0.55 }, { id: 'A', quota: 0.45 }]),
+      pg2('H1', 'Holding Uno', [{ id: 'H2', quota: 0.6 }, { id: 'X', quota: 0.4 }]),
+      pg2('H2', 'Holding Due', [{ id: 'Y', quota: 0.3 }, { id: 'Z', quota: 0.7 }]),
+      pf2('A', 'A'), pf2('X', 'X'), pf2('Y', 'Y'), pf2('Z', 'Z'),
+    ];
+    const r = analizzaTitolaritaEffettiva('CLI', nodi, D);
+    // Per proprietà: A 45%, Z 0.55*0.6*0.7 = 23,1% (no), X 22% (no), Y 9,9% (no).
+    // Art. 54 b): H1 controlla CLI, H2 controlla H1 → chi ha ≥25% in H1 (X 40%, Z 42%, Y 18% no) e in H2 (Y 30%, Z 70%).
+    expect(r.titolari.map((t) => t.id).sort()).toEqual(['A', 'X', 'Y', 'Z']);
+  });
+
+  it('art. 51: il controllo con altri mezzi si aggiunge anche se la proprietà individua già qualcuno', () => {
+    const r = analizzaTitolaritaEffettiva('CLI', [
+      pg2('CLI', 'Cliente Srl', [{ id: 'A', quota: 0.6 }, { id: 'B', quota: 0.4 }]),
+      pf2('A', 'A'), pf2('B', 'B'), pf2('PATTO', 'Chi ha il patto', { controlloNonDominicale: true }),
+    ], D);
+    expect(r.titolari.map((t) => t.id).sort()).toEqual(['A', 'B', 'PATTO']);
+    expect(r.titolari.find((t) => t.id === 'PATTO')!.norma).toContain('art. 53 par. 3-4');
+    // Oggi invece il co. 3 si applica solo se il co. 2 non individua nessuno.
+    const r25 = analizzaTitolaritaEffettiva('CLI', [
+      pg2('CLI', 'Cliente Srl', [{ id: 'A', quota: 0.6 }, { id: 'B', quota: 0.4 }]),
+      pf2('A', 'A'), pf2('B', 'B'), pf2('PATTO', 'Chi ha il patto', { controlloNonDominicale: true }),
+    ], oggi);
+    expect(r25.titolari.map((t) => t.id).sort()).toEqual(['A', 'B']);
+  });
+
+  it('dal 2027 il residuale cita l’art. 63 par. 4 e la catena incompleta ferma comunque il motore', () => {
+    const r = analizzaTitolaritaEffettiva('CLI', [
+      pg2('CLI', 'Cliente Srl', [{ id: 'A', quota: 0.2 }, { id: 'B', quota: 0.2 }, { id: 'C', quota: 0.2 }, { id: 'D', quota: 0.2 }, { id: 'E', quota: 0.2 }]),
+      pf2('A', 'A'), pf2('B', 'B'), pf2('C', 'C'), pf2('D', 'D'), pf2('E', 'E'),
+    ], { ...D, cariche: [{ id: 'A', nome: 'A', carica: 'AMMINISTRATORE_UNICO', rappresentanzaLegale: true }] });
+    expect(r.criterioApplicato).toBe('RESIDUALE_POTERI');
+    expect(r.titolari[0].norma).toContain('art. 63 par. 4');
+    expect(r.richiedeMotivazioneResiduale).toBe(true);
+    const inc = analizzaTitolaritaEffettiva('CLI', [
+      pg2('CLI', 'Cliente Srl', [{ id: 'IGN', quota: 0.8 }, { id: 'A', quota: 0.2 }]),
+      { id: 'IGN', denominazione: 'Ignota Srl', tipo: 'PERSONA_GIURIDICA' }, pf2('A', 'A'),
+    ], D);
+    expect(inc.criterioApplicato).toBe('NESSUNO');
+    expect(inc.nodiIrrisolti).toHaveLength(1);
+    expect(inc.richiedeMotivazioneResiduale).toBe(false);
+  });
+
+  it('gli alert non gridano A1 quando il 2027 ha già individuato titolari per controllo', () => {
+    const analisi = analizzaTitolaritaEffettiva('CLI', [
+      pg2('CLI', 'Cliente Srl', [{ id: 'HOLD', quota: 0.6 }, { id: 'A', quota: 0.2 }, { id: 'B', quota: 0.2 }]),
+      pg2('HOLD', 'Holding Srl', [{ id: 'S1', quota: 0.4 }, { id: 'S2', quota: 0.3 }, { id: 'S3', quota: 0.3 }]),
+      pf2('A', 'A'), pf2('B', 'B'), pf2('S1', 'S1'), pf2('S2', 'S2'), pf2('S3', 'S3'),
+    ], D);
+    // Proprietà: S1 24% (no, sotto 25), S2/S3 18%, A/B 20%: nessuno. Art. 54 b): S1, S2, S3 hanno ≥25% della controllante.
+    expect(analisi.titolari.map((t) => t.id).sort()).toEqual(['S1', 'S2', 'S3']);
+    const alert = calcolaAlertTitolarita({
+      denominazione: 'Cliente Srl', tipoCliente: 'SOCIETA_CAPITALI', analisi,
+      soci: [
+        { id: 'HOLD', nome: 'Holding Srl', tipo: 'PERSONA_GIURIDICA', quota: 0.6, diritto: 'PROPRIETA', clienteStudio: { id: 'c-hold', denominazione: 'Holding Srl' } },
+        { id: 'A', nome: 'A', tipo: 'PERSONA_FISICA', quota: 0.2, diritto: 'PROPRIETA' },
+        { id: 'B', nome: 'B', tipo: 'PERSONA_FISICA', quota: 0.2, diritto: 'PROPRIETA' },
+      ],
+      cariche: [], paeseAltoRischio: () => false,
+    });
+    expect(alert.map((a) => a.codice)).not.toContain('A1');
+    expect(alert.map((a) => a.codice)).not.toContain('A3');
   });
 });

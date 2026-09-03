@@ -16,7 +16,8 @@ export type TipoScadenza =
   | 'CONTROLLO_COSTANTE'
   | 'FINE_CONSERVAZIONE'
   | 'COMUNICAZIONE_MEF'
-  | 'AGGIORNAMENTO_AUTOVALUTAZIONE';
+  | 'AGGIORNAMENTO_AUTOVALUTAZIONE'
+  | 'RINNOVO_VISURA';
 
 export interface Scadenza {
   tipo: TipoScadenza;
@@ -134,6 +135,54 @@ export function scadenzaComunicazioneMef(dataViolazione: string): Scadenza {
     norma: TERMINI.COMUNICAZIONE_MEF_GIORNI.norma,
     normativa: true,
     descrizione: TERMINI.COMUNICAZIONE_MEF_GIORNI.descrizione,
+  };
+}
+
+/**
+ * ANZIANITÀ DELLA VISURA (AR-M20-01, alert A12).
+ *
+ * I dati camerali acquisiti dalla visura (compagine, cariche, sede, stato)
+ * invecchiano: il controllo costante (art. 19 co. 1 lett. d) impone di
+ * verificare e aggiornare i dati nel corso del rapporto, e le regole
+ * tecniche lo graduano sul rischio (36/36/24/12 mesi). Decisione del 3.9.2026:
+ * la visura si considera da rinnovare quando è più vecchia della cadenza del
+ * controllo costante del fascicolo vivo più esigente — nessuna soglia
+ * inventata, lo stesso numero dello scadenzario. Chi rinnova la visura fa
+ * il diff della compagine (M20-02) e documenta il controllo.
+ */
+export interface EsitoAnzianitaVisura {
+  dataVisura: string;
+  cadenzaMesi: number;
+  /** Data entro cui la visura andrebbe rinnovata (visura + cadenza). */
+  scadeIl: string;
+  /** Mesi interi trascorsi dalla visura a oggi. */
+  mesiTrascorsi: number;
+  /** Vero se oggi è oltre la scadenza. */
+  daRinnovare: boolean;
+}
+
+export function anzianitaVisura(dataVisura: string | null | undefined, cadenzaMesi: number | null | undefined, oggi: string): EsitoAnzianitaVisura | null {
+  if (!dataVisura || !/^\d{4}-\d{2}-\d{2}/.test(dataVisura) || !cadenzaMesi || cadenzaMesi <= 0) return null;
+  const visura = dataVisura.slice(0, 10);
+  const a = new Date(`${visura}T00:00:00Z`);
+  const b = new Date(`${oggi}T00:00:00Z`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
+  const mesi = (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth()) - (b.getUTCDate() < a.getUTCDate() ? 1 : 0);
+  const scadeIl = aggiungiMesi(visura, cadenzaMesi);
+  return { dataVisura: visura, cadenzaMesi, scadeIl, mesiTrascorsi: Math.max(0, mesi), daRinnovare: oggi > scadeIl };
+}
+
+/** Scadenza di rinnovo della visura per lo scadenzario (una per cliente, sul fascicolo più esigente). */
+export function scadenzaRinnovoVisura(esito: EsitoAnzianitaVisura, classe: ClasseRischio): Scadenza {
+  return {
+    tipo: 'RINNOVO_VISURA',
+    etichetta: `Rinnovo della visura camerale (visura del ${esito.dataVisura.split('-').reverse().join('/')}, cadenza ${esito.cadenzaMesi} mesi — rischio ${etichettaClasse(classe)})`,
+    data: esito.scadeIl,
+    norma: 'art. 19 co. 1 lett. d) DLgs. 231/2007',
+    normativa: false,
+    descrizione:
+      'Il controllo costante comprende la verifica e l’aggiornamento dei dati acquisiti. La visura è la fonte dei dati camerali (compagine, cariche, sede, stato): ' +
+      'la si rinnova con la stessa cadenza del controllo costante del fascicolo più esigente e si confrontano le differenze («Aggiorna da visura»).',
   };
 }
 

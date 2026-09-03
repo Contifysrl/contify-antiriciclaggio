@@ -22,6 +22,7 @@
 
 import type { Carica, DirittoPartecipazione, RisultatoAnalisiTitolarita } from './titolare-effettivo';
 import { CARICHE_CON_POTERI, etichettaCarica } from './titolare-effettivo';
+import { anzianitaVisura, type EsitoAnzianitaVisura } from './scadenze';
 
 export type TipoSocio = 'PERSONA_FISICA' | 'PERSONA_GIURIDICA' | 'FIDUCIARIA' | 'TRUST' | 'ALTRO';
 
@@ -66,7 +67,7 @@ export interface InputAlert {
   dataElencoSoci?: string | null;
 }
 
-export type CodiceAlert = 'A1' | 'A2' | 'A3' | 'A4' | 'A5' | 'A6' | 'A7' | 'A8' | 'A11';
+export type CodiceAlert = 'A1' | 'A2' | 'A3' | 'A4' | 'A5' | 'A6' | 'A7' | 'A8' | 'A11' | 'A12' | 'A13';
 export type Gravita = 'alta' | 'media' | 'bassa';
 
 export type AzioneAlert =
@@ -79,7 +80,9 @@ export type AzioneAlert =
   | { tipo: 'ACQUISISCI_FIDUCIANTE'; etichetta: string; socioId: string; trust: boolean }
   | { tipo: 'PRENDI_ATTO'; etichetta: string }
   | { tipo: 'DECIDI_SCREENING'; etichetta: string; nominativi: string[] }
-  | { tipo: 'VALUTA_RICORRENZA'; etichetta: string; soggetto: string; clienti: Array<{ id: string; denominazione: string; ruolo: string; neoCostituita: boolean }> };
+  | { tipo: 'VALUTA_RICORRENZA'; etichetta: string; soggetto: string; clienti: Array<{ id: string; denominazione: string; ruolo: string; neoCostituita: boolean }> }
+  | { tipo: 'RINNOVA_VISURA'; etichetta: string; dataVisura: string; scadeIl: string; cadenzaMesi: number }
+  | { tipo: 'SEGNALA_DIFFORMITA'; etichetta: string; consultazioneId: string; dataConsultazione: string; esito: string };
 
 export interface Alert {
   codice: CodiceAlert;
@@ -160,7 +163,10 @@ export function calcolaAlertTitolarita(input: InputAlert): Alert[] {
   const catenaIncompleta = sociReali.some(
     (s) => (s.tipo === 'PERSONA_GIURIDICA' || s.tipo === 'ALTRO') && !s.clienteStudio,
   ) || irrisoltiProfondi.length > 0;
-  const proprietaVuota = haSoci && !catenaIncompleta && !['PROPRIETA_DIRETTA', 'PROPRIETA_INDIRETTA'].includes(analisi.criterioApplicato);
+  // AR-M20-04: dal 2027 il controllo si individua in parallelo (art. 51 Reg. 2024/1624):
+  // se il motore ha già titolari per controllo, la proprietà vuota non è un vuoto da colmare.
+  const proprietaVuota = haSoci && !catenaIncompleta && !['PROPRIETA_DIRETTA', 'PROPRIETA_INDIRETTA'].includes(analisi.criterioApplicato)
+    && !(analisi.parametri.regime === 'PARALLELO_AMLR' && analisi.titolari.length > 0);
   const candidati = cariche
     .filter((c) => c.poteri ?? (CARICHE_CON_POTERI.has(c.carica) || Boolean(c.rappresentanzaLegale)))
     .map((c) => ({ id: c.id, nome: c.nome, carica: etichettaCarica(c.carica) + (c.rappresentanzaLegale ? ', rappresentante legale' : '') }));
@@ -398,6 +404,83 @@ export function calcolaAlertRicorrenze(ricorrenze: RicorrenzaSoggetto[], oggi: s
       messaggio,
       norma: 'Indicatori di anomalia UIF (provv. 12.5.2023), sez. A — soggetti con cariche formali ricorrenti; art. 35 DLgs. 231/2007',
       azione: { tipo: 'VALUTA_RICORRENZA', etichetta: 'Vedi i clienti collegati', soggetto: r.nome, clienti },
+      bloccante: false,
+    });
+  }
+  return out;
+}
+
+// ===========================================================================
+// A12 — Anzianità della visura rispetto al controllo costante (AR-M20-01)
+//
+// La visura è la fonte dei dati camerali su cui poggia la titolarità
+// effettiva proposta: quando è più vecchia della cadenza del controllo
+// costante del fascicolo vivo più esigente (36/36/24/12 mesi), il programma
+// chiede di rinnovarla e di confrontare le differenze (M20-02). Gravità
+// bassa: è manutenzione ordinaria, non un'anomalia. Non scatta senza un
+// fascicolo vivo con valutazione (la cadenza è sua) e non scatta per le
+// persone fisiche (non hanno visura).
+// ===========================================================================
+
+export function calcolaAlertAnzianitaVisura(
+  dataVisura: string | null | undefined,
+  cadenzaMesi: number | null | undefined,
+  oggi: string,
+): { alert: Alert | null; esito: EsitoAnzianitaVisura | null } {
+  const esito = anzianitaVisura(dataVisura, cadenzaMesi, oggi);
+  if (!esito || !esito.daRinnovare) return { alert: null, esito };
+  return {
+    esito,
+    alert: {
+      codice: 'A12',
+      gravita: 'bassa',
+      titolo: 'Visura da rinnovare',
+      messaggio:
+        `La visura conservata è del ${dataIt(esito.dataVisura)} (${esito.mesiTrascorsi} mesi fa) e supera la cadenza del controllo costante ` +
+        `di ${esito.cadenzaMesi} mesi (scadenza ${dataIt(esito.scadeIl)}). Rinnova la visura e confronta compagine e cariche: ` +
+        'se la struttura è cambiata, il programma propone una nuova valutazione.',
+      norma: 'art. 19 co. 1 lett. d) DLgs. 231/2007 (controllo costante: verifica e aggiornamento dei dati); Regole tecniche CNDCEC 2025',
+      azione: { tipo: 'RINNOVA_VISURA', etichetta: 'Aggiorna da visura', dataVisura: esito.dataVisura, scadeIl: esito.scadeIl, cadenzaMesi: esito.cadenzaMesi },
+      bloccante: false,
+    },
+  };
+}
+
+// ===========================================================================
+// A13 — Difformità col registro dei titolari effettivi (AR-M20-03)
+//
+// Art. 21-ter co. 7 DLgs. 231/2007 (D.Lgs. 122/2026): il soggetto obbligato
+// accreditato segnala tempestivamente alla Camera di commercio le
+// incongruenze fra il registro e le informazioni acquisite in adeguata
+// verifica. Qui scatta quando una consultazione ha esito DIFFORME o
+// NON_ISCRITTO e la segnalazione non è ancora registrata. Gravità alta: la
+// segnalazione è un obbligo con un destinatario e una data, non un
+// approfondimento. Non bloccante: la titolarità si può comunque registrare
+// (la consultazione non esonera dall'adeguata verifica, co. 11).
+// ===========================================================================
+
+export interface ConsultazioneRegistroAlert {
+  id: string;
+  data: string;
+  esito: 'CORRISPONDE' | 'DIFFORME' | 'NON_ISCRITTO' | 'NON_CONSULTABILE';
+  segnalata: boolean;
+}
+
+export function calcolaAlertRegistroTe(consultazioni: ConsultazioneRegistroAlert[]): Alert[] {
+  const out: Alert[] = [];
+  for (const k of consultazioni) {
+    if ((k.esito !== 'DIFFORME' && k.esito !== 'NON_ISCRITTO') || k.segnalata) continue;
+    out.push({
+      codice: 'A13',
+      gravita: 'alta',
+      titolo: k.esito === 'DIFFORME' ? 'Difformità col registro dei titolari effettivi' : 'Titolare effettivo non iscritto nel registro',
+      messaggio: (k.esito === 'DIFFORME'
+        ? `La consultazione del ${dataIt(k.data)} ha rilevato una difformità fra il registro dei titolari effettivi e i titolari accertati. `
+        : `Dalla consultazione del ${dataIt(k.data)} il cliente non risulta aver comunicato il titolare effettivo al registro. `) +
+        'L’incongruenza va segnalata tempestivamente alla Camera di commercio competente; la segnalazione resta anonima verso il titolare. ' +
+        'Registra qui data e riferimento della segnalazione.',
+      norma: 'art. 21-ter co. 7 DLgs. 231/2007 (D.Lgs. 10.6.2026 n. 122)',
+      azione: { tipo: 'SEGNALA_DIFFORMITA', etichetta: 'Registra la segnalazione', consultazioneId: k.id, dataConsultazione: k.data, esito: k.esito },
       bloccante: false,
     });
   }

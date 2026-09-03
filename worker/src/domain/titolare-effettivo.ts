@@ -406,6 +406,16 @@ export function analizzaTitolaritaEffettiva(
   }
   base.quotePersoneFisiche.sort((a, b) => b.quota - a.quota);
 
+  // -------------------------------------------------------------------------
+  // AR-M20-04 — Regolamento (UE) 2024/1624 (dal 10.7.2027): proprietà e
+  // controllo in PARALLELO (art. 51), art. 54 nelle strutture a più livelli.
+  // Gated dal ruleset: prima di quella data non cambia nulla.
+  // -------------------------------------------------------------------------
+  if (parametri.regime === 'PARALLELO_AMLR') {
+    const esito = titolaritaParallelaAmlr(mappa, cliente, sopraSoglia, parametri, base, opzioni);
+    if (esito) return esito;
+  }
+
   if (sopraSoglia.length > 0) {
     sopraSoglia.sort((a, b) => (b.quotaEffettiva ?? 0) - (a.quotaEffettiva ?? 0));
     return {
@@ -480,6 +490,167 @@ export function analizzaTitolaritaEffettiva(
     'Non è stato possibile individuare alcun titolare effettivo con i dati forniti. Se l’impossibilità è oggettiva e persiste, ' +
       'si applicano l’obbligo di astensione ex art. 42 co. 1 e la valutazione della segnalazione ex art. 35.',
   );
+  return { ...base, titolari: [], criterioApplicato: 'NESSUNO', richiedeMotivazioneResiduale: true };
+}
+
+/**
+ * Art. 51-54 Reg. (UE) 2024/1624 (AR-M20-04). Restituisce il risultato
+ * completo, oppure null se non c'è nulla da aggiungere al criterio della
+ * proprietà (nel qual caso il flusso ordinario prosegue con la stessa
+ * soglia inclusiva già letta dal ruleset).
+ *
+ * Il controllo tramite partecipazione è «50% più uno» (art. 53 par. 2 lett.
+ * c): una persona fisica controlla una società se ne detiene direttamente
+ * più della metà, o se controlla una società che ne detiene più della metà
+ * (catena di maggioranze, art. 53 par. 2 lett. b). Art. 54:
+ *  (a) chi controlla un'entità che ha una quota diretta rilevante (≥ 25%)
+ *      nel cliente è titolare effettivo, anche se moltiplicando le quote
+ *      resterebbe sotto soglia (es. 51% di una holding al 30%: 15,3% per
+ *      l'art. 52, ma titolare per l'art. 54);
+ *  (b) chi ha una quota rilevante (≥ 25%, diretta o indiretta) nell'entità
+ *      che controlla il cliente (> 50%) è titolare effettivo.
+ * Il controllo «via other means» (art. 53 par. 3-4: flag controlloNonDominicale)
+ * si aggiunge sempre, indipendentemente dalla proprietà (art. 51 co. 2).
+ */
+function titolaritaParallelaAmlr(
+  nodi: Map<string, NodoPartecipazione>,
+  cliente: NodoPartecipazione,
+  perProprieta: EsitoTitolareEffettivo[],
+  parametri: ParametriTitolarita & { rulesetId: string },
+  base: Pick<RisultatoAnalisiTitolarita, 'avvertenze' | 'quotePersoneFisiche' | 'vincoliSulleQuote' | 'quoteProprie' | 'nodiIrrisolti' | 'parametri'>,
+  opzioni: OpzioniAnalisi,
+): RisultatoAnalisiTitolarita | null {
+  const sogliaControllo = parametri.sogliaControllo ?? 0.5;
+  const normaControllo = parametri.normaControllo ?? 'artt. 51-54 Reg. (UE) 2024/1624';
+  const controlla = (quota: number) => Math.round(quota * 10000) / 10000 > sogliaControllo;
+  const risolta = (n: NodoPartecipazione) => n.tipo === 'PERSONA_GIURIDICA' && !n.fiduciaria && !n.trust && (n.partecipazioni?.length ?? 0) > 0;
+
+  // Partecipazioni proprietarie di un nodo, con le quote proprie tolte dal
+  // denominatore: stesso calcolo di partecipazioniRilevanti, senza effetti.
+  const partecipazioniDi = (n: NodoPartecipazione): Partecipazione[] => {
+    const tutte = n.partecipazioni ?? [];
+    const proprie = tutte.filter((p) => p.id === n.id).reduce((a, p) => a + p.quota, 0);
+    const prop = tutte.filter((p) => p.id !== n.id && DIRITTI_PROPRIETARI.has(p.diritto ?? 'PROPRIETA'));
+    return proprie > 0 && proprie < 1 ? prop.map((p) => ({ ...p, quota: p.quota / (1 - proprie) })) : prop;
+  };
+
+  // Persone fisiche che controllano una società (catena di maggioranze).
+  const controllantiDi = (pgId: string, visitati: Set<string>): Array<{ id: string; via: string[] }> => {
+    const n = nodi.get(pgId);
+    if (!n || visitati.has(pgId)) return [];
+    const v = new Set(visitati); v.add(pgId);
+    const out: Array<{ id: string; via: string[] }> = [];
+    for (const p of partecipazioniDi(n)) {
+      if (!controlla(p.quota)) continue;
+      const socio = nodi.get(p.id);
+      if (!socio) continue;
+      if (socio.tipo === 'PERSONA_FISICA') out.push({ id: p.id, via: [pgId] });
+      else if (risolta(socio)) for (const c of controllantiDi(p.id, v)) out.push({ id: c.id, via: [pgId, ...c.via] });
+    }
+    return out;
+  };
+
+  const aggiunti = new Map<string, EsitoTitolareEffettivo>();
+  const nome = (id: string) => nodi.get(id)?.denominazione ?? id;
+  const pct = (q: number) => `${(q * 100).toFixed(2)}%`;
+  const aggiungi = (id: string, motivazione: string, norma: string) => {
+    if (perProprieta.some((t) => t.id === id)) {
+      // Già titolare per proprietà: la nota sul controllo arricchisce la motivazione.
+      const t = perProprieta.find((x) => x.id === id)!;
+      if (!t.motivazione.includes(motivazione)) t.motivazione += ` ${motivazione}`;
+      return;
+    }
+    const cur = aggiunti.get(id);
+    if (cur) { if (!cur.motivazione.includes(motivazione)) cur.motivazione += ` ${motivazione}`; return; }
+    aggiunti.set(id, { id, denominazione: nome(id), criterio: 'CONTROLLO', norma, motivazione });
+  };
+
+  const dirette = partecipazioniDi(cliente);
+  for (const p of dirette) {
+    const socio = nodi.get(p.id);
+    if (!socio || socio.tipo !== 'PERSONA_GIURIDICA' || !risolta(socio)) continue;
+    // Art. 54 lett. a): controlla un'entità con quota diretta rilevante nel cliente.
+    if (superaSoglia(p.quota, parametri)) {
+      for (const c of controllantiDi(p.id, new Set([cliente.id]))) {
+        aggiungi(c.id,
+          `Controlla ${c.via.map(nome).join(' → ')} (oltre il ${pct(sogliaControllo)} lungo la catena), che detiene direttamente il ${pct(p.quota)} del cliente: titolare effettivo ai sensi dell'art. 54 lett. a) Reg. (UE) 2024/1624, a prescindere dal prodotto delle quote.`,
+          `${normaControllo} — art. 54 lett. a)`);
+      }
+    }
+    // Art. 54 lett. b): quota rilevante nell'entità che controlla il cliente (anche a catena).
+    if (controlla(p.quota)) {
+      const controllanti: string[] = [p.id];
+      // Chi controlla la controllante controlla, a sua volta, il cliente (art. 53 par. 2 lett. b).
+      const visitati = new Set([cliente.id, p.id]);
+      let frontiera = [p.id];
+      while (frontiera.length) {
+        const prossima: string[] = [];
+        for (const id of frontiera) {
+          const n = nodi.get(id)!;
+          for (const q of partecipazioniDi(n)) {
+            const soc = nodi.get(q.id);
+            if (soc && soc.tipo === 'PERSONA_GIURIDICA' && risolta(soc) && controlla(q.quota) && !visitati.has(q.id)) { visitati.add(q.id); controllanti.push(q.id); prossima.push(q.id); }
+          }
+        }
+        frontiera = prossima;
+      }
+      for (const cId of controllanti) {
+        const acc = new Map<string, Array<{ catena: string[]; quota: number }>>();
+        const scarto = { avvertenze: [] as string[], vincoliSulleQuote: [] as RisultatoAnalisiTitolarita['vincoliSulleQuote'], quoteProprie: [] as RisultatoAnalisiTitolarita['quoteProprie'], nodiIrrisolti: [] as RisultatoAnalisiTitolarita['nodiIrrisolti'] };
+        percorriCatena(nodi, cId, 1, [cId], acc, new Set([cliente.id]), scarto);
+        for (const [pfId, percorsi] of acc) {
+          const quota = percorsi.reduce((a, x) => a + x.quota, 0);
+          if (!superaSoglia(quota, parametri)) continue;
+          aggiungi(pfId,
+            `Detiene il ${pct(quota)} di ${nome(cId)}, che controlla il cliente (oltre il ${pct(sogliaControllo)}${cId === p.id ? ` con il ${pct(p.quota)} diretto` : ', a catena'}): titolare effettivo ai sensi dell'art. 54 lett. b) Reg. (UE) 2024/1624.`,
+            `${normaControllo} — art. 54 lett. b)`);
+        }
+      }
+    }
+  }
+
+  // Art. 51 co. 2 e 53 par. 3-4: controllo «via other means», in parallelo.
+  for (const n of nodi.values()) {
+    if (n.tipo === 'PERSONA_FISICA' && n.controlloNonDominicale) {
+      aggiungi(n.id, 'Controlla il cliente con altri mezzi (maggioranza dei voti, nomina della maggioranza degli amministratori, diritti di veto o di decisione, accordi, rapporti familiari, nominee): art. 53 par. 3-4 Reg. (UE) 2024/1624, individuato indipendentemente dalla proprietà (art. 51).', `${normaControllo} — art. 53 par. 3-4`);
+    }
+  }
+
+  const titolari = [...perProprieta.sort((a, b) => (b.quotaEffettiva ?? 0) - (a.quotaEffettiva ?? 0)), ...aggiunti.values()];
+  if (titolari.length > 0) {
+    if (aggiunti.size) base.avvertenze.push('Regolamento (UE) 2024/1624: proprietà e controllo individuati in parallelo (art. 51); nelle strutture a più livelli si applica l’art. 54.');
+    return {
+      ...base,
+      titolari,
+      criterioApplicato: perProprieta.length ? perProprieta[0].criterio : 'CONTROLLO',
+      richiedeMotivazioneResiduale: false,
+    };
+  }
+
+  // Nulla per proprietà né per controllo. Catena incompleta → ci si ferma (come nel regime 2025).
+  if (base.nodiIrrisolti.length > 0) {
+    base.avvertenze.push(
+      `Catena partecipativa incompleta (${base.nodiIrrisolti.map((n) => n.denominazione).join(', ')}): l'art. 52 par. 1 impone di considerare tutte le partecipazioni a ogni livello prima di concludere.`,
+    );
+    return { ...base, titolari: [], criterioApplicato: 'NESSUNO', richiedeMotivazioneResiduale: false };
+  }
+  const perPoteri = candidatiConPoteri([...nodi.values()], opzioni.cariche);
+  const normaRes = parametri.normaResiduale ?? 'art. 63 par. 4 Reg. (UE) 2024/1624';
+  if (perPoteri.length > 0) {
+    base.avvertenze.push(
+      `Nessun titolare effettivo per proprietà (art. 52) né per controllo (artt. 53-54): si indicano i dirigenti di livello superiore (${normaRes}), con motivazione scritta delle verifiche svolte.`,
+    );
+    return {
+      ...base,
+      titolari: perPoteri.map((n) => ({
+        id: n.id, denominazione: n.denominazione, criterio: 'RESIDUALE_POTERI' as const, norma: normaRes,
+        motivazione: `Nessuna persona fisica individuata per proprietà o controllo: dirigente di livello superiore${n.caricaTesto ? ` (${n.caricaTesto})` : ''}.`,
+      })),
+      criterioApplicato: 'RESIDUALE_POTERI',
+      richiedeMotivazioneResiduale: true,
+    };
+  }
+  base.avvertenze.push('Non è stato possibile individuare alcun titolare effettivo con i dati forniti (Reg. (UE) 2024/1624, artt. 51-54 e 63).');
   return { ...base, titolari: [], criterioApplicato: 'NESSUNO', richiedeMotivazioneResiduale: true };
 }
 

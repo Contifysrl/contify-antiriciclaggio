@@ -128,3 +128,49 @@ describe('regole di completezza (AR-M19)', () => {
     expect(e.totaleMancanze).toBe(e.perGravita.alta + e.perGravita.media + e.perGravita.bassa);
   });
 });
+
+describe('A12 — visura da rinnovare (AR-M20-01)', () => {
+  const conVisura = (dataVisura: string, mesi = 36, extra: Partial<ClienteCompletezza> = {}) => cliente({
+    fascicoli: [fascicolo({ conferimento: '2026-01-10', firmata: true, mesi, ultimoControllo: '2026-08-01' })],
+    titolariVigenti: 1, pepChiesto: true,
+    documenti: [
+      { tipo: 'VISURA', dataRiferimento: dataVisura, fascicoloId: null },
+      { tipo: 'DOCUMENTO_IDENTITA', dataRiferimento: null, fascicoloId: null }, { tipo: 'DOCUMENTO_IDENTITA', dataRiferimento: null, fascicoloId: null },
+      { tipo: 'DICHIARAZIONE_ART22', dataRiferimento: null, fascicoloId: 'f1' },
+    ],
+    ...extra,
+  });
+
+  it('visura recente: cliente a posto', () => {
+    expect(mancanzeCliente(conVisura('2026-01-05'), OGGI)).toEqual([]);
+  });
+
+  it('visura più vecchia della cadenza (36 mesi): VISURA_DA_RINNOVARE, bassa, con giorni di ritardo', () => {
+    const m = mancanzeCliente(conVisura('2023-06-01'), OGGI);
+    expect(m.map((x) => x.codice)).toEqual(['VISURA_DA_RINNOVARE']);
+    expect(m[0].gravita).toBe('bassa');
+    expect(m[0].giorniResidui).toBeLessThan(0);
+    expect(m[0].dettaglio).toContain('01/06/2023');
+  });
+
+  it('la cadenza è quella del fascicolo vivo più esigente (12 mesi per rischio molto significativo)', () => {
+    const c = conVisura('2025-06-01');
+    expect(mancanzeCliente(c, OGGI)).toEqual([]);
+    c.fascicoli.push(fascicolo({ id: 'f2', codice: '2026/0002', conferimento: '2026-05-01', firmata: true, classe: 'MOLTO_SIGNIFICATIVO', mesi: 12, ultimoControllo: '2026-08-01' }));
+    expect(mancanzeCliente(c, OGGI).map((x) => x.codice)).toContain('VISURA_DA_RINNOVARE');
+  });
+
+  it('un fascicolo cessato non detta la cadenza; senza valutazione non scatta', () => {
+    const c = conVisura('2024-01-01', 12);
+    c.fascicoli[0] = fascicolo({ conferimento: '2024-01-10', firmata: true, mesi: 12, dataCessazione: '2025-01-01', stato: 'CESSATO' });
+    expect(mancanzeCliente(c, OGGI).map((x) => x.codice)).not.toContain('VISURA_DA_RINNOVARE');
+    const d = conVisura('2020-01-01');
+    d.fascicoli = [fascicolo({ conferimento: '2026-08-30' })];
+    expect(mancanzeCliente(d, OGGI).map((x) => x.codice)).not.toContain('VISURA_DA_RINNOVARE');
+  });
+
+  it('persona fisica: mai', () => {
+    const c = conVisura('2020-01-01', 12, { tipo: 'PERSONA_FISICA' });
+    expect(mancanzeCliente(c, OGGI).map((x) => x.codice)).not.toContain('VISURA_DA_RINNOVARE');
+  });
+});
