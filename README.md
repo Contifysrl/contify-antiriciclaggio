@@ -64,15 +64,16 @@ worker/src/domain/     motore puro, senza dipendenze da runtime o database
   risk.ts              calcolo del rischio e vincoli normativi
   prestazioni.ts       catalogo Tabella 1 della Regola tecnica n. 2
   norme.ts             soglie art. 49 con vigenza temporale, termini, date
-  titolare-effettivo.ts cascata dei criteri dell'art. 20 (soglia dal ruleset, diritti sulle quote, cariche)
-  alert-titolarita.ts  alert A1-A8 sulla titolarità effettiva, bozza motivazione ex art. 20 co. 6 (AR-M17); A11 ricorrenza nel portafoglio (AR-M19)
+  titolare-effettivo.ts cascata dei criteri dell'art. 20 (soglia dal ruleset, diritti sulle quote, cariche); dal 10.7.2027 artt. 51-54 Reg. (UE) 2024/1624 (controllo in parallelo, art. 54) letti dal ruleset amlr-2027
+  alert-titolarita.ts  alert A1-A8 sulla titolarità effettiva, bozza motivazione ex art. 20 co. 6 (AR-M17); A11 ricorrenza nel portafoglio (AR-M19); A12 visura da rinnovare, A13 difformità col registro TE (AR-M20)
+  diff-compagine.ts    differenze della compagine al rinnovo della visura: chi entra/esce, quote e cariche variate, «struttura cambiata» (AR-M20)
   fascicolo-proposto.ts Tabella A proposta con motivazione e fonte, esecutore, checklist documenti, alert A9-A10 (AR-M18)
-  completezza.ts       regole di completezza del fascicolo cliente (norma + modulistica per regola), cruscotto «Da completare» (AR-M19)
+  completezza.ts       regole di completezza del fascicolo cliente (norma + modulistica per regola), cruscotto «Da completare» (AR-M19); regole su visura da rinnovare e registro TE (AR-M20)
   settori-esposti.ts   settori esposti al riciclaggio → punteggio A.2, fonte per voce (ANR 2024, UIF)
   province.ts          anagrafica province + tabella di studio delle province a rischio contante (A.4)
   scadenze.ts          scadenzario, con distinzione legge / organizzazione
   indicatori-uif.ts    tassonomia del provvedimento UIF 12.5.2023
-worker/src/lib/        crittografia, sessioni, registro concatenato; coda.ts = coda di revisione con caricamento in blocco delle visure (AR-M19)
+worker/src/lib/        crittografia, sessioni, registro concatenato; coda.ts = coda di revisione con caricamento in blocco delle visure (AR-M19); registro-te.ts = consultazioni del registro dei titolari effettivi, prova ex co. 12, segnalazioni ex co. 7 (art. 21-ter, D.Lgs. 122/2026, AR-M20)
 worker/src/index.ts    API Hono
 web/                   SPA React
   src/lib/visura.ts    parser locale della visura camerale (nessuna AI: il PDF non esce dal browser, AR-M17)
@@ -92,8 +93,8 @@ npm run build              # SPA in dist/
 npx wrangler dev --local   # porta 8787
 
 npm test                   # test di dominio (parser visura incluso: tests/visura.test.ts)
-node scripts/smoke-api.mjs # verifiche end-to-end; poi le suite per milestone smoke-api-m11…m19.mjs
-node scripts/ui-m17.mjs    # giri Playwright: ui-m17 (visura), ui-m18 (fascicolo proposto), ui-m19 (coda e «Da completare»)
+node scripts/smoke-api.mjs # verifiche end-to-end; poi le suite per milestone smoke-api-m11…m20.mjs
+node scripts/ui-m17.mjs    # giri Playwright: ui-m17 (visura), ui-m18 (fascicolo proposto), ui-m19 (coda e «Da completare»), ui-m20 (rinnovo visura, registro TE)
 node scripts/smoke-api-console-studi.mjs && node scripts/ui-console-studi.mjs   # console: «Nuovo studio»
 npm run typecheck
 ```

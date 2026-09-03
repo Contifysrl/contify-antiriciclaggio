@@ -796,6 +796,7 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
 
       <TitolaritaEffettiva
         clienteId={d.fascicolo.cliente_id}
+        fascicoloId={id}
         titolari={d.titolari ?? []}
         precompilati={titolariDichiarati}
         onAggiornato={() => { setTitolariDichiarati(null); carica(); }}

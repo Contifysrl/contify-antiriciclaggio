@@ -28,7 +28,7 @@ interface DatiScreening {
   ultimaCorsa: { eseguito_il: string; soggetti: number; corrispondenze_nuove: number } | null;
   liste: { aggiornatoIl: string; fonti: Record<string, { voci: number }>; voci: number } | null;
   paesiDaRivalutare: Array<{ clienteId: string; denominazione: string; paese: string; fonte: string; vigenteDal: string; ultimaValutazione: string | null }>;
-  registroTe: { accreditato: boolean; accreditatoIl: string | null; scadeIl: string | null; giorniResidui: number | null };
+  registroTe: { accreditato: boolean; accreditatoIl: string | null; scadeIl: string | null; giorniResidui: number | null; delegati?: string[]; riferimento?: string | null; cameraDiCommercio?: string | null };
 }
 
 const ETICHETTA_FONTE: Record<string, string> = {
@@ -192,7 +192,7 @@ export function Controlli({ vaiA, ruolo }: { vaiA: (p: string) => void; ruolo: s
   );
 }
 
-// ── Registro dei titolari effettivi (D.M. 122/2026, AR-M8) ─────
+// ── Registro dei titolari effettivi (art. 21-ter, D.Lgs. 122/2026; AR-M8 → AR-M20-03) ─────
 
 function RegistroTe({ registro, ruolo, onAggiornato }: {
   registro: DatiScreening['registroTe'];
@@ -203,13 +203,19 @@ function RegistroTe({ registro, ruolo, onAggiornato }: {
   const [data, setData] = useState(new Date().toISOString().slice(0, 10));
   const [errore, setErrore] = useState('');
   const [invio, setInvio] = useState(false);
+  const [persone, setPersone] = useState<Array<{ id: string; nome: string }>>([]);
+  const [delegati, setDelegati] = useState<string[]>(registro.delegati ?? []);
+  const [riferimento, setRiferimento] = useState(registro.riferimento ?? '');
+  const [camera, setCamera] = useState(registro.cameraDiCommercio ?? '');
+  useEffect(() => { api.get<any[]>('/studio/persone').then(setPersone).catch(() => setPersone([])); }, []);
+  useEffect(() => { setDelegati(registro.delegati ?? []); setRiferimento(registro.riferimento ?? ''); setCamera(registro.cameraDiCommercio ?? ''); }, [registro]);
 
   const salva = async (e: FormEvent) => {
     e.preventDefault();
     setErrore('');
     setInvio(true);
     try {
-      await api.post('/studio/registro-accreditamento', { data });
+      await api.post('/studio/registro-accreditamento', { data, delegati, riferimento, cameraDiCommercio: camera });
       setApri(false);
       onAggiornato();
     } catch (err) {
@@ -223,16 +229,19 @@ function RegistroTe({ registro, ruolo, onAggiornato }: {
 
   return (
     <div className="scheda">
-      <h3 className="!mt-0">Registro dei titolari effettivi (D.M. 122/2026)</h3>
+      <h3 className="!mt-0">Registro dei titolari effettivi (art. 21-ter, D.Lgs. 122/2026)</h3>
       <div className="aiuto">
-        Dal 23 luglio 2026 i soggetti obbligati consultano il registro previa richiesta di
-        accreditamento alla Camera di Commercio, valida due anni. Registra qui la data
-        dell’accreditamento: al rinnovo ci pensa il promemoria.
+        Dal 23 luglio 2026 i soggetti obbligati accedono al registro previa richiesta telematica di
+        accreditamento alla Camera di commercio (dichiarazione sostitutiva, diritti di segreteria), valida
+        due anni dal primo accreditamento o dal rinnovo; le modifiche si comunicano entro dieci giorni e
+        l’accesso può essere esercitato da delegati incardinati nello studio (co. 3-5). Registra qui data,
+        riferimento e delegati: al rinnovo ci pensa il promemoria. Le consultazioni si registrano nel
+        fascicolo o nella scheda del cliente, con esito, estratto e segnalazione delle incongruenze.
       </div>
       {!registro.accreditato && (
         <Riquadro tipo="avviso">
-          Accreditamento non ancora registrato. Senza accreditamento il riscontro della titolarità
-          effettiva col registro (art. 21-ter) non è possibile.
+          Accreditamento non ancora registrato. Senza accreditamento la consultazione del registro
+          (art. 21-ter co. 2) non è possibile: nel frattempo le consultazioni si registrano come «non consultabile» con il motivo.
         </Riquadro>
       )}
       {registro.accreditato && (
@@ -246,6 +255,12 @@ function RegistroTe({ registro, ruolo, onAggiornato }: {
                 ? <Badge tone="amber">scade tra {registro.giorniResidui} giorni</Badge>
                 : <Badge tone="teal">{registro.giorniResidui} giorni residui</Badge>
           )}
+          {registro.riferimento ? <> · rif. <span className="mono">{registro.riferimento}</span></> : null}
+          {registro.cameraDiCommercio ? <> · {registro.cameraDiCommercio}</> : null}
+          <br />
+          <span className="text-xs text-ink-500">
+            Delegati all’accesso: {registro.delegati?.length ? registro.delegati.map((id) => persone.find((p) => p.id === id)?.nome ?? id).join(', ') : 'nessuno registrato'}
+          </span>
         </p>
       )}
       {ruolo === 'TITOLARE' && !apri && (
@@ -254,13 +269,34 @@ function RegistroTe({ registro, ruolo, onAggiornato }: {
         </button>
       )}
       {apri && (
-        <form onSubmit={salva} className="flex items-end gap-2 mt-2">
-          <div>
-            <label className="label">Data dell’accreditamento (o del rinnovo)</label>
-            <input className="input" type="date" value={data} onChange={(e) => setData(e.target.value)} required />
+        <form onSubmit={salva} className="space-y-2 mt-2 text-sm" data-test="form-accreditamento">
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
+              <label className="label">Data dell’accreditamento (o del rinnovo)</label>
+              <input className="input" type="date" value={data} onChange={(e) => setData(e.target.value)} required data-test="accreditamento-data" />
+            </div>
+            <div>
+              <label className="label">Riferimento (protocollo)</label>
+              <input className="input" value={riferimento} onChange={(e) => setRiferimento(e.target.value)} placeholder="es. PRA/2026/12345" />
+            </div>
+            <div>
+              <label className="label">Camera di commercio</label>
+              <input className="input" value={camera} onChange={(e) => setCamera(e.target.value)} placeholder="es. Padova" />
+            </div>
           </div>
-          <button className="btn btn-primary btn-sm mb-0.5" disabled={invio}>{invio ? 'Salvo…' : 'Salva'}</button>
-          <button type="button" className="btn btn-ghost btn-sm mb-0.5" onClick={() => setApri(false)}>Annulla</button>
+          <label className="label">Delegati all’accesso (co. 5)</label>
+          <div className="flex flex-wrap gap-3">
+            {persone.map((p) => (
+              <label key={p.id} className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" className="!w-4" checked={delegati.includes(p.id)} onChange={(e) => setDelegati(e.target.checked ? [...delegati, p.id] : delegati.filter((x) => x !== p.id))} />
+                <span>{p.nome}</span>
+              </label>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <button className="btn btn-primary btn-sm" disabled={invio} data-test="accreditamento-salva">{invio ? 'Salvo…' : 'Salva'}</button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setApri(false)}>Annulla</button>
+          </div>
         </form>
       )}
       {errore && <div className="errore">{errore}</div>}

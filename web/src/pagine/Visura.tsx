@@ -190,11 +190,13 @@ export function TabellaCariche({ cariche }: { cariche: CaricaVisura[] | any[] })
 
 const TONO: Record<string, 'red' | 'amber' | 'gray'> = { alta: 'red', media: 'amber', bassa: 'gray' };
 
-export function PropostaTitolaritaBox({ clienteId, proposta, onRegistrata, vaiA }: {
+export function PropostaTitolaritaBox({ clienteId, proposta, onRegistrata, vaiA, onRinnovaVisura }: {
   clienteId: string;
   proposta: PropostaDto;
   onRegistrata?: () => void;
   vaiA?: (p: string) => void;
+  /** AR-M20 (A12): apre «Aggiorna da visura» dalla scheda cliente. */
+  onRinnovaVisura?: () => void;
 }) {
   const [sequenza, setSequenza] = useState(false);
   const [motivazione, setMotivazione] = useState(proposta.bozzaMotivazione ?? '');
@@ -306,6 +308,8 @@ export function PropostaTitolaritaBox({ clienteId, proposta, onRegistrata, vaiA 
                   {a.azione.tipo === 'SEQUENZA_GUIDATA' && <button className="btn btn-primary btn-sm" onClick={() => setSequenza(true)}>{a.azione.etichetta}</button>}
                   {a.azione.tipo === 'CATENA_RISOLTA' && vaiA && <button className="btn btn-secondary btn-sm" onClick={() => vaiA(`cliente?id=${(a.azione as any).clienteId}`)}>{a.azione.etichetta}</button>}
                   {a.azione.tipo === 'DECIDI_SCREENING' && vaiA && <button className="btn btn-secondary btn-sm" onClick={() => vaiA('controlli')}>{a.azione.etichetta}</button>}
+                  {a.azione.tipo === 'RINNOVA_VISURA' && onRinnovaVisura && <button className="btn btn-secondary btn-sm" data-test="a12-rinnova" onClick={onRinnovaVisura}>{a.azione.etichetta}</button>}
+                  {a.azione.tipo === 'SEGNALA_DIFFORMITA' && <button className="btn btn-secondary btn-sm" data-test="a13-segnala" onClick={() => document.getElementById('registro-te')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>{a.azione.etichetta}</button>}
                   {a.azione.tipo === 'VALUTA_RICORRENZA' && (
                     <details className="text-xs" data-test="a11-clienti">
                       <summary className="btn btn-secondary btn-sm cursor-pointer">{a.azione.etichetta}</summary>
@@ -619,6 +623,15 @@ export function VisuraModal({ modo, cliente, onChiudi, onFatto, vaiA }: {
               {modo === 'nuovo' ? 'Cliente creato' : 'Cliente aggiornato'}{esitoSalvataggio?.diff ? ` · compagine: ${esitoSalvataggio.diff.partecipazioni.aperte} righe nuove, ${esitoSalvataggio.diff.partecipazioni.chiuse} chiuse, ${esitoSalvataggio.diff.partecipazioni.invariate} invariate` : ''}
               {esitoSalvataggio?.screening?.nuove ? ` · screening: ${esitoSalvataggio.screening.nuove} corrispondenze da esaminare` : esitoSalvataggio?.screening?.eseguito === false ? ' · screening rinviato alla corsa notturna (liste non disponibili)' : ' · screening dei nomi eseguito'}.
             </Riquadro>
+            {esitoSalvataggio?.variazioni?.righe?.length > 0 && (
+              <Riquadro tipo={esitoSalvataggio.variazioni.strutturaCambiata ? 'avviso' : 'info'}>
+                <strong>Differenze rispetto alla compagine registrata</strong>
+                <ul className="mt-1 ml-4 list-disc text-xs" data-test="variazioni-compagine">{esitoSalvataggio.variazioni.righe.map((r: string, i: number) => <li key={i}>{r}</li>)}</ul>
+                {esitoSalvataggio.rivalutazioni?.length > 0 && (
+                  <div className="mt-1 text-xs">La struttura è cambiata: nella scheda del cliente trovi la proposta di controllo costante «da rivalutare» per {esitoSalvataggio.rivalutazioni.length === 1 ? `il fascicolo ${esitoSalvataggio.rivalutazioni[0].codice}` : `${esitoSalvataggio.rivalutazioni.length} fascicoli`}.</div>
+                )}
+              </Riquadro>
+            )}
             <h3 className="!mt-2 !mb-1">Titolari effettivi proposti (art. 20)</h3>
             <div className="aiuto">
               La visura non è il registro dei titolari effettivi (art. 21-ter): la proposta applica l'art. 20 co. 2 ai dati camerali. La consultazione del registro resta un atto distinto, da tracciare dal fascicolo.

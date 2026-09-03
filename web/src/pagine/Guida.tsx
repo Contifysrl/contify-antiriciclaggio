@@ -127,7 +127,8 @@ const SEZIONI: Sezione[] = [
         <Punti punti={[
           <><K>Urgenti</K>: nessun fascicolo aperto <Norma>artt. 17-18</Norma>, termine dei trenta giorni superato <Norma>art. 18 co. 3</Norma>, valutazione del rischio non registrata <Norma>art. 17 co. 3</Norma>, titolari effettivi non individuati <Norma>artt. 20-22</Norma>, corrispondenze nelle liste sanzioni da decidere.</>,
           <><K>Da fare</K>: valutazione non firmata (non fa prova), controllo costante scaduto <Norma>art. 19 co. 1 lett. d</Norma>, status PEP mai chiesto, documento d'identità del cliente o del titolare effettivo non conservato <Norma>art. 19 co. 1 lett. a-b</Norma>, dichiarazione art. 22 mancante.</>,
-          <><K>Quando puoi</K>: visura camerale non conservata, proposta del programma in attesa nella coda di revisione.</>,
+          <><K>Quando puoi</K>: visura camerale non conservata o da rinnovare (più vecchia della cadenza del controllo costante, alert A12), estratto del registro dei titolari effettivi non conservato <Norma>art. 21-ter co. 12</Norma>, proposta del programma in attesa.</>,
+          <><K>Registro dei titolari effettivi</K> <Norma>art. 21-ter</Norma>: consultazione non registrata dopo la fotografia dei titolari (da fare), difformità non ancora segnalata alla Camera di commercio (urgente).</>,
         ]} />
         <Nota>
           Per un cliente appena importato dal gestionale l'unica cosa da fare è aprire il fascicolo:
@@ -140,7 +141,10 @@ const SEZIONI: Sezione[] = [
           controllo costante eseguito <Norma>art. 19 co. 1 lett. d</Norma> — cosa hai controllato
           (anagrafica, compagine, titolari, operatività, liste, PEP, documenti) e con quale esito — e
           di dichiarare cessato il rapporto, da cui decorre la conservazione decennale
-          <Norma>art. 31</Norma>. Nulla si cancella: il fascicolo resta consultabile.
+          <Norma>art. 31</Norma>. Nulla si cancella: il fascicolo resta consultabile. Quando il
+          rinnovo della visura cambia soci, quote o cariche con poteri, la proposta di controllo
+          costante «da rivalutare» compare nella scheda del cliente: registrarla chiude la proposta
+          con il tuo esito (nuova valutazione, oppure «resta valida» con la motivazione).
         </P>
         <H>Formazione</H>
         <P>
@@ -371,14 +375,23 @@ const SEZIONI: Sezione[] = [
           dichiarati ti vengono segnalati: la dichiarazione <K>non scrive mai da sola</K> i titolari
           effettivi, che restano una tua valutazione <Norma>artt. 20-22</Norma>.
         </P>
+        <H>Il registro dei titolari effettivi (art. 21-ter, D.Lgs. 122/2026)</H>
         <P>
-          <K>Registro dei titolari effettivi</K> (D.M. 122/2026, operativo dal 23.7.2026): in{' '}
-          <K>Controlli automatici</K> registri l'accreditamento biennale dello studio presso la
-          Camera di Commercio (con promemoria al rinnovo); nel fascicolo, dopo la consultazione,
-          registri il <K>riscontro</K> — data, esito, eventuale difformità da comunicare al
-          gestore <Norma>art. 21 co. 4</Norma>. L'esito compare anche nella scheda di adeguata
-          verifica.
+          Dal 23 luglio 2026 i soggetti obbligati accedono alla sezione del Registro delle imprese
+          sui titolari effettivi previo <K>accreditamento</K> telematico alla Camera di commercio,
+          valido due anni, e possono delegare persone incardinate nello studio{' '}
+          <Norma>art. 21-ter co. 3-5</Norma>: lo registri in <K>Controlli automatici</K> (data,
+          riferimento, delegati; promemoria al rinnovo). Il portale non offre collegamenti
+          automatici: consulti tu, e poi registri la <K>consultazione</K> nel fascicolo o nella scheda
+          del cliente con l'esito — <K>corrisponde</K>, <K>difforme</K>, <K>non iscritto</K>,{' '}
+          <K>non consultabile</K> (con il motivo: esclusione ex art. 21-sexies, portale non ancora
+          operativo, accreditamento mancante).
         </P>
+        <Punti punti={[
+          <>Se corrisponde, conserva l'<K>estratto</K> o la prova dell'iscrizione: lo carichi fra i documenti del cliente come «Estratto del registro TE» e lo agganci alla consultazione <Norma>art. 21-ter co. 12</Norma>.</>,
+          <>Se è difforme o il cliente non ha comunicato il titolare effettivo, l'incongruenza va <K>segnalata tempestivamente</K> alla Camera di commercio competente (dichiarazione sostitutiva; il segnalante resta anonimo verso il titolare) <Norma>art. 21-ter co. 7-8</Norma>: l'alert <K>A13</K> e la voce «Difformità da segnalare» in Da completare restano accesi finché non registri data e riferimento della segnalazione.</>,
+          <>La consultazione <K>non esonera</K> dall'adeguata verifica <Norma>art. 21-ter co. 11</Norma>: confronta i titolari che hai accertato, non li sostituisce. Ogni consultazione è una riga dello storico.</>,
+        ]} />
       </>
     ),
   },
@@ -389,11 +402,22 @@ const SEZIONI: Sezione[] = [
     corpo: (
       <>
         <P>
-          Il <K>controllo costante</K> <Norma>art. 19 co. 1 lett. c)</Norma> impone di tenere
+          Il <K>controllo costante</K> <Norma>art. 19 co. 1 lett. d)</Norma> impone di tenere
           aggiornata l'adeguata verifica per tutta la durata del rapporto. Lo scadenzario
           calcola la prossima scadenza per ogni fascicolo in base alla classe di rischio
           dell'ultima valutazione firmata: 36 mesi per il rischio non significativo e poco
           significativo, 24 per l'abbastanza significativo, 12 per il molto significativo.
+        </P>
+        <P>
+          Con la stessa cadenza invecchia la <K>visura camerale</K>, che è la fonte dei dati su
+          compagine, cariche, sede e stato: quando l'ultima visura conservata è più vecchia della
+          cadenza del controllo costante del fascicolo più esigente, lo scadenzario espone{' '}
+          <K>Rinnovo della visura</K> (scadenza organizzativa, non di legge), l'alert <K>A12</K>{' '}
+          compare nella scheda del cliente e «Visura camerale da rinnovare» in Da completare. Con{' '}
+          <Btn>Aggiorna da visura</Btn> carichi la visura nuova: il programma elenca le differenze
+          (chi è entrato, chi è uscito, quote e cariche variate) e, se la <K>struttura</K> è cambiata,
+          propone di registrare il controllo costante «da rivalutare» sui fascicoli vivi valutati — lo
+          confermi, o spieghi perché la valutazione resta valida.
         </P>
         <P>
           I fascicoli compaiono ordinati per urgenza: <K>scaduti</K>, <K>in scadenza</K> e poi

@@ -15,6 +15,17 @@ export interface VoceNovita {
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-09-07-controllo-costante-dai-dati',
+    data: '2026-09-07',
+    titolo: 'Controllo costante alimentato dai dati: visura da rinnovare, differenze al rinnovo, registro dei titolari effettivi',
+    punti: [
+      'Alert A12 «Visura da rinnovare»: quando l’ultima visura conservata è più vecchia della cadenza del controllo costante del fascicolo più esigente (36/36/24/12 mesi), lo vedi nella scheda del cliente, nello scadenzario («Rinnovo della visura», scadenza organizzativa) e in «Da completare». Nessuna soglia inventata: è lo stesso numero del controllo costante.',
+      '«Aggiorna da visura» ora elenca le differenze rispetto alla compagine registrata — soci entrati e usciti, quote e diritti variati, cariche cessate, nuove o cambiate — e, se la struttura è cambiata (soci, quote, cariche con poteri), propone il controllo costante «da rivalutare» sui fascicoli vivi valutati. Lo registri con le variazioni già scritte nelle note, oppure motivi perché la valutazione resta valida: in entrambi i casi la proposta chiude con il tuo esito. Un sindaco che cambia non è struttura.',
+      'Registro dei titolari effettivi (art. 21-ter DLgs. 231/2007, come riscritto dal D.Lgs. 10 giugno 2026 n. 122, in vigore dal 23 luglio 2026): in Controlli automatici l’accreditamento biennale ha ora riferimento, Camera di commercio e delegati; nel fascicolo e nella scheda del cliente registri ogni consultazione con l’esito (corrisponde, difforme, non iscritto, non consultabile con il motivo), agganci l’estratto conservato (co. 12) e registri la segnalazione delle incongruenze alla Camera di commercio (co. 7). Alert A13 e la voce urgente «Difformità da segnalare» restano accesi finché la segnalazione non è registrata; «Da completare» chiede la consultazione dopo ogni nuova fotografia dei titolari e l’estratto quando manca. Le descrizioni delle difformità sono cifrate.',
+      'Pronti per il 10 luglio 2027: il Regolamento (UE) 2024/1624 cambia il modo di individuare i titolari effettivi — soglia «25% o più», proprietà e controllo valutati in parallelo, e nelle strutture a più livelli chi controlla una società con quota diretta rilevante o ha una quota rilevante nella società che controlla il cliente (art. 54). Il motore applica queste regole solo dalla data di applicazione: fino ad allora nulla cambia, ma il codice è già pronto e collaudato con date future.',
+    ],
+  },
+  {
     id: '2026-09-06-coda-e-completezza',
     data: '2026-09-06',
     titolo: 'Coda di revisione e «Da completare»: si parte dai documenti, non dalla pagina bianca',

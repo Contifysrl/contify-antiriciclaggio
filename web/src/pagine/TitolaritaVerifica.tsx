@@ -2,11 +2,13 @@ import { FormEvent, useEffect, useState } from 'react';
 import { api, formattaData } from '../api';
 import { Riquadro } from '../componenti';
 import { Badge, ErrorBanner, Modal } from '../components/ui';
+import { RegistroTeBox } from './RegistroTe';
 
 // ── Titolarità effettiva + verifica a distanza (AR-M8) ─────────
 // Due sezioni del dettaglio fascicolo: la fotografia corrente dei
-// titolari effettivi (artt. 20-22) con il riscontro del registro
-// (D.M. 122/2026), e le richieste di verifica a distanza al cliente.
+// titolari effettivi (artt. 20-22) con la consultazione del registro
+// (art. 21-ter, D.Lgs. 122/2026 — AR-M20-03: `RegistroTeBox`), e le
+// richieste di verifica a distanza al cliente.
 
 const CRITERI: Array<{ codice: string; etichetta: string; norma: string }> = [
   { codice: 'PROPRIETA_DIRETTA', etichetta: 'Proprietà diretta (>25%)', norma: 'art. 20 co. 2' },
@@ -17,8 +19,9 @@ const CRITERI: Array<{ codice: string; etichetta: string; norma: string }> = [
 
 // ── Sezione: titolarità effettiva ──────────────────────────────
 
-export function TitolaritaEffettiva({ clienteId, titolari, precompilati, onAggiornato }: {
+export function TitolaritaEffettiva({ clienteId, fascicoloId, titolari, precompilati, onAggiornato }: {
   clienteId: string;
+  fascicoloId?: string | null;
   titolari: any[];
   /** Dichiarati dal cliente via verifica a distanza: prefigurano il form. */
   precompilati?: Array<{ nominativo: string; codiceFiscale?: string; quota?: string }> | null;
@@ -28,7 +31,6 @@ export function TitolaritaEffettiva({ clienteId, titolari, precompilati, onAggio
   const [righe, setRighe] = useState<any[]>([]);
   const [errore, setErrore] = useState('');
   const [esito, setEsito] = useState('');
-  const [riscontro, setRiscontro] = useState(false);
 
   useEffect(() => {
     if (precompilati?.length) {
@@ -105,8 +107,6 @@ export function TitolaritaEffettiva({ clienteId, titolari, precompilati, onAggio
     </div>
   );
 
-  const nonRiscontrati = titolari.filter((t) => !t.registro_consultato);
-  const incongruenze = titolari.filter((t) => t.registro_incongruenza);
 
   return (
     <>
@@ -142,15 +142,9 @@ export function TitolaritaEffettiva({ clienteId, titolari, precompilati, onAggio
         )}
         {titolari.length === 0 && !modifica && (
           <p className="caricamento">
-            Nessun titolare effettivo registrato. L’art. 21-ter richiede l’identificazione e, dal
-            D.M. 122/2026, il riscontro con il registro presso la Camera di Commercio.
+            Nessun titolare effettivo registrato. Gli artt. 20-22 richiedono l’identificazione e, dal
+            23.7.2026 (art. 21-ter, D.Lgs. 122/2026), la consultazione del registro presso la Camera di commercio.
           </p>
-        )}
-        {incongruenze.length > 0 && !modifica && (
-          <Riquadro tipo="critico">
-            Difformità rilevata rispetto al registro: va comunicata al gestore (art. 21 co. 4) e
-            documentata nel fascicolo. La nota inserita fa parte del riscontro.
-          </Riquadro>
         )}
 
         {modifica && (
@@ -178,81 +172,17 @@ export function TitolaritaEffettiva({ clienteId, titolari, precompilati, onAggio
             <button className="btn btn-secondary btn-sm" onClick={apriModifica}>
               {titolari.length ? 'Aggiorna la titolarità' : 'Registra i titolari effettivi'}
             </button>
-            {titolari.length > 0 && (
-              <button className="btn btn-secondary btn-sm" onClick={() => setRiscontro(true)}>
-                {nonRiscontrati.length ? 'Riscontro col registro…' : 'Nuovo riscontro col registro…'}
-              </button>
-            )}
           </div>
         )}
+        <div className="mt-4 border-t border-ink-100 pt-3">
+          <h4 className="!mt-0">Registro dei titolari effettivi</h4>
+          <RegistroTeBox clienteId={clienteId} fascicoloId={fascicoloId} titolari={titolari.length} onCambiato={onAggiornato} compatto />
+        </div>
       </div>
-
-      {riscontro && (
-        <RiscontroRegistroModal
-          clienteId={clienteId}
-          onChiudi={() => setRiscontro(false)}
-          onFatto={() => { setRiscontro(false); setEsito('Riscontro registrato.'); onAggiornato(); }}
-        />
-      )}
     </>
   );
 }
 
-function RiscontroRegistroModal({ clienteId, onChiudi, onFatto }: { clienteId: string; onChiudi: () => void; onFatto: () => void }) {
-  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
-  const [incongruenza, setIncongruenza] = useState(false);
-  const [note, setNote] = useState('');
-  const [errore, setErrore] = useState('');
-  const [invio, setInvio] = useState(false);
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setErrore('');
-    setInvio(true);
-    try {
-      await api.post(`/clienti/${clienteId}/titolarita/registro`, { data, incongruenza, note });
-      onFatto();
-    } catch (err) {
-      setErrore((err as Error).message);
-      setInvio(false);
-    }
-  };
-
-  return (
-    <Modal title="Riscontro col registro dei titolari effettivi" onClose={onChiudi}>
-      <form onSubmit={submit} className="space-y-3 text-sm">
-        <p>
-          Registra l’esito della consultazione del registro (accesso accreditato presso la Camera di
-          Commercio, D.M. 122/2026): l’art. 31 co. 2 chiede di conservarne traccia. Puoi allegare la
-          visura fra i documenti del fascicolo.
-        </p>
-        <div>
-          <label className="label">Data della consultazione</label>
-          <input className="input" type="date" value={data} onChange={(e) => setData(e.target.value)} required />
-        </div>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" className="!w-4" checked={incongruenza} onChange={(e) => setIncongruenza(e.target.checked)} />
-          <span>Ho rilevato una <strong>difformità</strong> tra registro e titolarità accertata</span>
-        </label>
-        {incongruenza && (
-          <Riquadro tipo="critico">
-            La difformità va comunicata al gestore del registro (art. 21 co. 4): descrivila qui e
-            documenta la comunicazione nel fascicolo.
-          </Riquadro>
-        )}
-        <div>
-          <label className="label">{incongruenza ? 'Descrizione della difformità (obbligatoria)' : 'Note (facoltative)'}</label>
-          <textarea className="input min-h-[70px]" value={note} onChange={(e) => setNote(e.target.value)} required={incongruenza} />
-        </div>
-        {errore && <div className="errore">{errore}</div>}
-        <div className="flex justify-end gap-2 pt-1">
-          <button type="button" className="btn btn-secondary" onClick={onChiudi}>Annulla</button>
-          <button className="btn btn-primary" disabled={invio}>{invio ? 'Salvataggio…' : 'Registra il riscontro'}</button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
 
 // ── Sezione: verifica a distanza ───────────────────────────────
 

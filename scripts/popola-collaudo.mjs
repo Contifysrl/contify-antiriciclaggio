@@ -247,8 +247,8 @@ await amm.deve('POST', '/studio/province-contante', {
   dataFonte: '2024-11-01',
 });
 nota('tabella delle province: PD, NA alto; GE, CT medio-alto');
-await amm.deve('POST', '/studio/registro-accreditamento', { data: giorniFa(400) });
-nota('accreditamento al registro dei titolari effettivi registrato');
+await amm.deve('POST', '/studio/registro-accreditamento', { data: giorniFa(400), riferimento: 'PRA/2025/0917-COLLAUDO', cameraDiCommercio: 'Padova' });
+nota('accreditamento al registro dei titolari effettivi registrato (delegati dopo la creazione delle persone)');
 
 passo('Le persone dello studio');
 const utentiAttuali = await amm.deve('GET', '/utenti');
@@ -531,6 +531,36 @@ passo('AR-M19: controllo costante eseguito, un rapporto cessato, formazione regi
   await amm.deve('POST', '/studio/formazione', { titolo: 'Antiriciclaggio: regole tecniche e modulistica CNDCEC 2026', ente: 'ODCEC Padova', dataEvento: giorniFa(120), ore: 4, utentiIds: persone.map((p) => p.id) }, null, [201]);
   await amm.deve('POST', '/studio/formazione', { titolo: 'Titolare effettivo e registro: casi pratici', ente: 'CNDCEC (webinar)', dataEvento: giorniFa(40), ore: 2, utentiIds: persone.slice(0, 2).map((p) => p.id) }, null, [201]);
   nota('controlli costanti registrati (OMEGA invariato, GAMMA da rivalutare), Marangoni cessato, 2 eventi formativi');
+}
+
+passo('AR-M20: delegati al registro TE, consultazioni del registro, una visura vecchia da rinnovare');
+{
+  // Delegati all'accesso (art. 21-ter co. 5): tutte le persone dello studio tranne la collaboratrice.
+  const persone = await amm.deve('GET', '/studio/persone');
+  await amm.deve('POST', '/studio/registro-accreditamento', { data: giorniFa(400), riferimento: 'PRA/2025/0917-COLLAUDO', cameraDiCommercio: 'Padova', delegati: persone.filter((p) => p.ruolo !== 'COLLABORATORE').map((p) => p.id) });
+  // Consultazioni: OMEGA corrisponde (con estratto), GAMMA difforme non ancora segnalata (A13 acceso),
+  // la prima società delle visure «non consultabile» finché il portale non è operativo.
+  const societa = Object.values(clienti).filter((c) => c.tipo !== 'PERSONA_FISICA');
+  const omega = Object.entries(clienti).find(([n]) => n === 'OMEGA SPA')?.[1];
+  const gamma = Object.entries(clienti).find(([n]) => n === 'GAMMA FAMILY SRL')?.[1];
+  if (omega) {
+    const est = await amm.deve('POST', `/clienti/${omega.id}/documenti`, null, formDocumento(pdfMinimo('Estratto del registro dei titolari effettivi OMEGA SPA - documento di collaudo'), `estratto-registro-${omega.id}.pdf`, 'ESTRATTO_REGISTRO_TE', giorniFa(20)), [200, 201]);
+    await amm.deve('POST', `/clienti/${omega.id}/registro-te`, { data: giorniFa(20), esito: 'CORRISPONDE', documentoId: est.id, note: 'Titolari nel registro coincidenti con la fotografia del fascicolo.' }, null, [201]);
+  }
+  if (gamma) {
+    await amm.deve('POST', `/clienti/${gamma.id}/registro-te`, { data: giorniFa(5), esito: 'DIFFORME', difformita: 'Nel registro risulta ancora il precedente amministratore unico come titolare effettivo; in visura è cessato.' }, null, [201]);
+  }
+  const prima = societa.find((c) => c !== omega && c !== gamma);
+  if (prima) await amm.deve('POST', `/clienti/${prima.id}/registro-te`, { data: giorniFa(2), esito: 'NON_CONSULTABILE', difformita: 'Portale delle Camere di commercio non ancora operativo per i soggetti obbligati (decreti attuativi del D.Lgs. 122/2026 in corso).' }, null, [201]);
+  // Una visura vecchia di tre anni su una società valutata: alert A12 e «Rinnovo della visura» nello scadenzario.
+  // A12 conta la visura PIÙ RECENTE: le società dalle visure hanno già quella di oggi, quindi la visura
+  // di tre anni fa va su un cliente inserito a mano con fascicolo valutato.
+  // A12 si dimostra su un cliente inserito a mano con fascicolo valutato: visura di tre anni fa.
+  const aMano = fascicoli.find((f) => clienti[f.cliente] && !clienti[f.cliente].visura && clienti[f.cliente].tipo !== 'PERSONA_FISICA' && !['OMEGA SPA', 'GAMMA FAMILY SRL', 'Marangoni Ubaldo'].includes(f.cliente));
+  if (aMano) {
+    await amm.deve('POST', `/clienti/${clienti[aMano.cliente].id}/documenti`, null, formDocumento(pdfMinimo(`Visura camerale ${aMano.cliente} di tre anni fa - documento di collaudo`), `visura-vecchia-${clienti[aMano.cliente].id}.pdf`, 'VISURA', giorniFa(1120)), [200, 201]);
+  }
+  nota(`registro TE: OMEGA corrisponde con estratto, GAMMA difforme da segnalare (A13), ${prima ? 'una' : 'nessuna'} non consultabile; visura di tre anni fa su ${aMano?.cliente ?? '—'} (A12)`);
 }
 
 passo('Autovalutazione dello studio, proposta dai dati e firmata');

@@ -4,6 +4,8 @@ import { PiedeLegale, Riquadro } from '../componenti';
 import { ConfermaEliminazione, HelpLink } from '../components/ui';
 import { CampoProfessionista, useProfessionisti } from '../lib/professionisti';
 import { ETICHETTA_CARICA, PropostaTitolaritaBox, TabellaCariche, VisuraModal, type PropostaDto } from './Visura';
+import { RivalutazioneBox } from './ControlloCostante';
+import { RegistroTeBox } from './RegistroTe';
 import { Badge } from '../components/ui';
 
 // ── Scheda del cliente (AR-M14) ─────────────────────────────────
@@ -317,6 +319,12 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
             partecipativa è collegata alla prestazione (art. 20).
           </p>
         )}
+        {d.titolariEffettivi.length > 0 && (
+          <div className="mt-4 border-t border-ink-100 pt-3">
+            <h4 className="!mt-0">Registro dei titolari effettivi</h4>
+            <RegistroTeBox clienteId={id} titolari={d.titolariEffettivi.length} documenti={d.documenti ?? []} onCambiato={() => { carica(); caricaCompagine(); }} compatto />
+          </div>
+        )}
       </div>
 
       {/* ── Compagine e proposta (AR-M17) ────────────────────── */}
@@ -355,6 +363,7 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
               </button>
               <span className="text-xs text-ink-400" style={{ marginLeft: 8 }}>Da far firmare al cliente in presenza; a distanza si invia dal fascicolo (AR-M18).</span>
             </div>
+            <RivalutazioneBox proposte={compagine.proposte ?? []} vaiA={vaiA} onCambiato={() => { carica(); caricaCompagine(); }} />
             <h4 style={{ marginTop: 18 }}>Titolari effettivi proposti dai dati camerali</h4>
             <div className="aiuto">La visura non è il registro dei titolari effettivi (art. 21-ter): questa è l'applicazione dell'art. 20 co. 2 ai soci. Confermi, correggi o scarti; il registro si consulta dal fascicolo.</div>
             <PropostaTitolaritaBox
@@ -362,6 +371,7 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
               proposta={{ ...compagine, id: compagine.proposte?.find((p: any) => p.ambito === 'TITOLARITA' && p.stato === 'PROPOSTA')?.id ?? null }}
               vaiA={vaiA}
               onRegistrata={() => { carica(); caricaCompagine(); }}
+              onRinnovaVisura={archiviato ? undefined : () => setAggiornaVisura(true)}
             />
             {compagine.proposte?.length > 0 && (
               <details style={{ marginTop: 12 }}>
@@ -434,6 +444,7 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
             <select className="input" style={{ width: 'auto' }} value={tipoDoc} onChange={(e) => setTipoDoc(e.target.value)} title="Tipo di documento: alimenta la checklist del fascicolo">
               <option value="VISURA">Visura camerale</option>
               <option value="DICHIARAZIONE_ART22">Dichiarazione art. 22 firmata</option>
+              <option value="ESTRATTO_REGISTRO_TE">Estratto del registro TE (prova dell’iscrizione)</option>
               <option value="DOCUMENTO_IDENTITA">Documento d’identità</option>
               <option value="DOCUMENTAZIONE_ESTERA">Documentazione estera equivalente</option>
               <option value="MANDATO_FIDUCIARIO">Mandato fiduciario</option>

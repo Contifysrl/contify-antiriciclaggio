@@ -150,3 +150,87 @@ export function ControlloCostanteBox({ fascicoloId, fascicolo, onCambiato, vaiA 
     </div>
   );
 }
+
+// ── AR-M20-02: rivalutazione proposta dal rinnovo della visura ──
+// Al rinnovo della visura, se cambiano soci, quote o cariche con poteri, il
+// programma propone di registrare il controllo costante «da rivalutare» sui
+// fascicoli vivi valutati. Il professionista lo registra (con le variazioni
+// già scritte nelle note) oppure dichiara che nulla va rivalutato, dicendo
+// perché: in entrambi i casi la proposta chiude con un esito documentato.
+
+export function RivalutazioneBox({ proposte, onCambiato, vaiA }: {
+  proposte: any[];
+  onCambiato: () => void;
+  vaiA?: (p: string) => void;
+}) {
+  const [aperta, setAperta] = useState<any | null>(null);
+  const [tipoEsito, setTipoEsito] = useState<'INVARIATO' | 'DA_RIVALUTARE'>('DA_RIVALUTARE');
+  const [note, setNote] = useState('');
+  const [data, setData] = useState(dataOggi());
+  const [errore, setErrore] = useState('');
+  const [esito, setEsito] = useState('');
+  const [invio, setInvio] = useState(false);
+
+  const aperte = proposte.filter((p) => p.ambito === 'RIVALUTAZIONE' && p.stato === 'PROPOSTA');
+  if (!aperte.length && !esito) return null;
+
+  const apri = (p: any) => { setAperta(p); setTipoEsito('DA_RIVALUTARE'); setNote(p.contenuto?.riepilogo ?? ''); setData(dataOggi()); setErrore(''); };
+  const registra = async () => {
+    if (!aperta) return;
+    setErrore(''); setInvio(true);
+    try {
+      const r = await api.post<any>(`/fascicoli/${aperta.contenuto.fascicoloId}/controllo-costante`, {
+        dataControllo: data, esito: tipoEsito, verifiche: aperta.contenuto?.verificheProposte ?? ['COMPAGINE', 'TITOLARI'], note, propostaId: aperta.id,
+      });
+      setAperta(null);
+      setEsito(r.prossimaValutazione
+        ? `Controllo costante registrato sul fascicolo ${aperta.contenuto.codice}: ora registra la nuova valutazione del rischio dal fascicolo.`
+        : `Controllo costante registrato sul fascicolo ${aperta.contenuto.codice}: hai motivato perché la valutazione resta valida.`);
+      onCambiato();
+    } catch (e) { setErrore((e as Error).message); } finally { setInvio(false); }
+  };
+
+  return (
+    <div className="riquadro avviso" data-test="rivalutazione-proposta">
+      <strong>La compagine è cambiata: il programma propone il controllo costante «da rivalutare»</strong>
+      <p className="aiuto !mt-1">
+        Il rinnovo della visura ha cambiato soci, quote o cariche con poteri. Il controllo costante (art. 19 co. 1 lett. d) va documentato e, se la struttura incide sul rischio o sui titolari effettivi, la valutazione si aggiorna (Regole tecniche CNDCEC 2025). Decidi tu: registra il controllo con l’esito che ritieni.
+      </p>
+      {esito && <Riquadro tipo="info">{esito}</Riquadro>}
+      {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
+      <ul className="mt-2 space-y-2">
+        {aperte.map((p) => (
+          <li key={p.id} className="rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm" data-test="rivalutazione-voce">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <Badge tone="amber">fascicolo {p.contenuto?.codice ?? '—'}</Badge>
+                <ul className="mt-1 ml-4 list-disc text-xs text-ink-700">{(p.contenuto?.righe ?? []).map((r: string, i: number) => <li key={i}>{r}</li>)}</ul>
+              </div>
+              <div className="shrink-0 flex flex-col gap-1">
+                <button className="btn btn-primary btn-sm" data-test="rivalutazione-registra" onClick={() => apri(p)}>Registra il controllo costante…</button>
+                {vaiA && p.contenuto?.fascicoloId && <button className="btn btn-ghost btn-sm" onClick={() => vaiA(`fascicolo?id=${p.contenuto.fascicoloId}`)}>Apri il fascicolo</button>}
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+      {aperta && (
+        <Modal title={`Controllo costante — fascicolo ${aperta.contenuto?.codice ?? ''}`} onClose={() => setAperta(null)}>
+          <div className="space-y-3 text-sm">
+            <label className="label">Data del controllo</label>
+            <input className="input" type="date" value={data} max={dataOggi()} onChange={(e) => setData(e.target.value)} />
+            <label className="label">Esito</label>
+            <label className="flex items-center gap-2 cursor-pointer"><input type="radio" className="!w-4" checked={tipoEsito === 'DA_RIVALUTARE'} onChange={() => setTipoEsito('DA_RIVALUTARE')} data-test="rivalutazione-si" /> La struttura è cambiata: serve una nuova valutazione (proposto)</label>
+            <label className="flex items-center gap-2 cursor-pointer"><input type="radio" className="!w-4" checked={tipoEsito === 'INVARIATO'} onChange={() => setTipoEsito('INVARIATO')} data-test="rivalutazione-no" /> Nulla da rivalutare: la valutazione resta valida (spiega perché)</label>
+            <label className="label">Note (cosa è cambiato / perché la valutazione resta valida)</label>
+            <textarea className="input min-h-[90px]" value={note} onChange={(e) => setNote(e.target.value)} data-test="rivalutazione-note" />
+            <div className="flex justify-end gap-2">
+              <button className="btn btn-secondary" onClick={() => setAperta(null)}>Annulla</button>
+              <button className="btn btn-primary" onClick={registra} disabled={invio} data-test="rivalutazione-salva">{invio ? 'Registrazione…' : 'Registra'}</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}

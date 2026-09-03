@@ -61,7 +61,7 @@ const nClienti = await p.locator('[data-test=cliente-da-completare]').count();
 verifica(`elenco dei clienti da completare (${nClienti})`, nClienti > 0);
 await p.click('button:has-text("Da dove vengono queste regole?")');
 await p.waitForSelector('[data-test=regole]');
-verifica('tabella delle 13 regole con norma e modulistica', (await p.locator('[data-test=regole] tbody tr').count()) === 13 && /57\/2026/.test(await p.textContent('[data-test=regole]')));
+verifica('tabella delle 17 regole con norma e modulistica', (await p.locator('[data-test=regole] tbody tr').count()) === 17 && /57\/2026/.test(await p.textContent('[data-test=regole]')));
 await scatto('3-regole');
 await p.selectOption('[data-test=filtri] select >> nth=0', 'alta');
 await p.waitForTimeout(300);

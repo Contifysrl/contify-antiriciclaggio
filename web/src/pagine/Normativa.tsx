@@ -123,10 +123,12 @@ const VIGENTI: Fonte[] = [
     ente: 'Camere di commercio — MIMIT',
     descrizione: (
       <>
-        Il registro presso il Registro delle imprese a cui i professionisti accreditati
-        accedono per il riscontro della titolarità effettiva (D.M. 122/2026). L'accreditamento
-        biennale e i riscontri si registrano in Contify AR (Controlli automatici e fascicoli);
-        qui trovi il portale ufficiale.
+        La sezione autonoma del Registro delle imprese a cui i soggetti obbligati accreditati
+        accedono per l'adeguata verifica (art. 21-ter DLgs. 231/2007, come riscritto dal D.Lgs.
+        10 giugno 2026 n. 122, in vigore dal 23.7.2026): accreditamento biennale, delegati,
+        segnalazione delle incongruenze alla Camera di commercio, prova dell'iscrizione da
+        conservare. Accreditamento e consultazioni si registrano in Contify AR (Controlli
+        automatici, fascicoli e schede cliente); qui trovi il portale ufficiale.
       </>
     ),
     collegamenti: [
