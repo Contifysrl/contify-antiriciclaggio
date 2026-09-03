@@ -1,0 +1,37 @@
+VISURA ORDINARIA IMPRESA INDIVIDUALE
+	DATI ANAGRAFICI
+ROSSI MARIO
+	Indirizzo Sede legale	VIGONZA (PD) VIA
+	ROMA 1 CAP 35010
+	Domicilio digitale/PEC	mario.rossi@pec.it
+	Numero REA	PD - 445566
+	Codice fiscale e n.iscr. al	RSSMRA75S22B563H
+	Registro Imprese
+	Partita IVA	06789012345
+	Forma giuridica	impresa individuale
+	Titolare	ROSSI MARIO
+ATTIVITA'	L'IMPRESA IN CIFRE
+Stato attività	attiva
+Documento n . A 4444444444444444444 estratto dal Registro Imprese in data 20/08/2026
+
+1 Sede
+Indirizzo Sede legale	VIGONZA (PD)
+	VIA ROMA 1 CAP 35010
+Domicilio digitale/PEC	mario.rossi@pec.it
+Partita IVA	06789012345
+2 Informazioni da statuto/atto costitutivo
+Registro Imprese	Codice fiscale e numero di iscrizione: RSSMRA75S22B563H
+informazioni costitutive	Denominazione: ROSSI MARIO
+3 Titolare
+Titolare	ROSSI MARIO	Rappresentante dell'impresa
+Elenco titolari
+Titolare
+ROSSI MARIO	Rappresentante dell'impresa
+	Nato a PADOVA (PD) il 22/11/1975
+	Codice fiscale: RSSMRA75S22B563H
+carica	titolare firmatario
+4 Attività, albi ruoli e licenze
+attività prevalente esercitata	CONSULENZA INFORMATICA
+dall'impresa
+Classificazione ATECORI 2007	Codice: 62.02.00 - Consulenza nel settore delle tecnologie dell'informatica
+5 Aggiornamento impresa

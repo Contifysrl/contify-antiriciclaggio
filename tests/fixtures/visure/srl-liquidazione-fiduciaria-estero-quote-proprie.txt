@@ -1,0 +1,79 @@
+VISURA ORDINARIA SOCIETA' DI CAPITALE
+	DATI ANAGRAFICI
+THETA SRL IN LIQUIDAZIONE
+	Indirizzo Sede legale	GENOVA (GE) VIA
+	XX SETTEMBRE 2 CAP 16121
+	Domicilio digitale/PEC	theta@pec.it
+	Numero REA	GE - 112233
+	Codice fiscale e n.iscr. al	07890123456
+	Registro Imprese
+	Partita IVA	07890123456
+	Forma giuridica	societa' a responsabilita' limitata
+	Data atto di costituzione	10/10/2015
+	Liquidatore	NERI PAOLO
+	Rappresentante dell'Impresa
+ATTIVITA'	L'IMPRESA IN CIFRE
+Stato attività	in liquidazione	Capitale sociale	50.000,00
+	sottoscritto
+Documento n . A 5555555555555555555 estratto dal Registro Imprese in data 03/09/2026
+
+1 Sede
+Indirizzo Sede legale	GENOVA (GE)
+	VIA XX SETTEMBRE 2 CAP 16121
+Domicilio digitale/PEC	theta@pec.it
+Partita IVA	07890123456
+2 Informazioni da statuto/atto costitutivo
+Registro Imprese	Codice fiscale e numero di iscrizione: 07890123456
+informazioni costitutive	Denominazione: THETA SRL IN LIQUIDAZIONE
+	Data atto di costituzione: 10/10/2015
+3 Capitale e strumenti finanziari
+Capitale sociale in Euro	Deliberato:	50.000,00
+	Sottoscritto: 50.000,00
+	Versato:	50.000,00
+4 Scioglimento, procedure concorsuali e cancellazione
+scioglimento e liquidazione	Scioglimento e messa in liquidazione volontaria
+	Data delibera: 30/06/2026
+5 Soci e titolari di diritti su azioni e quote
+Sintesi della composizione societaria e degli altri titolari di diritti su azioni o quote sociali al 30/06/2026
+Socio	Valore	%	Tipo diritto
+FIDUCIARIA LIGURE SPA	20.000,00	40 %	proprieta'
+08901234567
+KAPPA TRADING LTD	15.000,00	30 %	proprieta'
+THETA SRL IN LIQUIDAZIONE	5.000,00	10 %	proprieta'
+07890123456
+NERI PAOLO	10.000,00	20 %	proprieta'
+NREPLA80A01F205Z
+Elenco dei soci e degli altri
+titolari di diritti su azioni o
+quote sociali al 30/06/2026
+	Quota di nominali: 20.000,00 Euro
+Proprieta'
+FIDUCIARIA LIGURE SPA	Codice fiscale: 08901234567
+	Tipo di diritto: proprieta'
+	Quota di nominali: 15.000,00 Euro
+Proprieta'
+KAPPA TRADING LTD	Tipo di diritto: proprieta'
+	Domicilio del titolare o rappresentante
+	comune
+	LONDON (EE) 10 KING STREET
+	Quota di nominali: 5.000,00 Euro
+Proprieta'
+THETA SRL IN LIQUIDAZIONE	Codice fiscale: 07890123456
+	Tipo di diritto: proprieta'
+	Quota di nominali: 10.000,00 Euro
+Proprieta'
+NERI PAOLO	Codice fiscale: NREPLA80A01F205Z
+	Tipo di diritto: proprieta'
+6 Amministratori
+Liquidatore	NERI PAOLO	Rappresentante dell'impresa
+Elenco amministratori
+Liquidatore
+NERI PAOLO	Rappresentante dell'impresa
+	Codice fiscale: NREPLA80A01F205Z
+carica	liquidatore
+	Data atto di nomina: 30/06/2026
+7 Attività, albi ruoli e licenze
+attività prevalente esercitata	COMMERCIO ALL'INGROSSO NON SPECIALIZZATO
+dall'impresa
+Classificazione ATECORI 2007	Codice: 46.90.00 - Commercio all'ingrosso non specializzato
+8 Aggiornamento impresa
