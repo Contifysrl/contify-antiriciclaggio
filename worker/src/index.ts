@@ -47,7 +47,7 @@ import { normalizzaPiva } from './lib/lookup/piva';
 import { registraTitolari } from './lib/titolarita';
 import { TIPI_CLIENTE, aggiornaClienteDaVisura, clienteDoppione, creaClienteDaVisura, risolviProfessionista } from './lib/da-visura';
 import { leggiProposte, propostaTitolarita, registraProposta, salvaCompagine, screeningCompagine, type CaricaIn, type SocioIn } from './lib/compagine';
-import { ErroreAi, MODELLO_DEFAULT, aiAbilitata, generaBozza, rispostaChat, suggerisciIndicatori } from './lib/ai';
+import { ErroreAi, MODELLO_DEFAULT, VERSIONE_INFORMATIVA_AI, aiAbilitata, generaBozza, informativaDaRiaccettare, rispostaChat, statoAi, suggerisciIndicatori } from './lib/ai';
 import { dizionarioTenant } from './lib/pseudonimi';
 import { parametriTenant, propostaFascicolo, tabellaProvince } from './lib/proposta-fascicolo';
 import { completezzaStudio } from './lib/completezza';
@@ -1497,9 +1497,32 @@ api.post('/clienti/:id/titolarita/registro', puoScrivere, async (c) => {
 // l'uso della funzione, mai il contenuto.
 // ===========================================================================
 
-async function tenantConAiAbilitata(c: Ctx): Promise<boolean> {
+async function parametriAiTenant(c: Ctx): Promise<string | null> {
   const t = await c.env.DB.prepare('SELECT parametri FROM tenants WHERE id = ?').bind(c.get('tenantId')).first<any>();
-  return aiAbilitata(t?.parametri);
+  return t?.parametri ?? null;
+}
+
+async function tenantConAiAbilitata(c: Ctx): Promise<boolean> {
+  return aiAbilitata(await parametriAiTenant(c));
+}
+
+/**
+ * Gate delle funzioni nuove (AI-04): AI abilitata E informativa corrente
+ * accettata. Restituisce la risposta d'errore da rimandare, o null se si può
+ * procedere.
+ */
+async function gateAi(c: Ctx, richiedeInformativaCorrente: boolean) {
+  const parametri = await parametriAiTenant(c);
+  if (!aiAbilitata(parametri)) {
+    return c.json({ errore: "L'assistente AI non è abilitato: il titolare può attivarlo dalle Impostazioni", codice: 'ai_disabilitata' }, 403);
+  }
+  if (richiedeInformativaCorrente && informativaDaRiaccettare(parametri)) {
+    return c.json({
+      errore: "L'informativa sull'assistente AI è cambiata: chi amministra lo studio deve rileggerla e confermarla dalle Impostazioni prima di usare questa funzione",
+      codice: 'informativa_da_riaccettare', versioneCorrente: VERSIONE_INFORMATIVA_AI,
+    }, 403);
+  }
+  return null;
 }
 
 /**
@@ -1520,10 +1543,22 @@ async function rispostaErroreAi(c: Ctx, e: unknown, funzione: string) {
 }
 
 api.get('/ai/stato', async (c) => {
+  const parametri = await parametriAiTenant(c);
+  const st = statoAi(parametri);
+  let accettataDa: string | null = null;
+  if (st.da) {
+    const u = await c.env.DB.prepare('SELECT nome FROM utenti WHERE id = ? AND tenant_id = ?').bind(st.da, c.get('tenantId')).first<any>();
+    accettataDa = u?.nome ?? null;
+  }
   return c.json({
-    abilitata: await tenantConAiAbilitata(c),
+    abilitata: st.abilitata,
     chiaveConfigurata: Boolean(c.env.ANTHROPIC_API_KEY) || c.env.AI_FIXTURES === '1',
     modello: c.env.AI_MODEL ?? MODELLO_DEFAULT,
+    versioneAccettata: st.versioneAccettata,
+    versioneCorrente: VERSIONE_INFORMATIVA_AI,
+    daRiaccettare: informativaDaRiaccettare(parametri),
+    accettataIl: st.accettataIl,
+    accettataDa,
   });
 });
 
@@ -1536,12 +1571,17 @@ api.post('/ai/abilita', soloAmministratore, async (c) => {
   }
   const t = await c.env.DB.prepare('SELECT parametri FROM tenants WHERE id = ?').bind(u.tenant_id).first<any>();
   const parametri = (() => { try { return JSON.parse(t?.parametri ?? '{}'); } catch { return {}; } })();
-  parametri.ai = abilita ? { abilitata: true, accettataIl: new Date().toISOString(), da: u.id } : { abilitata: false };
+  // Si registra la versione dell'informativa accettata: ri-accettare la v2 con
+  // l'AI già abilitata aggiorna versione, data e autore (AI-04).
+  parametri.ai = abilita
+    ? { abilitata: true, versioneInformativa: VERSIONE_INFORMATIVA_AI, accettataIl: new Date().toISOString(), da: u.id }
+    : { abilitata: false };
   await c.env.DB.prepare('UPDATE tenants SET parametri = ? WHERE id = ?').bind(JSON.stringify(parametri), u.tenant_id).run();
   await scriviAudit(c.env.DB, {
     tenantId: u.tenant_id, utenteId: u.id, azione: abilita ? 'ABILITA_AI' : 'DISABILITA_AI', ip: c.get('ip'),
+    dettaglio: abilita ? { versioneInformativa: VERSIONE_INFORMATIVA_AI } : undefined,
   });
-  return c.json({ ok: true, abilitata: abilita });
+  return c.json({ ok: true, abilitata: abilita, versioneInformativa: abilita ? VERSIONE_INFORMATIVA_AI : null });
 });
 
 /** Suggeritore di indicatori UIF: contenuto pre-SOS → riservato al titolare (art. 38). */

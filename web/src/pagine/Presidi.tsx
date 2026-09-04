@@ -388,8 +388,9 @@ function SuggerimentiIndicatoriAi({ descrizione, selezionati, onAggiungi }: {
     <div className="campo">
       <div className="aiuto">
         L’assistente AI può proporre i sub-indici pertinenti fra i 400 del provvedimento UIF,
-        a partire da descrizione e motivi. <strong>Non inserire nominativi nei testi</strong>:
-        descrivi i fatti, non le persone. I suggerimenti vanno sempre verificati.
+        a partire da descrizione e motivi. <strong>Descrivi i fatti, non le persone</strong>: i nomi
+        dell’archivio e i dati identificativi vengono sostituiti da segnaposto prima dell’invio.
+        I suggerimenti vanno sempre verificati.
       </div>
       <button type="button" className="azione secondaria" onClick={chiedi} disabled={inCorso || descrizione.trim().length < 30}>
         {inCorso ? 'L’assistente sta leggendo…' : 'Suggerisci gli indicatori (AI)'}

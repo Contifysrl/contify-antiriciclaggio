@@ -37,11 +37,49 @@ export const MODELLO_DEFAULT = 'claude-sonnet-4-5';
 // ── Opt-in dello studio ────────────────────────────────────────
 
 export function aiAbilitata(parametriGrezzi: string | null | undefined): boolean {
+  return statoAi(parametriGrezzi).abilitata;
+}
+
+/**
+ * Versione corrente dell'informativa (AR-M21, AI-04). La v1 (AR-M9) descriveva
+ * il divieto testuale di nominativi; la v2 descrive la pseudonimizzazione
+ * automatica e le due funzioni nuove (motivazione co. 6 leggibile,
+ * classificazione dell'oggetto sociale). Chi ha accettato la v1 tiene le
+ * funzioni di prima; le nuove si sbloccano solo con la v2, perché la prova
+ * dell'accettazione deve corrispondere al testo che descrive ciò che il
+ * programma fa davvero. Il testo è in docs/informativa-ai-v2.md e in
+ * Impostazioni.tsx.
+ */
+export const VERSIONE_INFORMATIVA_AI = 2;
+
+export interface StatoAi {
+  abilitata: boolean;
+  /** Versione dell'informativa accettata (1 per le accettazioni precedenti ad AR-M21); null se spenta. */
+  versioneAccettata: number | null;
+  accettataIl: string | null;
+  da: string | null;
+}
+
+export function statoAi(parametriGrezzi: string | null | undefined): StatoAi {
   try {
-    return JSON.parse(parametriGrezzi ?? '{}')?.ai?.abilitata === true;
+    const ai = JSON.parse(parametriGrezzi ?? '{}')?.ai;
+    if (ai?.abilitata !== true) return { abilitata: false, versioneAccettata: null, accettataIl: null, da: null };
+    const v = Number(ai.versioneInformativa);
+    return {
+      abilitata: true,
+      versioneAccettata: Number.isFinite(v) && v >= 1 ? v : 1,
+      accettataIl: typeof ai.accettataIl === 'string' ? ai.accettataIl : null,
+      da: typeof ai.da === 'string' ? ai.da : null,
+    };
   } catch {
-    return false;
+    return { abilitata: false, versioneAccettata: null, accettataIl: null, da: null };
   }
+}
+
+/** Le funzioni nuove (AI-02/AI-03) richiedono l'informativa corrente. */
+export function informativaDaRiaccettare(parametriGrezzi: string | null | undefined): boolean {
+  const st = statoAi(parametriGrezzi);
+  return st.abilitata && (st.versioneAccettata ?? 0) < VERSIONE_INFORMATIVA_AI;
 }
 
 // ── Chiamata al modello ────────────────────────────────────────

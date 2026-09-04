@@ -615,14 +615,45 @@ function GestioneUtenti({ ioId, postiProfessionista }: { ioId: string; postiProf
   );
 }
 
-// ── Assistente AI (AR-M9, solo titolare) ───────────────────────
+// ── Assistente AI (AR-M9, solo titolare; informativa v2 con ri-accettazione AR-M21) ──
+type StatoAiUi = {
+  abilitata: boolean; chiaveConfigurata: boolean; modello: string;
+  versioneAccettata: number | null; versioneCorrente: number; daRiaccettare: boolean;
+  accettataIl: string | null; accettataDa: string | null;
+};
+
+/** Testo dell'informativa v2 (copia in docs/informativa-ai-v2.md, inviata ad AVVOCARE). */
+function InformativaAi() {
+  return (
+    <div className="rounded-lg bg-ink-50 border border-ink-100 px-4 py-3 space-y-2" data-test="informativa-ai">
+      <div className="font-semibold text-ink-800">Informativa sull’assistente AI (versione 2)</div>
+      <div className="text-ink-600 space-y-1">
+        <div className="font-semibold text-ink-700">Che cosa fa</div>
+        <p>Produce <strong>suggerimenti, mai decisioni</strong>: suggeritore di indicatori UIF (solo titolare), bozze di scopo/natura e motivazione dell’astensione, chat di assistenza, riscrittura leggibile della motivazione ex art. 20 co. 6 (verificata sui numeri dei fatti) e classificazione dell’oggetto sociale su richiesta (proposta da confermare, mai un punteggio scritto).</p>
+        <div className="font-semibold text-ink-700">Che cosa viene inviato e come</div>
+        <ul className="list-disc ml-5 space-y-1">
+          <li>I testi sono elaborati dal modello Claude via API Anthropic, senza conservazione oltre l’elaborazione né addestramento sui dati.</li>
+          <li>Prima dell’invio il programma <strong>sostituisce automaticamente con segnaposto</strong> (es. <code>[PF_1]</code>, <code>[PG_2]</code>, <code>[CF_1]</code>) i nomi di persone ed enti presenti nell’archivio dello studio — clienti, soci e cariche, titolari effettivi, esecutori, professionisti — anche senza accenti, senza maiuscole o con nome e cognome invertiti, e i dati con formato riconoscibile ovunque compaiano: codici fiscali, partite IVA, IBAN, email e PEC, telefoni, indirizzi con civico.</li>
+          <li><strong>Passano invariati i fatti</strong>: prestazione, attività, quote, importi, date, forme giuridiche, norme e le parole digitate che non rientrano nei casi sopra. Un nome che non è nell’archivio (un terzo mai registrato) non viene riconosciuto: resta la regola di descrivere i fatti, non le persone.</li>
+          <li>I segnaposto valgono per la singola richiesta (per la chat, per la conversazione): nessuna tabella stabile nel tempo. La corrispondenza resta nel server di Contify AR per rimettere i nomi nella risposta; il fornitore non la vede.</li>
+          <li><strong>Blocco tecnico</strong>: se dopo la sostituzione resta un nome dell’archivio o un dato riconoscibile, la richiesta non parte e il programma chiede di riformulare.</li>
+        </ul>
+        <div className="font-semibold text-ink-700">Che cosa resta nel registro</div>
+        <p>L’uso di ogni funzione (chi, quando, quale, quanti valori sostituiti) e le richieste bloccate; mai il contenuto né la corrispondenza dei segnaposto. L’accettazione è registrata con versione, data e autore.</p>
+        <div className="font-semibold text-ink-700">Responsabilità</div>
+        <p>Non è un parere legale: livello di verifica, astensione e segnalazione restano scelte del professionista. L’assistente si disattiva in qualsiasi momento; nessuna funzione AI interviene da sola (la coda di revisione e le proposte del programma non usano l’AI).</p>
+      </div>
+    </div>
+  );
+}
+
 function AssistenteAi() {
-  const [stato, setStato] = useState<{ abilitata: boolean; chiaveConfigurata: boolean; modello: string } | null>(null);
+  const [stato, setStato] = useState<StatoAiUi | null>(null);
   const [accetto, setAccetto] = useState(false);
   const [errore, setErrore] = useState('');
   const [invio, setInvio] = useState(false);
 
-  const carica = () => api.get<any>('/ai/stato').then(setStato).catch((e) => setErrore(e.message));
+  const carica = () => api.get<StatoAiUi>('/ai/stato').then(setStato).catch((e) => setErrore(e.message));
   useEffect(() => { carica(); }, []);
 
   const imposta = async (abilita: boolean) => {
@@ -639,14 +670,18 @@ function AssistenteAi() {
     }
   };
 
+  const accettazione = stato?.accettataIl
+    ? `Informativa v${stato.versioneAccettata} accettata il ${new Date(stato.accettataIl).toLocaleDateString('it-IT')}${stato.accettataDa ? ` da ${stato.accettataDa}` : ''}.`
+    : '';
+
   return (
-    <div className="scheda">
+    <div className="scheda" data-test="assistente-ai">
       <h3 className="!mt-0">Assistente AI</h3>
       <div className="aiuto">
-        Suggerisce gli indicatori di anomalia UIF pertinenti a partire dalla descrizione
-        dell’operatività e prepara bozze dei campi discorsivi (scopo/natura, motivazione
-        dell’astensione). Sono <strong>suggerimenti da rivedere</strong>: ogni valutazione resta
-        del professionista.
+        Suggerisce gli indicatori di anomalia UIF pertinenti, prepara bozze dei campi discorsivi,
+        rende leggibile la motivazione ex art. 20 co. 6 e classifica l’oggetto sociale su richiesta.
+        Sono <strong>suggerimenti da rivedere</strong>: ogni valutazione resta del professionista.
+        Nomi e dati identificativi vengono <strong>sostituiti da segnaposto</strong> prima dell’invio.
       </div>
       {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
       {stato && !stato.chiaveConfigurata && (
@@ -655,30 +690,49 @@ function AssistenteAi() {
           resta possibile ma le funzioni daranno errore finché l’attivazione non è completata.
         </div>
       )}
-      {stato?.abilitata ? (
+      {stato?.abilitata && stato.daRiaccettare && (
+        <div className="space-y-2 text-sm">
+          <div className="riquadro avviso !my-2" data-test="informativa-cambiata">
+            <strong>L’informativa è cambiata: rileggila e conferma.</strong> Le funzioni che usavi
+            restano attive; quelle nuove (motivazione co. 6 leggibile, classificazione dell’oggetto
+            sociale) si sbloccano dopo la conferma della versione {stato.versioneCorrente}.
+            {accettazione && <span className="block text-ink-500 mt-1">{accettazione}</span>}
+          </div>
+          <InformativaAi />
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input type="checkbox" className="!w-4 mt-0.5" data-test="accetto-informativa" checked={accetto} onChange={(e) => setAccetto(e.target.checked)} />
+            <span>Ho riletto l’informativa aggiornata e la confermo per lo studio.</span>
+          </label>
+          <div className="flex gap-2">
+            <button className="btn btn-primary btn-sm" data-test="conferma-informativa" onClick={() => imposta(true)} disabled={!accetto || invio}>
+              {invio ? 'Conferma…' : 'Confermo l’informativa aggiornata'}
+            </button>
+            <button className="btn btn-secondary btn-sm" onClick={() => imposta(false)} disabled={invio}>Disabilita</button>
+          </div>
+        </div>
+      )}
+      {stato?.abilitata && !stato.daRiaccettare && (
         <>
           <p className="text-sm">
             <Badge tone="teal">abilitato</Badge>{' '}
-            <span className="text-ink-500">I testi digitati (senza nominativi) vengono elaborati dal modello {stato.modello} via API Anthropic; nel registro resta solo l’uso della funzione.</span>
+            <span className="text-ink-500">I testi, dopo la sostituzione automatica di nomi e dati identificativi, vengono elaborati dal modello {stato.modello} via API Anthropic; nel registro resta solo l’uso della funzione.</span>
+            {accettazione && <span className="block text-ink-500 mt-1" data-test="accettazione-ai">{accettazione}</span>}
           </p>
+          <details className="text-sm mb-2">
+            <summary className="cursor-pointer text-teal-700">Rileggi l’informativa</summary>
+            <div className="mt-2"><InformativaAi /></div>
+          </details>
           <button className="btn btn-secondary btn-sm" onClick={() => imposta(false)} disabled={invio}>Disabilita</button>
         </>
-      ) : (
+      )}
+      {stato && !stato.abilitata && (
         <div className="space-y-2 text-sm">
-          <div className="rounded-lg bg-ink-50 border border-ink-100 px-4 py-3 space-y-1">
-            <div className="font-semibold text-ink-800">Informativa per l’abilitazione</div>
-            <ul className="list-disc ml-5 text-ink-600 space-y-1">
-              <li>I testi digitati nelle funzioni AI vengono inviati all’API Anthropic (Claude) per la sola elaborazione, senza conservazione né addestramento sui dati.</li>
-              <li>L’interfaccia richiede di <strong>non inserire mai nominativi</strong>, codici fiscali o altri dati identificativi: descrivere i fatti, non le persone.</li>
-              <li>I dati dell’archivio inviati automaticamente sono solo non identificativi (tipo di prestazione, natura del cliente, attività).</li>
-              <li>Nel registro delle attività resta traccia dell’uso della funzione, mai del contenuto.</li>
-            </ul>
-          </div>
+          <InformativaAi />
           <label className="flex items-start gap-2 cursor-pointer">
-            <input type="checkbox" className="!w-4 mt-0.5" checked={accetto} onChange={(e) => setAccetto(e.target.checked)} />
+            <input type="checkbox" className="!w-4 mt-0.5" data-test="accetto-informativa" checked={accetto} onChange={(e) => setAccetto(e.target.checked)} />
             <span>Ho letto l’informativa e abilito l’assistente AI per lo studio.</span>
           </label>
-          <button className="btn btn-primary btn-sm" onClick={() => imposta(true)} disabled={!accetto || invio}>
+          <button className="btn btn-primary btn-sm" data-test="abilita-ai" onClick={() => imposta(true)} disabled={!accetto || invio}>
             {invio ? 'Attivazione…' : 'Abilita l’assistente'}
           </button>
         </div>

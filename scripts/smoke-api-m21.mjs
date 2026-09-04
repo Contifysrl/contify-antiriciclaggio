@@ -13,9 +13,14 @@
  *  3. il suggeritore di indicatori pseudonimizza la descrizione (dizionario dell'intero portafoglio);
  *  4. i segnaposto sono stabili dentro la conversazione;
  *  5. un testo senza identificativi passa invariato (pseudonimi = 0).
+ * AI-04 (informativa v2 con ri-accettazione):
+ *  6. /ai/stato espone versione accettata/corrente; un tenant con la v1 (simulato scrivendo parametri nel
+ *     D1 locale con wrangler) risulta «da riaccettare», le funzioni di prima restano attive; la conferma
+ *     registra la v2 con data e autore, audit ABILITA_AI con la versione.
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { leggiVisura } from '../web/src/lib/visura.ts';
 
@@ -144,6 +149,39 @@ console.log('\n== 4. AI-01 — errori e registro ==');
   const usi = log.filter((v) => v.azione === 'USO_AI');
   verifica('tutti gli usi AI del giro portano il conteggio dei pseudonimi', usi.slice(0, 5).every((v) => typeof dettaglio(v).pseudonimi === 'number'), usi.slice(0, 5).map(dettaglio));
   verifica('nessun USO_AI_RIFIUTATO in un giro pulito', !log.some((v) => v.azione === 'USO_AI_RIFIUTATO'), null);
+}
+
+// ── 5. AI-04 — informativa v2 con ri-accettazione ──
+console.log('\n== 5. AI-04 — informativa versionata ==');
+{
+  const st = await req('GET', '/ai/stato');
+  verifica('stato AI con versione accettata = corrente (2) dopo l’abilitazione di questo giro', st.stato === 200 && st.dati?.versioneAccettata === 2 && st.dati?.versioneCorrente === 2 && st.dati?.daRiaccettare === false, st.dati);
+  verifica('data e autore dell’accettazione', typeof st.dati?.accettataIl === 'string' && typeof st.dati?.accettataDa === 'string', st.dati);
+  const ab = await ultimoAudit('ABILITA_AI');
+  verifica('audit ABILITA_AI con la versione dell’informativa', dettaglio(ab).versioneInformativa === 2, ab);
+
+  // Tenant con la v1: parametri.ai senza versioneInformativa (com'erano fino ad AR-M20). Solo in locale.
+  let simulato = false;
+  try {
+    const sql = path.join(qui, '..', '.wrangler', 'smoke-m21-v1.sql');
+    fs.writeFileSync(sql, `UPDATE tenants SET parametri = json_set(COALESCE(parametri,'{}'), '$.ai', json('{"abilitata":true,"accettataIl":"2026-08-01T10:00:00.000Z","da":"usr_tit"}')) WHERE id = 'ten_demo';\n`);
+    execSync(`npx wrangler d1 execute contify-antiriciclaggio --local --file=${sql}`, { cwd: path.join(qui, '..'), stdio: 'pipe' });
+    simulato = true;
+  } catch (e) { console.log('  (simulazione v1 non riuscita: ' + String(e.message).slice(0, 120) + ')'); }
+  if (simulato) {
+    const st1 = await req('GET', '/ai/stato');
+    verifica('tenant con accettazione precedente → versione 1, da riaccettare', st1.dati?.versioneAccettata === 1 && st1.dati?.daRiaccettare === true, st1.dati);
+    const chat = await req('POST', '/ai/chat', { messaggi: [{ ruolo: 'utente', testo: 'Dove si registra il controllo costante?' }] });
+    verifica('con la v1 le funzioni di prima restano attive (chat 200)', chat.stato === 200, chat.dati);
+    const bozza = await req('POST', '/ai/bozza', { tipo: 'SCOPO_NATURA', fascicoloId: idF, appunti: 'tenuta contabilità' });
+    verifica('con la v1 la bozza classica resta attiva (200)', bozza.stato === 200, bozza.dati);
+    const noAcc = await req('POST', '/ai/abilita', { abilita: true });
+    verifica('la ri-accettazione richiede accetto=true', noAcc.stato === 400, noAcc.dati);
+    const ri = await req('POST', '/ai/abilita', { abilita: true, accetto: true });
+    verifica('ri-accettazione registrata con la versione 2', ri.stato === 200 && ri.dati?.versioneInformativa === 2, ri.dati);
+    const st2 = await req('GET', '/ai/stato');
+    verifica('dopo la conferma: versione 2, niente da riaccettare, data aggiornata', st2.dati?.versioneAccettata === 2 && st2.dati?.daRiaccettare === false && st2.dati?.accettataIl > '2026-08-02', st2.dati);
+  }
 }
 
 console.log(`\nRisultato: ${ok} ok, ${fail} fail`);

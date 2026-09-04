@@ -92,7 +92,7 @@ export function ChatAssistente() {
               <div className="space-y-2">
                 <p className="text-sm text-ink-500">
                   Chiedimi come si fa qualcosa in Contify AR o un orientamento sulla normativa.
-                  <span className="font-semibold"> Non scrivere nominativi o dati di clienti.</span>
+                  <span className="font-semibold"> Descrivi i fatti, non le persone:</span> i nomi dell’archivio e i dati identificativi vengono comunque sostituiti da segnaposto prima dell’invio.
                 </p>
                 {SUGGERIMENTI.map((s) => (
                   <button
