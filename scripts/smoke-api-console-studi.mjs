@@ -17,7 +17,14 @@
  *  6. il registro del nuovo studio parte da STUDIO_ATTIVATO + CREA_UTENTE;
  *  7. la console corregge l'anagrafica (e la vede nel dettaglio) — con gli
  *     stessi controlli di formato;
- *  8. il tenant demo non è stato toccato.
+ *  8. il tenant demo non è stato toccato;
+ *  AR-M21 (CON-01/CON-02, migrazione 0014):
+ *  9. reset password di un utente dalla console: la vecchia non entra più, la nuova sì con cambio richiesto,
+ *     sessioni precedenti revocate, audit con l'operatore, riga in eventi_console; disattiva → login 403,
+ *     riattiva → 200; l'unico amministratore si disattiva solo con «forza»;
+ * 10. cancellazione: studio con un cliente → 409 archivio_non_vuoto con i conteggi; studio vuoto (creato
+ *     apposta) → cancellato, 404 dopo, email riutilizzabile per un nuovo studio, evento STUDIO_ELIMINATO
+ *     con denominazione/P.IVA/email/conteggi/operatore; conferma sbagliata → 400.
  */
 
 const BASE = process.env.BASE ?? 'http://localhost:8787';
@@ -165,6 +172,100 @@ verifica('lo studio vede la nuova denominazione', me2.dati.studio?.denominazione
 console.log('\n== 8. Il tenant demo è intatto ==');
 const demo = (await operatore('GET', '/console/studi')).dati.studi.find((s) => s.id === 'ten_demo');
 verifica('ten_demo ancora presente con i suoi utenti', demo && demo.nUtenti >= 3, demo);
+
+console.log('\n== 9. CON-02: reset password e stato di un utente dalla console ==');
+{
+  const utenti = (await operatore('GET', `/console/studi/${TEN}`)).dati.utenti;
+  const collabRiga = utenti.find((u) => u.ruolo === 'COLLABORATORE');
+  const collabAttore = attore();
+  const collabLogin0 = await collabAttore('POST', '/auth/login', { email: collabRiga.email, password: 'x' });
+  verifica('preparazione: il collaboratore esiste (login con password sconosciuta → 401)', collabLogin0.stato === 401, collabLogin0);
+
+  // Reset del titolare: la sua sessione (titolare) deve cadere.
+  const reset = await operatore('POST', `/console/studi/${TEN}/utenti/${creato.dati.utenteId}/reset-password`, {});
+  verifica('reset → nuova password temporanea mostrata una volta', reset.stato === 200 && typeof reset.dati.passwordTemporanea === 'string' && reset.dati.passwordTemporanea.length >= 10 && typeof reset.dati.emailInviata === 'boolean', reset);
+  const vecchia = await titolare('GET', '/auth/io');
+  verifica('la sessione precedente del titolare è revocata', vecchia.stato === 401, vecchia);
+  const conVecchia = await titolare('POST', '/auth/login', { email: EMAIL, password: NUOVA });
+  verifica('la vecchia password non entra più (401)', conVecchia.stato === 401, conVecchia);
+  const conNuova = await titolare('POST', '/auth/login', { email: EMAIL, password: reset.dati.passwordTemporanea });
+  const ioNuova = await titolare('GET', '/auth/io');
+  verifica('la nuova entra con cambio password richiesto', conNuova.stato === 200 && ioNuova.dati?.utente?.cambioPasswordRichiesto === true, ioNuova.dati);
+  await titolare('POST', '/auth/cambia-password', { attuale: reset.dati.passwordTemporanea, nuova: NUOVA });
+  const auditR = (await titolare('GET', '/audit')).dati ?? [];
+  const vR = auditR.find((v) => v.azione === 'RESET_PASSWORD_UTENTE');
+  verifica('audit RESET_PASSWORD_UTENTE con l’operatore della console', vR && /operatore/.test(vR.dettaglio ?? '') && /console/.test(vR.dettaglio ?? ''), vR);
+  const eventi = (await operatore('GET', `/console/eventi?studio=${TEN}`)).dati.eventi;
+  verifica('eventi_console: riga RESET_PASSWORD_UTENTE per lo studio', eventi.some((e) => e.azione === 'RESET_PASSWORD_UTENTE' && e.tenantId === TEN && e.dettaglio?.email === EMAIL), eventi);
+  const resetIgnoto = await operatore('POST', `/console/studi/${TEN}/utenti/usr_nessuno/reset-password`, {});
+  verifica('utente inesistente → 404', resetIgnoto.stato === 404, resetIgnoto);
+
+  // Disattiva / riattiva il collaboratore.
+  const off = await operatore('POST', `/console/studi/${TEN}/utenti/${collabRiga.id}/stato`, { attivo: false });
+  verifica('disattiva → ok', off.stato === 200 && off.dati.attivo === false, off);
+  const resetOff = await operatore('POST', `/console/studi/${TEN}/utenti/${collabRiga.id}/reset-password`, {});
+  verifica('reset su utente disattivato → 409', resetOff.stato === 409 && resetOff.dati.codice === 'utente_disattivato', resetOff);
+  const on = await operatore('POST', `/console/studi/${TEN}/utenti/${collabRiga.id}/stato`, { attivo: true });
+  verifica('riattiva → ok', on.stato === 200 && on.dati.attivo === true, on);
+  const resetCollab = await operatore('POST', `/console/studi/${TEN}/utenti/${collabRiga.id}/reset-password`, {});
+  const cLogin = await collabAttore('POST', '/auth/login', { email: collabRiga.email, password: resetCollab.dati.passwordTemporanea });
+  verifica('il collaboratore riattivato entra con la password del reset', cLogin.stato === 200, cLogin);
+  const off2 = await operatore('POST', `/console/studi/${TEN}/utenti/${collabRiga.id}/stato`, { attivo: false });
+  const cIo = await collabAttore('GET', '/auth/io');
+  verifica('disattivato di nuovo: sessione caduta (401)', off2.stato === 200 && cIo.stato === 401, cIo);
+  const cLogin2 = await collabAttore('POST', '/auth/login', { email: collabRiga.email, password: resetCollab.dati.passwordTemporanea });
+  verifica('utente disattivato: login respinto', cLogin2.stato === 401 || cLogin2.stato === 403, cLogin2);
+  // L'unico amministratore: 409 senza forza, ok con forza, poi riattivato.
+  const ultimo = await operatore('POST', `/console/studi/${TEN}/utenti/${creato.dati.utenteId}/stato`, { attivo: false });
+  verifica('disattivare l’unico amministratore → 409 ultimo_amministratore', ultimo.stato === 409 && ultimo.dati.codice === 'ultimo_amministratore', ultimo);
+  const forzato = await operatore('POST', `/console/studi/${TEN}/utenti/${creato.dati.utenteId}/stato`, { attivo: false, forza: true });
+  verifica('…con forza → disattivato', forzato.stato === 200 && forzato.dati.attivo === false, forzato);
+  const rientro = await operatore('POST', `/console/studi/${TEN}/utenti/${creato.dati.utenteId}/stato`, { attivo: true });
+  verifica('riattivato (entro i posti a contratto)', rientro.stato === 200 && rientro.dati.attivo === true, rientro);
+  const eventi2 = (await operatore('GET', `/console/eventi?studio=${TEN}`)).dati.eventi;
+  verifica('eventi_console con le righe STATO_UTENTE', eventi2.filter((e) => e.azione === 'STATO_UTENTE').length >= 4, eventi2.length);
+}
+
+console.log('\n== 10. CON-01: cancellazione di uno studio creato per errore ==');
+{
+  // Lo studio Bianchi ha utenti ma nessun cliente: è «vuoto» ai fini dell'archivio. Prima un cliente lo rende non vuoto.
+  await titolare('POST', '/auth/login', { email: EMAIL, password: NUOVA });
+  const cli = await titolare('POST', '/clienti', { tipo: 'PERSONA_FISICA', denominazione: 'Cliente Di Prova' });
+  verifica('preparazione: un cliente nello studio Bianchi', cli.stato === 201, cli);
+  const arch = await operatore('GET', `/console/studi/${TEN}/archivio`);
+  verifica('GET /archivio: non vuoto, 1 cliente', arch.stato === 200 && arch.dati.vuoto === false && arch.dati.conteggi.clienti === 1, arch.dati);
+  const noConf = await operatore('DELETE', `/console/studi/${TEN}`, { conferma: 'Studio Sbagliato' });
+  verifica('conferma sbagliata → 400', noConf.stato === 400 && noConf.dati.codice === 'conferma_errata', noConf);
+  const denominazioneAttuale = (await operatore('GET', `/console/studi/${TEN}`)).dati.studio.denominazione;
+  const pieno = await operatore('DELETE', `/console/studi/${TEN}`, { conferma: denominazioneAttuale });
+  verifica('studio con un cliente → 409 archivio_non_vuoto con i conteggi', pieno.stato === 409 && pieno.dati.codice === 'archivio_non_vuoto' && pieno.dati.conteggi.clienti === 1, pieno);
+  const ancora = await operatore('GET', `/console/studi/${TEN}`);
+  verifica('lo studio è ancora lì', ancora.stato === 200, ancora.stato);
+
+  // Uno studio creato per errore: nasce e si cancella.
+  const EMAIL_ERR = `errore.${suffisso}@studioerrato.test`;
+  const err = await operatore('POST', '/console/studi', { ...corpoBase(), denominazione: `Studio Errato ${suffisso}`, codiceFiscale: '98765432109', partitaIva: '98765432109', professionista: { ...corpoBase().professionista, email: EMAIL_ERR } });
+  verifica('studio creato per errore', err.stato === 201, err);
+  const TEN_ERR = err.dati.id;
+  const archVuoto = await operatore('GET', `/console/studi/${TEN_ERR}/archivio`);
+  verifica('è vuoto (zero clienti/fascicoli/documenti/oggetti R2)', archVuoto.dati.vuoto === true, archVuoto.dati);
+  const del = await operatore('DELETE', `/console/studi/${TEN_ERR}`, { conferma: `Studio Errato ${suffisso}` });
+  verifica('cancellato: 1 utente eliminato, email liberata', del.stato === 200 && del.dati.utentiEliminati === 1 && del.dati.emailLiberate.includes(EMAIL_ERR) && /^evc_/.test(del.dati.eventoId), del);
+  const dopo = await operatore('GET', `/console/studi/${TEN_ERR}`);
+  verifica('dopo: 404', dopo.stato === 404, dopo.stato);
+  const inElenco = (await operatore('GET', '/console/studi')).dati.studi.some((s) => s.id === TEN_ERR);
+  verifica('non è più in elenco', !inElenco);
+  const loginErr = await attore()('POST', '/auth/login', { email: EMAIL_ERR, password: err.dati.passwordTemporanea });
+  verifica('il suo utente non entra più (401)', loginErr.stato === 401, loginErr);
+  const eventi = (await operatore('GET', `/console/eventi?studio=${TEN_ERR}`)).dati.eventi;
+  const ev = eventi.find((e) => e.azione === 'STUDIO_ELIMINATO');
+  verifica('eventi_console: STUDIO_ELIMINATO con denominazione, P.IVA, email degli utenti, conteggi e operatore',
+    ev && ev.dettaglio.denominazione === `Studio Errato ${suffisso}` && ev.dettaglio.partitaIva === '98765432109' && ev.dettaglio.utenti?.[0]?.email === EMAIL_ERR && ev.dettaglio.conteggi?.clienti === 0 && ev.operatore, ev);
+  const riuso = await operatore('POST', '/console/studi', { ...corpoBase(), denominazione: `Studio Rifatto ${suffisso}`, codiceFiscale: '98765432109', partitaIva: '98765432109', professionista: { ...corpoBase().professionista, email: EMAIL_ERR } });
+  verifica('la stessa email serve per un nuovo studio (era unica su tutta la piattaforma)', riuso.stato === 201, riuso);
+  const delIgnoto = await operatore('DELETE', '/console/studi/ten_nessuno', { conferma: 'x' });
+  verifica('studio inesistente → 404', delIgnoto.stato === 404, delIgnoto.stato);
+}
 
 console.log(`\nEsito: ${passati} ok, ${falliti} falliti`);
 process.exit(falliti ? 1 : 0);

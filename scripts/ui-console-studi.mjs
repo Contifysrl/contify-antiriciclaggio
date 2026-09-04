@@ -7,6 +7,8 @@
  * Dimostra: il bottone c'è, il modal crea lo studio col primo professionista,
  * la password temporanea si vede una volta, lo studio compare in elenco, il
  * modal dello studio salva l'anagrafica, e il nuovo titolare entra nell'app.
+ * AR-M21: nel modal dello studio, «Reimposta password» mostra la nuova password una volta, «Disattiva»/«Riattiva»
+ * cambiano lo stato; «Elimina lo studio» chiede la denominazione e toglie lo studio vuoto dall'elenco.
  */
 import { chromium } from 'playwright';
 
@@ -87,6 +89,32 @@ await p2.click('button[type=submit], button:has-text("Accedi"), button:has-text(
 await p2.waitForSelector('text=Scegli la tua password', { timeout: 10000 });
 verifica('al primo accesso è chiesto il cambio password', true);
 await p2.screenshot({ path: '/tmp/ui-cs-5-primo-accesso.png' });
+
+// ── AR-M21 CON-02/CON-01 nel modal dello studio ──
+console.log('\n== AR-M21 — utenti dalla console e cancellazione dello studio vuoto ==');
+await p.bringToFront();
+await p.click(`td:has-text("${NOME} & Partner")`);
+await p.waitForSelector('[data-test=utenti-studio] table');
+verifica('elenco utenti nel modal con «Reimposta password» e «Disattiva»', (await p.locator('[data-test=reimposta-password]').count()) >= 1 && (await p.locator('[data-test=disattiva-utente]').count()) >= 1);
+await p.click('[data-test=reimposta-password] >> nth=0');
+await p.waitForSelector('[data-test=conferma-reset]');
+await p.click('[data-test=conferma-reset]');
+await p.waitForSelector('[data-test=password-temporanea-reset]');
+const pwdReset = await p.textContent('[data-test=password-temporanea-reset]');
+verifica('nuova password temporanea mostrata una volta', pwdReset.length >= 10 && pwdReset !== pwd);
+await p.screenshot({ path: '/tmp/ui-cs-6-reset.png', fullPage: true });
+await p.click(`${modal}:has-text("Password reimpostata") button:has-text("Chiudi")`);
+await p.waitForTimeout(300);
+verifica('lo studio vuoto è cancellabile («Elimina lo studio»)', (await p.locator('[data-test=apri-elimina-studio]').count()) === 1);
+await p.click('[data-test=apri-elimina-studio]');
+await p.fill('[data-test=conferma-denominazione]', 'nome sbagliato');
+verifica('con la denominazione sbagliata il pulsante resta spento', await p.locator('[data-test=conferma-elimina-studio]').isDisabled());
+await p.fill('[data-test=conferma-denominazione]', `${NOME} & Partner`);
+await p.screenshot({ path: '/tmp/ui-cs-7-elimina.png', fullPage: true });
+await p.click('[data-test=conferma-elimina-studio]');
+await p.waitForTimeout(1500);
+verifica('lo studio non è più in elenco', (await p.locator(`td:has-text("${NOME} & Partner")`).count()) === 0);
+await p.screenshot({ path: '/tmp/ui-cs-8-eliminato.png', fullPage: true });
 
 await b.close();
 console.log(`\n${ok} ok / ${fail} FAIL`);

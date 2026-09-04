@@ -40,6 +40,7 @@ import {
 import { scriviAudit, verificaCatenaAudit } from './lib/audit';
 import { backupSchedulato, chiaveDelTenant, prefissoTenant, runBackupTenant, type TipoBackupTenant } from './lib/backup';
 import { eseguiEliminaArchivio, eseguiRipristino, RipristinoError } from './lib/ripristino';
+import { conteggiArchivioStudio, eliminaStudioVuoto, leggiEventiConsole, scriviEventoConsole } from './lib/console-studi';
 import { SOGLIE_AVVISO_CANONE, bloccoPerStato, giorniAllaScadenza, statoValido } from './lib/licenza';
 import { cercaAnagrafica, limiteSuperato } from './lib/lookup';
 import { aggiornaListeSanzioni, caricaListe, eseguiScreeningTenant, listeDaAggiornare, screeningSchedulato } from './lib/sanzioni';
@@ -4252,6 +4253,104 @@ consoleApp.get('/studi/:id', async (c) => {
      FROM utenti WHERE tenant_id = ? ORDER BY ruolo = 'TITOLARE' DESC, nome`,
   ).bind(t.id).all<any>();
   return c.json({ studio: t, utenti: utenti.map((u: any) => ({ ...u, amministratore: !!u.amministratore, attivo: !!u.attivo })) });
+});
+
+// ── AR-M21 CON-01: cancellazione di uno studio creato per errore ─────
+// Solo se vuoto (zero clienti/fascicoli/documenti, su D1 e su R2 fuori dal
+// transito della coda): altrimenti 409 con i conteggi — per uno studio vero
+// la via resta «cessato» + backup. La denominazione va ridigitata.
+consoleApp.get('/studi/:id/archivio', async (c) => {
+  const t = await c.env.DB.prepare('SELECT id FROM tenants WHERE id = ?').bind(c.req.param('id')).first<any>();
+  if (!t) return c.json({ errore: 'Studio non trovato' }, 404);
+  const conteggi = await conteggiArchivioStudio(c.env, t.id);
+  return c.json({ conteggi, vuoto: Object.values(conteggi).every((n) => n === 0) });
+});
+
+consoleApp.delete('/studi/:id', async (c) => {
+  const o = c.get('operatore');
+  const t = await c.env.DB.prepare('SELECT id, denominazione, partita_iva, codice_fiscale, stato FROM tenants WHERE id = ?').bind(c.req.param('id')).first<any>();
+  if (!t) return c.json({ errore: 'Studio non trovato' }, 404);
+  const b = await c.req.json<any>().catch(() => ({}));
+  if (String(b.conferma ?? '').trim() !== String(t.denominazione).trim()) {
+    return c.json({ errore: 'Per cancellare lo studio ridigita la sua denominazione esatta', codice: 'conferma_errata' }, 400);
+  }
+  const conteggi = await conteggiArchivioStudio(c.env, t.id);
+  if (Object.values(conteggi).some((n) => n > 0)) {
+    return c.json({
+      errore: 'Lo studio non è vuoto: i dati dell’adeguata verifica appartengono al professionista e vanno conservati (art. 31). Segnalo «cessato» e concorda con lo studio l’esportazione; la cancellazione dalla console vale solo per gli studi creati per errore.',
+      codice: 'archivio_non_vuoto', conteggi,
+    }, 409);
+  }
+  const esito = await eliminaStudioVuoto(c.env, t, o.email, conteggi);
+  return c.json({ ok: true, ...esito });
+});
+
+consoleApp.get('/eventi', async (c) => {
+  const tenantId = c.req.query('studio') || null;
+  return c.json({ eventi: await leggiEventiConsole(c.env.DB, tenantId, Number(c.req.query('limite') ?? 50) || 50) });
+});
+
+// ── AR-M21 CON-02: reset password e stato di un utente dalla console ──
+// Il caso reale è il lock-out: l'unico amministratore disattivato o con la
+// password persa. Stesso giro del reset lato studio (password temporanea
+// mostrata una sola volta, sessioni revocate, email best-effort), con
+// l'operatore nell'audit del tenant e la riga in eventi_console.
+consoleApp.post('/studi/:id/utenti/:utenteId/reset-password', async (c) => {
+  const o = c.get('operatore');
+  const tenantId = c.req.param('id');
+  const t = await c.env.DB.prepare('SELECT id, denominazione FROM tenants WHERE id = ?').bind(tenantId).first<any>();
+  if (!t) return c.json({ errore: 'Studio non trovato' }, 404);
+  const target = await c.env.DB.prepare('SELECT * FROM utenti WHERE id = ? AND tenant_id = ?').bind(c.req.param('utenteId'), tenantId).first<any>();
+  if (!target) return c.json({ errore: 'Utente non trovato' }, 404);
+  if (target.attivo !== 1) return c.json({ errore: 'L’utente è disattivato: riattivalo prima di reimpostare la password', codice: 'utente_disattivato' }, 409);
+
+  const passwordTemporanea = generaPasswordTemporanea();
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE utenti SET password_hash = ?, cambio_password_richiesto = 1 WHERE id = ?').bind(await hashPassword(passwordTemporanea), target.id),
+    c.env.DB.prepare('DELETE FROM sessioni WHERE utente_id = ?').bind(target.id),
+    c.env.DB.prepare('DELETE FROM password_reset_token WHERE utente_id = ?').bind(target.id),
+  ]);
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: null, azione: 'RESET_PASSWORD_UTENTE', entita: 'utenti', entitaId: target.id,
+    dettaglio: { operatore: o.email, origine: 'console' },
+  });
+  await scriviEventoConsole(c.env.DB, { operatore: o.email, azione: 'RESET_PASSWORD_UTENTE', tenantId, dettaglio: { utenteId: target.id, email: target.email } });
+  const emailInviata = await inviaEmailBenvenuto(c.env, {
+    destinatario: target.email, nome: target.nome, passwordTemporanea, studio: t.denominazione,
+  }).catch(() => false);
+  return c.json({ passwordTemporanea, emailInviata });
+});
+
+consoleApp.post('/studi/:id/utenti/:utenteId/stato', async (c) => {
+  const o = c.get('operatore');
+  const tenantId = c.req.param('id');
+  const t = await c.env.DB.prepare('SELECT id FROM tenants WHERE id = ?').bind(tenantId).first<any>();
+  if (!t) return c.json({ errore: 'Studio non trovato' }, 404);
+  const target = await c.env.DB.prepare('SELECT * FROM utenti WHERE id = ? AND tenant_id = ?').bind(c.req.param('utenteId'), tenantId).first<any>();
+  if (!target) return c.json({ errore: 'Utente non trovato' }, 404);
+  const b = await c.req.json<any>().catch(() => ({}));
+  const attivo = Boolean(b.attivo);
+  if ((target.attivo === 1) === attivo) return c.json({ ok: true, attivo });
+
+  if (attivo && target.ruolo === 'TITOLARE') {
+    // Riattivare un professionista occupa un posto del contratto: la console
+    // può alzare i posti, non scavalcarli in silenzio.
+    const esauriti = await postiProfessionistaEsauriti(c.env.DB, tenantId, target.id);
+    if (esauriti) return c.json({ errore: esauriti, postiEsauriti: true }, 409);
+  }
+  if (!attivo && target.amministratore === 1 && (await altriAmministratoriAttivi(c.env.DB, tenantId, target.id)) === 0 && b.forza !== true) {
+    return c.json({ errore: 'È l’unico amministratore attivo dello studio: disattivandolo nessuno potrà più gestire utenti e licenza. Ripeti con «forza» se è voluto.', codice: 'ultimo_amministratore' }, 409);
+  }
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE utenti SET attivo = ? WHERE id = ?').bind(attivo ? 1 : 0, target.id),
+    ...(attivo ? [] : [c.env.DB.prepare('DELETE FROM sessioni WHERE utente_id = ?').bind(target.id)]),
+  ]);
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: null, azione: 'MODIFICA_UTENTE', entita: 'utenti', entitaId: target.id,
+    dettaglio: { attivo, operatore: o.email, origine: 'console' },
+  });
+  await scriviEventoConsole(c.env.DB, { operatore: o.email, azione: 'STATO_UTENTE', tenantId, dettaglio: { utenteId: target.id, email: target.email, attivo } });
+  return c.json({ ok: true, attivo });
 });
 
 consoleApp.post('/studi/:id/anagrafica', async (c) => {

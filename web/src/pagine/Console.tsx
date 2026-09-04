@@ -794,6 +794,9 @@ function StudioModal({ studio, onChiudi }: { studio: StudioRiga; onChiudi: (rica
         </div>
       </form>
 
+      <UtentiStudio studioId={studio.id} onCambiato={() => setToccato(true)} />
+      <EliminaStudio studio={studio} denominazione={titolo} onEliminato={() => onChiudi(true)} />
+
       {confermaStato && (
         <Modal title={ETICHETTA_CONFERMA[confermaStato].titolo} onClose={() => setConfermaStato(null)}>
           <div className="space-y-3 text-sm">
@@ -808,5 +811,164 @@ function StudioModal({ studio, onChiudi }: { studio: StudioRiga; onChiudi: (rica
         </Modal>
       )}
     </Modal>
+  );
+}
+
+// ── AR-M21 CON-02: utenti dello studio dalla console (reset password, disattiva/riattiva) ──
+interface UtenteStudioRiga { id: string; email: string; nome: string; ruolo: string; amministratore: boolean; attivo: boolean; ultimoAccesso: string | null }
+
+function UtentiStudio({ studioId, onCambiato }: { studioId: string; onCambiato: () => void }) {
+  const [utenti, setUtenti] = useState<UtenteStudioRiga[] | null>(null);
+  const [errore, setErrore] = useState('');
+  const [inCorso, setInCorso] = useState<string | null>(null);
+  const [reset, setReset] = useState<{ utente: UtenteStudioRiga; passwordTemporanea: string; emailInviata: boolean } | null>(null);
+  const [confermaReset, setConfermaReset] = useState<UtenteStudioRiga | null>(null);
+  const [copiato, setCopiato] = useState(false);
+
+  const carica = () => api.get<{ utenti: UtenteStudioRiga[] }>(`/console/studi/${studioId}`).then((r) => setUtenti(r.utenti)).catch((e) => setErrore(e.message));
+  useEffect(() => { carica(); /* eslint-disable-next-line */ }, [studioId]);
+
+  const reimposta = async (u: UtenteStudioRiga) => {
+    setErrore(''); setInCorso(u.id); setConfermaReset(null);
+    try {
+      const r = await api.post<{ passwordTemporanea: string; emailInviata: boolean }>(`/console/studi/${studioId}/utenti/${u.id}/reset-password`, {});
+      setReset({ utente: u, ...r });
+      onCambiato();
+    } catch (e) { setErrore((e as Error).message); } finally { setInCorso(null); }
+  };
+
+  const stato = async (u: UtenteStudioRiga, attivo: boolean, forza = false) => {
+    setErrore(''); setInCorso(u.id);
+    try {
+      await api.post(`/console/studi/${studioId}/utenti/${u.id}/stato`, { attivo, forza });
+      await carica();
+      onCambiato();
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (!forza && /unico amministratore/.test(msg) && window.confirm(`${msg}\n\nProcedere comunque?`)) return stato(u, attivo, true);
+      setErrore(msg);
+    } finally { setInCorso(null); }
+  };
+
+  const copia = async () => {
+    if (!reset) return;
+    try { await navigator.clipboard.writeText(`${reset.utente.email}\n${reset.passwordTemporanea}`); setCopiato(true); } catch { /* niente */ }
+  };
+
+  return (
+    <div className="mt-5 pt-5 border-t border-ink-100 text-sm" data-test="utenti-studio">
+      <div className="font-semibold text-ink-700 mb-2">Utenti dello studio</div>
+      {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
+      {!utenti && !errore && <Spinner />}
+      {utenti && (
+        <table className="w-full text-sm">
+          <thead><tr className="text-left text-xs text-ink-400"><th className="py-1">Nome</th><th>Email</th><th>Ruolo</th><th>Stato</th><th></th></tr></thead>
+          <tbody>
+            {utenti.map((u) => (
+              <tr key={u.id} className="border-t border-ink-100" data-test={`utente-${u.email}`}>
+                <td className="py-1.5">{u.nome}{u.amministratore && <span className="text-[10px] text-amber-700 ml-1">amministratore</span>}</td>
+                <td className="mono text-xs">{u.email}</td>
+                <td className="text-xs">{u.ruolo.toLowerCase()}</td>
+                <td><Badge tone={u.attivo ? 'teal' : 'red'}>{u.attivo ? 'attivo' : 'disattivato'}</Badge></td>
+                <td className="text-right whitespace-nowrap">
+                  {u.attivo && (
+                    <button type="button" className="btn btn-secondary btn-sm mr-1" data-test="reimposta-password" disabled={inCorso === u.id} onClick={() => setConfermaReset(u)}>Reimposta password</button>
+                  )}
+                  <button type="button" className={`btn btn-secondary btn-sm ${u.attivo ? '!text-red-700' : ''}`} data-test={u.attivo ? 'disattiva-utente' : 'riattiva-utente'} disabled={inCorso === u.id} onClick={() => stato(u, !u.attivo)}>
+                    {u.attivo ? 'Disattiva' : 'Riattiva'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <div className="aiuto mt-2">
+        Per il lock-out: l'unico amministratore che ha perso la password o è stato disattivato. Il reset revoca le sessioni aperte
+        e al primo accesso la password va cambiata; l'email di benvenuto è best-effort. Ogni operazione resta nel registro dello
+        studio (con l'operatore) e negli eventi della console.
+      </div>
+
+      {confermaReset && (
+        <Modal title={`Reimpostare la password di ${confermaReset.nome}?`} onClose={() => setConfermaReset(null)}>
+          <div className="space-y-3 text-sm">
+            <p>La password attuale smette di valere subito, le sessioni aperte vengono chiuse. La nuova password temporanea compare qui una volta sola.</p>
+            <div className="flex justify-end gap-2">
+              <button className="btn btn-secondary" onClick={() => setConfermaReset(null)}>Annulla</button>
+              <button className="btn btn-primary" data-test="conferma-reset" onClick={() => reimposta(confermaReset)}>Reimposta</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {reset && (
+        <Modal title={`Password reimpostata — ${reset.utente.nome}`} onClose={() => { setReset(null); setCopiato(false); }}>
+          <div className="space-y-3 text-sm">
+            <div className={`riquadro ${reset.emailInviata ? 'info' : 'avviso'} !my-0`}>
+              {reset.emailInviata ? <>L'email con le nuove credenziali è partita verso <strong>{reset.utente.email}</strong>.</> : <>L'email <strong>non è partita</strong>: comunica la password a voce o per altra via.</>}
+            </div>
+            <div className="bg-ink-100 rounded-lg px-4 py-3 mono text-sm">
+              <div>Email: <strong>{reset.utente.email}</strong></div>
+              <div>Password temporanea: <strong data-test="password-temporanea-reset">{reset.passwordTemporanea}</strong></div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn btn-secondary btn-sm" onClick={copia}>{copiato ? 'Copiato' : 'Copia credenziali'}</button>
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => { setReset(null); setCopiato(false); }}>Chiudi</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── AR-M21 CON-01: cancellazione di uno studio creato per errore (solo se vuoto) ──
+function EliminaStudio({ studio, denominazione, onEliminato }: { studio: StudioRiga; denominazione: string; onEliminato: () => void }) {
+  const [archivio, setArchivio] = useState<{ conteggi: Record<string, number>; vuoto: boolean } | null>(null);
+  const [aperto, setAperto] = useState(false);
+  const [conferma, setConferma] = useState('');
+  const [errore, setErrore] = useState('');
+  const [invio, setInvio] = useState(false);
+
+  useEffect(() => {
+    api.get<{ conteggi: Record<string, number>; vuoto: boolean }>(`/console/studi/${studio.id}/archivio`).then(setArchivio).catch(() => setArchivio(null));
+  }, [studio.id]);
+
+  const elimina = async () => {
+    setErrore(''); setInvio(true);
+    try {
+      await api.elimina(`/console/studi/${studio.id}`, { conferma: conferma.trim() });
+      onEliminato();
+    } catch (e) { setErrore((e as Error).message); } finally { setInvio(false); }
+  };
+
+  const c = archivio?.conteggi ?? {};
+  const riepilogo = archivio ? `${c.clienti ?? 0} clienti · ${c.fascicoli ?? 0} fascicoli · ${c.documenti ?? 0} documenti · ${c.oggettiR2 ?? 0} file` : '…';
+
+  return (
+    <div className="mt-5 pt-5 border-t border-ink-100 text-sm" data-test="elimina-studio">
+      <div className="font-semibold text-ink-700 mb-1">Studio creato per errore</div>
+      <div className="aiuto">
+        La cancellazione dalla console vale solo per uno studio <strong>vuoto</strong> (archivio: {riepilogo}): libera le email dei suoi utenti e
+        cancella i file. Uno studio con dati si segna «cessato» e si esporta: i dati dell'adeguata verifica appartengono al professionista
+        e vanno conservati dieci anni (art. 31). La traccia resta negli eventi della console.
+      </div>
+      {archivio?.vuoto && !aperto && (
+        <button type="button" className="btn btn-secondary btn-sm !text-red-700 mt-2" data-test="apri-elimina-studio" onClick={() => setAperto(true)}>Elimina lo studio</button>
+      )}
+      {archivio && !archivio.vuoto && <div className="text-xs text-ink-500 mt-2" data-test="elimina-non-vuoto">Non cancellabile: l'archivio non è vuoto.</div>}
+      {aperto && (
+        <div className="mt-2 space-y-2 riquadro critico">
+          {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
+          <label className="label">Per confermare ridigita la denominazione: <span className="mono normal-case">{denominazione}</span></label>
+          <input className="input" data-test="conferma-denominazione" value={conferma} onChange={(e) => setConferma(e.target.value)} placeholder={denominazione} />
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setAperto(false); setConferma(''); }}>Annulla</button>
+            <button type="button" className="btn btn-primary btn-sm !bg-red-700" data-test="conferma-elimina-studio" disabled={invio || conferma.trim() !== denominazione.trim()} onClick={elimina}>
+              {invio ? 'Cancellazione…' : 'Elimina definitivamente'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
