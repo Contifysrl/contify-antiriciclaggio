@@ -48,6 +48,7 @@ import { registraTitolari } from './lib/titolarita';
 import { TIPI_CLIENTE, aggiornaClienteDaVisura, clienteDoppione, creaClienteDaVisura, risolviProfessionista } from './lib/da-visura';
 import { leggiProposte, propostaTitolarita, registraProposta, salvaCompagine, screeningCompagine, type CaricaIn, type SocioIn } from './lib/compagine';
 import { ErroreAi, MODELLO_DEFAULT, aiAbilitata, generaBozza, rispostaChat, suggerisciIndicatori } from './lib/ai';
+import { dizionarioTenant } from './lib/pseudonimi';
 import { parametriTenant, propostaFascicolo, tabellaProvince } from './lib/proposta-fascicolo';
 import { completezzaStudio } from './lib/completezza';
 import { accodaVisure, applicaTuttoCoda, applicaVoceCoda, caricaPdfCoda, leggiCoda, scartaVoceCoda } from './lib/coda';
@@ -1501,6 +1502,23 @@ async function tenantConAiAbilitata(c: Ctx): Promise<boolean> {
   return aiAbilitata(t?.parametri);
 }
 
+/**
+ * Esito comune delle chiamate AI (AI-01): nel registro resta l'uso con il
+ * solo CONTEGGIO dei segnaposto; se la cintura di sicurezza ferma la
+ * chiamata (422) si registra `USO_AI_RIFIUTATO` con i tipi residui, mai il
+ * contenuto.
+ */
+async function rispostaErroreAi(c: Ctx, e: unknown, funzione: string) {
+  if (!(e instanceof ErroreAi)) throw e;
+  if (e.codice === 'dati_identificativi') {
+    await scriviAudit(c.env.DB, {
+      tenantId: c.get('tenantId'), utenteId: c.get('utente').id, azione: 'USO_AI_RIFIUTATO',
+      dettaglio: { funzione, residui: e.residui ?? [] }, ip: c.get('ip'),
+    });
+  }
+  return c.json({ errore: e.message, ...(e.codice ? { codice: e.codice } : {}) }, e.status as 400);
+}
+
 api.get('/ai/stato', async (c) => {
   return c.json({
     abilitata: await tenantConAiAbilitata(c),
@@ -1537,15 +1555,16 @@ api.post('/ai/indicatori', puoVedereSos, async (c) => {
     return c.json({ errore: 'Descrivi l’operatività con qualche dettaglio in più (senza nominativi): almeno una frase.' }, 400);
   }
   try {
-    const suggerimenti = await suggerisciIndicatori(c.env, descrizione);
+    // Dizionario dell'intero portafoglio: la descrizione di un'operatività può nominare chiunque.
+    const dizionario = await dizionarioTenant(c.env, c.get('tenantId'));
+    const { esito: suggerimenti, pseudonimi } = await suggerisciIndicatori(c.env, descrizione, dizionario);
     await scriviAudit(c.env.DB, {
       tenantId: c.get('tenantId'), utenteId: c.get('utente').id, azione: 'USO_AI',
-      dettaglio: { funzione: 'indicatori_uif', suggerimenti: suggerimenti.length }, ip: c.get('ip'),
+      dettaglio: { funzione: 'indicatori_uif', suggerimenti: suggerimenti.length, pseudonimi }, ip: c.get('ip'),
     });
-    return c.json({ suggerimenti });
+    return c.json({ suggerimenti, pseudonimi });
   } catch (e) {
-    if (e instanceof ErroreAi) return c.json({ errore: e.message }, e.status as 400);
-    throw e;
+    return rispostaErroreAi(c, e, 'indicatori_uif');
   }
 });
 
@@ -1563,12 +1582,14 @@ api.post('/ai/bozza', puoScrivere, async (c) => {
   // Il contesto arriva dal DATABASE, mai dal client: solo campi non
   // identificativi (prestazione, natura, attività), mai denominazioni.
   const contesto: any = { appunti: String(b.appunti ?? '').slice(0, 2000) };
+  let clienteId: string | undefined;
   if (b.fascicoloId) {
     const f = await c.env.DB.prepare(
-      `SELECT f.prestazione_descrizione, f.tipo_rapporto, f.importo_operazione, cl.tipo AS natura_cliente, cl.attivita_prevalente
+      `SELECT f.cliente_id, f.prestazione_descrizione, f.tipo_rapporto, f.importo_operazione, cl.tipo AS natura_cliente, cl.attivita_prevalente
        FROM fascicoli f JOIN clienti cl ON cl.id = f.cliente_id WHERE f.id = ? AND f.tenant_id = ?`,
     ).bind(String(b.fascicoloId), tenantId).first<any>();
     if (f) {
+      clienteId = String(f.cliente_id);
       contesto.prestazione = f.prestazione_descrizione;
       contesto.tipoRapporto = f.tipo_rapporto;
       contesto.importo = f.importo_operazione;
@@ -1579,15 +1600,16 @@ api.post('/ai/bozza', puoScrivere, async (c) => {
   if (tipo === 'MOTIVAZIONE_ASTENSIONE') contesto.fondamento = String(b.fondamento ?? '');
 
   try {
-    const bozza = await generaBozza(c.env, tipo, contesto);
+    // Dizionario del cliente del fascicolo (più i professionisti dello studio); senza fascicolo, tutto il portafoglio.
+    const dizionario = await dizionarioTenant(c.env, tenantId, clienteId ? { clienteId } : {});
+    const { esito: bozza, pseudonimi } = await generaBozza(c.env, tipo, contesto, dizionario);
     await scriviAudit(c.env.DB, {
       tenantId, utenteId: c.get('utente').id, azione: 'USO_AI',
-      dettaglio: { funzione: tipo.toLowerCase() }, ip: c.get('ip'),
+      dettaglio: { funzione: tipo.toLowerCase(), pseudonimi }, ip: c.get('ip'),
     });
-    return c.json({ bozza });
+    return c.json({ bozza, pseudonimi });
   } catch (e) {
-    if (e instanceof ErroreAi) return c.json({ errore: e.message }, e.status as 400);
-    throw e;
+    return rispostaErroreAi(c, e, tipo.toLowerCase());
   }
 });
 
@@ -1609,15 +1631,16 @@ api.post('/ai/chat', async (c) => {
     return c.json({ errore: 'Scrivi una domanda' }, 400);
   }
   try {
-    const risposta = await rispostaChat(c.env, validi);
+    // Chat: dizionario dell'intero portafoglio dello studio.
+    const dizionario = await dizionarioTenant(c.env, c.get('tenantId'));
+    const { esito: risposta, pseudonimi } = await rispostaChat(c.env, validi, dizionario);
     await scriviAudit(c.env.DB, {
       tenantId: c.get('tenantId'), utenteId: c.get('utente').id, azione: 'USO_AI',
-      dettaglio: { funzione: 'chat' }, ip: c.get('ip'),
+      dettaglio: { funzione: 'chat', pseudonimi }, ip: c.get('ip'),
     });
-    return c.json({ risposta });
+    return c.json({ risposta, pseudonimi });
   } catch (e) {
-    if (e instanceof ErroreAi) return c.json({ errore: e.message }, e.status as 400);
-    throw e;
+    return rispostaErroreAi(c, e, 'chat');
   }
 });
 

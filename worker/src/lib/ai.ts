@@ -12,7 +12,11 @@
 //    Impostazioni accettando l'informativa (parametri.ai sul tenant);
 //  - all'API esterna arrivano solo i testi digitati e i candidati
 //    normativi: MAI nominativi, codici fiscali o dati dell'archivio
-//    identificativi del cliente. L'interfaccia lo impone e lo ricorda;
+//    identificativi del cliente. Da AR-M21 (AI-01) non è più solo
+//    un'avvertenza: ogni testo passa dallo strato di pseudonimizzazione
+//    (`pseudonimi.ts`) — dizionario di contesto del tenant + pattern —
+//    e la cintura di sicurezza in `chiamaClaude` blocca la chiamata (422)
+//    se resta un identificativo; la ri-sostituzione avviene qui nel worker;
 //  - nel registro resta solo L'USO della funzione (mai il contenuto);
 //  - niente conservazione lato fornitore oltre l'elaborazione (API
 //    Anthropic senza training sui dati; DPA disponibile).
@@ -26,6 +30,7 @@
 import type { Env } from './tipi';
 import { INDICATORI_UIF_2023 } from '../domain/indicatori-uif';
 import { SUB_INDICI_UIF_2023 } from '../domain/sub-indici-uif';
+import { DIZIONARIO_VUOTO, Pseudonimizzatore, identificativiResidui, type Dizionario } from './pseudonimi';
 
 export const MODELLO_DEFAULT = 'claude-sonnet-4-5';
 
@@ -41,7 +46,49 @@ export function aiAbilitata(parametriGrezzi: string | null | undefined): boolean
 
 // ── Chiamata al modello ────────────────────────────────────────
 
-async function chiamaClaude(env: Env, sistema: string, utente: string, maxTokens: number): Promise<string> {
+/**
+ * Nota aggiunta a ogni prompt di sistema: il modello vede segnaposto al
+ * posto di persone e dati, e deve usarli tali e quali.
+ */
+const NOTA_SEGNAPOSTO =
+  ' Nel testo possono comparire segnaposto fra parentesi quadre come [PF_1] (persona fisica), [PG_1] (società o ente), ' +
+  '[CF_1], [PIVA_1], [IBAN_1], [EMAIL_1], [TEL_1], [INDIRIZZO_1]: sono dati sostituiti per riservatezza. ' +
+  'Usali esattamente come sono, senza modificarli, senza cercare di indovinare cosa rappresentano e senza inventarne di nuovi.';
+
+export interface ChiamataClaude {
+  sistema: string;
+  /** Un solo turno utente… */
+  utente?: string;
+  /** …oppure la conversazione (chat). */
+  messaggi?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  maxTokens: number;
+  /** Dizionario di contesto della chiamata: serve alla cintura di sicurezza. */
+  dizionario?: Dizionario;
+}
+
+/** Testi forniti dall'utente (o dall'archivio) che DEVONO essere già pseudonimizzati. */
+function testiDaControllare(c: ChiamataClaude): string[] {
+  return c.messaggi ? c.messaggi.map((m) => m.content) : [c.utente ?? ''];
+}
+
+/**
+ * Cintura di sicurezza (AI-01): prima dell'invio si ricontrolla ogni testo
+ * contro il dizionario e i pattern. Se resta un identificativo la chiamata
+ * NON parte. Vale anche con le fixture, così i test la esercitano.
+ */
+export function controllaPayload(c: ChiamataClaude): void {
+  const residui = new Set<string>();
+  for (const t of testiDaControllare(c)) for (const r of identificativiResidui(t, c.dizionario ?? DIZIONARIO_VUOTO)) residui.add(r);
+  if (residui.size) {
+    throw new ErroreAi(
+      'Nel testo restano dati identificativi (' + [...residui].join(', ') + '): la richiesta non è stata inviata. Riformula senza nominativi, codici fiscali o recapiti.',
+      422, 'dati_identificativi', [...residui],
+    );
+  }
+}
+
+async function chiamaClaude(env: Env, c: ChiamataClaude): Promise<string> {
+  controllaPayload(c);
   if (!env.ANTHROPIC_API_KEY) {
     throw new ErroreAi("La chiave API non è configurata: chiedi a Contify di completare l'attivazione.", 503);
   }
@@ -56,9 +103,9 @@ async function chiamaClaude(env: Env, sistema: string, utente: string, maxTokens
       },
       body: JSON.stringify({
         model: env.AI_MODEL ?? MODELLO_DEFAULT,
-        max_tokens: maxTokens,
-        system: sistema,
-        messages: [{ role: 'user', content: utente }],
+        max_tokens: c.maxTokens,
+        system: c.sistema + NOTA_SEGNAPOSTO,
+        messages: c.messaggi ?? [{ role: 'user', content: c.utente ?? '' }],
       }),
       signal: AbortSignal.timeout(60_000),
     });
@@ -78,9 +125,13 @@ async function chiamaClaude(env: Env, sistema: string, utente: string, maxTokens
 
 export class ErroreAi extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  codice?: string;
+  residui?: string[];
+  constructor(message: string, status: number, codice?: string, residui?: string[]) {
     super(message);
     this.status = status;
+    this.codice = codice;
+    this.residui = residui;
   }
 }
 
@@ -164,16 +215,31 @@ export function estraiJsonArray(testo: string): any[] {
   return [];
 }
 
-export async function suggerisciIndicatori(env: Env, descrizione: string): Promise<SuggerimentoIndicatore[]> {
+export interface EsitoAi<T> {
+  esito: T;
+  /** Quanti valori distinti sono stati sostituiti da segnaposto prima dell'invio (solo il conteggio va nel registro). */
+  pseudonimi: number;
+}
+
+export async function suggerisciIndicatori(env: Env, descrizione: string, dizionario: Dizionario = DIZIONARIO_VUOTO): Promise<EsitoAi<SuggerimentoIndicatore[]>> {
+  // Il prefiltro lavora sul testo originale (è locale); al modello va la versione pseudonimizzata.
   const candidati = prefiltraSubIndici(descrizione, 60);
-  if (!candidati.length) return [];
+  if (!candidati.length) return { esito: [], pseudonimi: 0 };
+  const ps = new Pseudonimizzatore(dizionario);
+  const descrizionePs = ps.applica(descrizione.slice(0, 4000));
 
   if (env.AI_FIXTURES === '1') {
-    // Locale e smoke: deterministico, i primi due candidati del prefiltro.
-    return candidati.slice(0, 2).map((c) => ({
-      codice: c.codice, indicatore: c.indicatore, titoloIndicatore: titoloIndicatore(c.indicatore),
-      testo: c.testo, motivo: 'Suggerimento di prova (fixtures locali).',
-    }));
+    // Locale e smoke: deterministico, i primi due candidati del prefiltro. La
+    // cintura di sicurezza si esercita lo stesso; il motivo riporta il testo
+    // pseudonimizzato, così lo smoke verifica che al modello non arrivino nomi.
+    controllaPayload({ sistema: '', utente: descrizionePs, maxTokens: 0, dizionario });
+    return {
+      esito: candidati.slice(0, 2).map((c) => ({
+        codice: c.codice, indicatore: c.indicatore, titoloIndicatore: titoloIndicatore(c.indicatore),
+        testo: c.testo, motivo: ps.ripristina(`Suggerimento di prova (fixtures locali) per: «${descrizionePs.slice(0, 160)}».`),
+      })),
+      pseudonimi: ps.pseudonimi,
+    };
   }
 
   const sistema =
@@ -185,10 +251,10 @@ export async function suggerisciIndicatori(env: Env, descrizione: string): Promi
     'Se nessuno è pertinente rispondi []. Non inventare codici.';
 
   const utente =
-    `DESCRIZIONE DELL'OPERATIVITÀ (senza nominativi):\n${descrizione.slice(0, 4000)}\n\n` +
+    `DESCRIZIONE DELL'OPERATIVITÀ (senza nominativi):\n${descrizionePs}\n\n` +
     `SUB-INDICI CANDIDATI:\n${candidati.map((c) => `${c.codice}: ${c.testo}`).join('\n')}`;
 
-  const risposta = await chiamaClaude(env, sistema, utente, 1500);
+  const risposta = ps.ripristina(await chiamaClaude(env, { sistema, utente, maxTokens: 1500, dizionario }));
   const grezzi = estraiJsonArray(risposta);
 
   const validi: SuggerimentoIndicatore[] = [];
@@ -205,7 +271,7 @@ export async function suggerisciIndicatori(env: Env, descrizione: string): Promi
       motivo: String(g?.motivo ?? '').slice(0, 300),
     });
   }
-  return validi;
+  return { esito: validi, pseudonimi: ps.pseudonimi };
 }
 
 // ── Bozze dei campi discorsivi ─────────────────────────────────
@@ -228,11 +294,25 @@ const FONDAMENTI: Record<string, string> = {
   ART_18_CO_3: 'art. 18 co. 3 — dubbi sulla veridicità dei dati o sull\'identità',
 };
 
-export async function generaBozza(env: Env, tipo: TipoBozza, contesto: ContestoBozza): Promise<string> {
+export async function generaBozza(env: Env, tipo: TipoBozza, contesto: ContestoBozza, dizionario: Dizionario = DIZIONARIO_VUOTO): Promise<EsitoAi<string>> {
+  // Tutti i campi testuali passano dallo stesso pseudonimizzatore: un nome
+  // negli appunti e lo stesso nome nell'attività del cliente hanno lo stesso segnaposto.
+  const ps = new Pseudonimizzatore(dizionario);
+  const c: ContestoBozza = {
+    ...contesto,
+    prestazione: contesto.prestazione ? ps.applica(contesto.prestazione) : contesto.prestazione,
+    attivitaCliente: contesto.attivitaCliente ? ps.applica(contesto.attivitaCliente) : contesto.attivitaCliente,
+    appunti: contesto.appunti ? ps.applica(contesto.appunti) : contesto.appunti,
+  };
+
   if (env.AI_FIXTURES === '1') {
-    return tipo === 'SCOPO_NATURA'
-      ? `Bozza di prova (fixtures): la prestazione di ${contesto.prestazione ?? 'consulenza'} risponde a esigenze ordinarie di adempimento del cliente.`
-      : `Bozza di prova (fixtures): motivazione dell'astensione fondata su ${contesto.fondamento ?? 'art. 42'}.`;
+    // La bozza di prova riporta gli appunti pseudonimizzati: il test verifica
+    // che nulla di identificativo sia partito e che la ri-sostituzione avvenga.
+    controllaPayload({ sistema: '', utente: [c.prestazione, c.attivitaCliente, c.appunti].filter(Boolean).join('\n'), maxTokens: 0, dizionario });
+    const testo = tipo === 'SCOPO_NATURA'
+      ? `Bozza di prova (fixtures): la prestazione di ${c.prestazione ?? 'consulenza'} risponde a esigenze ordinarie di adempimento del cliente.${c.appunti ? ` Appunti: ${c.appunti}` : ''}`
+      : `Bozza di prova (fixtures): motivazione dell'astensione fondata su ${c.fondamento ?? 'art. 42'}.${c.appunti ? ` Circostanze: ${c.appunti}` : ''}`;
+    return { esito: ps.ripristina(testo), pseudonimi: ps.pseudonimi };
   }
 
   let sistema: string;
@@ -245,12 +325,12 @@ export async function generaBozza(env: Env, tipo: TipoBozza, contesto: ContestoB
       'Tono sobrio e fattuale, prima persona plurale evitata, NIENTE nomi propri. ' +
       'Rispondi con il solo testo della bozza, senza premesse né commenti.';
     utente = [
-      contesto.prestazione && `Prestazione: ${contesto.prestazione}`,
-      contesto.tipoRapporto && `Tipo di rapporto: ${contesto.tipoRapporto === 'OCCASIONALE' ? 'prestazione occasionale' : 'rapporto continuativo'}`,
-      contesto.importo != null && `Valore indicativo: ${contesto.importo} euro`,
-      contesto.naturaCliente && `Natura del cliente: ${contesto.naturaCliente}`,
-      contesto.attivitaCliente && `Attività prevalente del cliente: ${contesto.attivitaCliente}`,
-      contesto.appunti && `Appunti del professionista: ${contesto.appunti}`,
+      c.prestazione && `Prestazione: ${c.prestazione}`,
+      c.tipoRapporto && `Tipo di rapporto: ${c.tipoRapporto === 'OCCASIONALE' ? 'prestazione occasionale' : 'rapporto continuativo'}`,
+      c.importo != null && `Valore indicativo: ${c.importo} euro`,
+      c.naturaCliente && `Natura del cliente: ${c.naturaCliente}`,
+      c.attivitaCliente && `Attività prevalente del cliente: ${c.attivitaCliente}`,
+      c.appunti && `Appunti del professionista: ${c.appunti}`,
     ].filter(Boolean).join('\n').slice(0, 3000);
   } else {
     sistema =
@@ -259,15 +339,15 @@ export async function generaBozza(env: Env, tipo: TipoBozza, contesto: ContestoB
       'riserva di valutare la segnalazione ex art. 35. NIENTE nomi propri. ' +
       'Rispondi con il solo testo della bozza, senza premesse né commenti.';
     utente = [
-      contesto.fondamento && `Fondamento normativo: ${FONDAMENTI[contesto.fondamento] ?? contesto.fondamento}`,
-      contesto.prestazione && `Prestazione richiesta: ${contesto.prestazione}`,
-      contesto.appunti && `Circostanze annotate dal professionista: ${contesto.appunti}`,
+      c.fondamento && `Fondamento normativo: ${FONDAMENTI[c.fondamento] ?? c.fondamento}`,
+      c.prestazione && `Prestazione richiesta: ${c.prestazione}`,
+      c.appunti && `Circostanze annotate dal professionista: ${c.appunti}`,
     ].filter(Boolean).join('\n').slice(0, 3000);
   }
 
   if (!utente.trim()) throw new ErroreAi('Aggiungi qualche appunto: la bozza si scrive a partire dai fatti.', 400);
-  const bozza = await chiamaClaude(env, sistema, utente, 800);
-  return bozza.trim().slice(0, 4000);
+  const bozza = await chiamaClaude(env, { sistema, utente, maxTokens: 800, dizionario });
+  return { esito: ps.ripristina(bozza.trim()).slice(0, 4000), pseudonimi: ps.pseudonimi };
 }
 
 // ── Chat di assistenza in-app (AR-M10) ─────────────────────────
@@ -299,47 +379,27 @@ COME È FATTO IL SOFTWARE (pagine del menu):
 REGOLE:
 1. Rispondi in italiano, conciso e concreto: prima il "dove si fa" nel software, poi il riferimento normativo se utile. Cita articoli solo se ne sei certo; non inventare mai numeri di articoli, soglie o scadenze.
 2. Sei un aiuto all'uso e all'orientamento normativo, NON un parere legale: sulle scelte di merito (livello di verifica, astensione, segnalazione) ricorda che la valutazione spetta al professionista.
-3. Non chiedere né accettare nominativi o dati di clienti: se l'utente li scrive, invitalo a riformulare senza dati identificativi.
+3. Non chiedere nominativi o dati di clienti: quelli scritti dall'utente ti arrivano già sostituiti da segnaposto; ragiona sui segnaposto senza chiedere di cosa si tratti.
 4. Problemi di account, fatturazione o malfunzionamenti: indirizza alla pagina «Assistenza», dove si apre una richiesta verso Contify.
 5. Se non sai una cosa, dillo e suggerisci dove verificarla (guida in-app, fonte normativa, assistenza).`;
 
-export async function rispostaChat(env: Env, messaggi: MessaggioChat[]): Promise<string> {
+export async function rispostaChat(env: Env, messaggi: MessaggioChat[], dizionario: Dizionario = DIZIONARIO_VUOTO): Promise<EsitoAi<string>> {
+  // Un solo pseudonimizzatore per tutta la conversazione: i segnaposto sono
+  // stabili fra i turni (la conversazione intera viene rimandata ogni volta).
+  const ps = new Pseudonimizzatore(dizionario);
+  const turni = messaggi.slice(-16).map((m) => ({
+    role: (m.ruolo === 'utente' ? 'user' : 'assistant') as 'user' | 'assistant',
+    content: ps.applica(m.testo.slice(0, 2000)),
+  }));
+
   if (env.AI_FIXTURES === '1') {
-    const ultima = messaggi[messaggi.length - 1]?.testo ?? '';
-    return `Risposta di prova (fixtures) alla domanda: «${ultima.slice(0, 80)}». Trovi il dettaglio nella Guida in-app.`;
+    controllaPayload({ sistema: SISTEMA_CHAT, messaggi: turni, maxTokens: 0, dizionario });
+    const ultima = turni[turni.length - 1]?.content ?? '';
+    return {
+      esito: ps.ripristina(`Risposta di prova (fixtures) alla domanda: «${ultima.slice(0, 160)}». Trovi il dettaglio nella Guida in-app.`),
+      pseudonimi: ps.pseudonimi,
+    };
   }
-  if (!env.ANTHROPIC_API_KEY) {
-    throw new ErroreAi("La chiave API non è configurata: chiedi a Contify di completare l'attivazione.", 503);
-  }
-  let r: Response;
-  try {
-    r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: env.AI_MODEL ?? MODELLO_DEFAULT,
-        max_tokens: 900,
-        system: SISTEMA_CHAT,
-        messages: messaggi.slice(-16).map((m) => ({
-          role: m.ruolo === 'utente' ? 'user' : 'assistant',
-          content: m.testo.slice(0, 2000),
-        })),
-      }),
-      signal: AbortSignal.timeout(60_000),
-    });
-  } catch {
-    throw new ErroreAi('Il servizio AI non risponde: riprova tra poco.', 503);
-  }
-  if (!r.ok) {
-    console.error('Claude chat errore', r.status, (await r.text().catch(() => '')).slice(0, 300));
-    throw new ErroreAi(r.status === 429 ? 'Servizio AI momentaneamente saturo: riprova tra poco.' : 'Errore del servizio AI.', 503);
-  }
-  const corpo = await r.json<any>();
-  const testo = (corpo?.content ?? []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim();
-  if (!testo) throw new ErroreAi('Risposta vuota dal servizio AI.', 502);
-  return testo.slice(0, 6000);
+  const testo = await chiamaClaude(env, { sistema: SISTEMA_CHAT, messaggi: turni, maxTokens: 900, dizionario });
+  return { esito: ps.ripristina(testo.trim()).slice(0, 6000), pseudonimi: ps.pseudonimi };
 }

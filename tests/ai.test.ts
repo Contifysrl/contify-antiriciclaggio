@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { aiAbilitata, estraiJsonArray, prefiltraSubIndici } from '../worker/src/lib/ai';
+import { ErroreAi, aiAbilitata, controllaPayload, estraiJsonArray, prefiltraSubIndici } from '../worker/src/lib/ai';
+import { compilaDizionario } from '../worker/src/lib/pseudonimi';
 import { SUB_INDICI_UIF_2023 } from '../worker/src/domain/sub-indici-uif';
 
 describe('Assistente AI (AR-M9) — parti pure', () => {
@@ -37,5 +38,18 @@ describe('Assistente AI (AR-M9) — parti pure', () => {
     expect(estraiJsonArray('[[1,2],[3]]')).toEqual([[1, 2], [3]]);
     expect(estraiJsonArray('nessun json')).toEqual([]);
     expect(estraiJsonArray('[rotto')).toEqual([]);
+  });
+
+  it('cintura di sicurezza (AR-M21, AI-01): un nome del dizionario o un CF sopravvissuti → la chiamata non parte (422)', () => {
+    const dizionario = compilaDizionario([{ tipo: 'PF', nome: 'Rossi Mario' }]);
+    expect(() => controllaPayload({ sistema: 's', utente: 'Il socio [PF_1] ha il 40%.', maxTokens: 1, dizionario })).not.toThrow();
+    let errore: unknown;
+    try { controllaPayload({ sistema: 's', utente: 'Il socio Mario Rossi ha il 40%.', maxTokens: 1, dizionario }); } catch (e) { errore = e; }
+    expect(errore).toBeInstanceOf(ErroreAi);
+    expect((errore as ErroreAi).status).toBe(422);
+    expect((errore as ErroreAi).codice).toBe('dati_identificativi');
+    expect((errore as ErroreAi).residui).toEqual(['PF']);
+    // Vale anche sulla conversazione: basta un turno sporco.
+    expect(() => controllaPayload({ sistema: 's', messaggi: [{ role: 'user', content: 'ok' }, { role: 'assistant', content: 'CF RSSMRA80A01H501U' }], maxTokens: 1, dizionario })).toThrow(ErroreAi);
   });
 });
