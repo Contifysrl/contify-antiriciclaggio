@@ -15,6 +15,17 @@ export interface VoceNovita {
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-09-10-ai-con-pseudonimizzazione',
+    data: '2026-09-10',
+    titolo: 'Assistente AI: nomi e dati identificativi sostituiti da segnaposto prima dell’invio, motivazione co. 6 leggibile, classificazione dell’oggetto sociale',
+    punti: [
+      'Pseudonimizzazione automatica: prima di ogni richiesta all’AI il programma sostituisce con segnaposto i nomi di persone ed enti presenti nell’archivio dello studio (clienti, soci e cariche, titolari effettivi, esecutori, professionisti) e i dati con formato riconoscibile ovunque compaiano (codici fiscali, partite IVA, IBAN, email e PEC, telefoni, indirizzi con civico). Se dopo la sostituzione resta un identificativo, la richiesta non parte. I nomi tornano al loro posto nella risposta, nel server di Contify AR. Vale per tutte le funzioni, anche la chat e il suggeritore di indicatori.',
+      '«Rendi leggibile (AI)» nella sequenza guidata della titolarità effettiva: la motivazione ex art. 20 co. 6, che il programma scrive dai fatti della compagine, può essere riscritta in italiano piano. Il testo riscritto è verificato sui numeri (quote, capitale, date): se un numero manca o ne compare uno nuovo, resta la bozza del programma. Il professionista la corregge e la firma; la proposta registra la provenienza «AI + professionista».',
+      '«Chiedi all’AI (oggetto sociale)» sul fattore A.2 del fascicolo proposto, solo quando né il codice ATECO né le parole chiave riconoscono un settore esposto: l’AI legge oggetto sociale e attività (pseudonimizzati) e propone una voce del catalogo dei settori esposti, o nessuna, con il motivo. Il punteggio è una proposta «da confermare» con provenienza AI, riportata nella motivazione della valutazione e nel verbale; uno scostamento va motivato come per ogni altra proposta. Nulla parte da solo: si chiede dal fascicolo.',
+      'Informativa aggiornata (versione 2) in Impostazioni → Assistente AI: descrive cosa viene sostituito, cosa passa comunque, il blocco tecnico e cosa resta nel registro. Chi aveva accettato la versione precedente tiene le funzioni di prima; le due funzioni nuove si sbloccano dopo la conferma della versione aggiornata. L’accettazione è registrata con versione, data e autore.',
+    ],
+  },
+  {
     id: '2026-09-07-controllo-costante-dai-dati',
     data: '2026-09-07',
     titolo: 'Controllo costante alimentato dai dati: visura da rinnovare, differenze al rinnovo, registro dei titolari effettivi',

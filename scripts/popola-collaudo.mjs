@@ -239,8 +239,8 @@ if (clientiEsistenti.length) {
 }
 
 passo('Impostazioni dello studio: AI, province a rischio contante, registro TE');
-await amm.deve('POST', '/ai/abilita', { abilita: true, accetto: true });
-nota('assistente AI abilitato');
+const ai = await amm.deve('POST', '/ai/abilita', { abilita: true, accetto: true });
+nota(`assistente AI abilitato con l'informativa v${ai.versioneInformativa ?? '?'} (AR-M21: la pseudonimizzazione è automatica; in prod nessuna chiamata parte da sola)`);
 await amm.deve('POST', '/studio/province-contante', {
   province: [{ sigla: 'PD', livello: 'ALTO' }, { sigla: 'NA', livello: 'ALTO' }, { sigla: 'GE', livello: 'MEDIO_ALTO' }, { sigla: 'CT', livello: 'MEDIO_ALTO' }],
   fonte: 'Lettura della mappa ANR 2024 (Fig. 3) da parte dello studio — dati di collaudo',

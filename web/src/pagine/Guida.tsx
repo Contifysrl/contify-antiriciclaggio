@@ -551,28 +551,44 @@ const SEZIONI: Sezione[] = [
     corpo: (
       <>
         <P>
-          L'assistente AI produce <K>suggerimenti, mai decisioni</K>. Due funzioni: il{' '}
-          <K>suggeritore di indicatori UIF</K> — descrivi l'operatività sospetta e propone i
-          sub-indici pertinenti fra i 400 testi letterali del provvedimento 12.5.2023, con il
-          motivo — e le <K>bozze</K> dei campi discorsivi (scopo e natura della prestazione,
-          motivazione dell'astensione), sempre da rivedere prima di firmare.
+          L'assistente AI produce <K>suggerimenti, mai decisioni</K>. Cinque funzioni: il{' '}
+          <K>suggeritore di indicatori UIF</K> (descrivi l'operatività sospetta e propone i sub-indici
+          pertinenti fra i 400 testi letterali del provvedimento 12.5.2023, con il motivo), le{' '}
+          <K>bozze</K> dei campi discorsivi (scopo e natura della prestazione, motivazione
+          dell'astensione), la <K>chat di assistenza</K> (il pulsante in basso a destra: risponde su
+          come si usa Contify AR e dà orientamento normativo; la conversazione vive nel tuo browser e
+          non viene conservata), la <K>motivazione ex art. 20 co. 6 resa leggibile</K> («Rendi leggibile
+          (AI)» nella sequenza guidata della titolarità: riscrive in italiano piano la bozza che il
+          programma costruisce dai fatti, e il testo viene verificato sui numeri — quote, capitale,
+          date — prima di tornarti; se un numero manca o compare, resta la bozza del programma) e la{' '}
+          <K>classificazione dell'oggetto sociale</K> («Chiedi all'AI» sul fattore A.2 del fascicolo
+          proposto, solo quando né il codice ATECO né le parole chiave riconoscono un settore esposto:
+          propone una voce del catalogo, o nessuna, con il motivo; il punteggio resta una proposta «da
+          confermare» e uno scostamento va motivato come per ogni altra proposta).
         </P>
         <P>
-          C'è anche la <K>chat di assistenza</K> (il pulsante in basso a destra, quando l'AI è
-          abilitata): risponde su come si usa Contify AR e dà orientamento normativo, citando le
-          norme solo quando ne è certa. La conversazione vive nel tuo browser e{' '}
-          <K>non viene conservata</K>.
+          <K>Riservatezza: la pseudonimizzazione è automatica.</K> Prima di ogni invio il programma
+          sostituisce con segnaposto (<code>[PF_1]</code>, <code>[PG_2]</code>, <code>[CF_1]</code>…) i nomi
+          delle persone e degli enti presenti nell'archivio dello studio — clienti, soci e cariche,
+          titolari effettivi, esecutori, professionisti — anche senza accenti, senza maiuscole o con nome
+          e cognome invertiti, e i dati con formato riconoscibile ovunque compaiano: codici fiscali,
+          partite IVA, IBAN, email e PEC, telefoni, indirizzi con civico. Passano invariati i fatti
+          (prestazione, attività, quote, importi, date). Se dopo la sostituzione resta un identificativo,
+          la richiesta <K>non parte</K> e il programma chiede di riformulare. I nomi tornano al loro posto
+          nella risposta, nel server di Contify AR: il fornitore del modello non vede mai la
+          corrispondenza. Un nome che non è nell'archivio (un terzo mai registrato) non viene
+          riconosciuto: resta la regola di descrivere i fatti, non le persone.
         </P>
         <Punti punti={[
-          <>Si attiva in <K>Impostazioni</K> da chi amministra lo studio, accettando l'informativa: finché è spento, i pulsanti AI non compaiono.</>,
-          <>Regola d'oro: nei testi per l'AI <K>niente nominativi</K>, codici fiscali o dati identificativi — si descrivono i fatti, non le persone.</>,
-          <>Ogni suggerimento cita il sub-indice per codice e testo letterale: il modello non può inventare indicatori, il sistema riscontra ogni codice sul catalogo ufficiale.</>,
-          <>Nel registro resta traccia dell'uso della funzione, mai del contenuto elaborato.</>,
+          <>Si attiva in <K>Impostazioni</K> da chi amministra lo studio, accettando l'informativa: finché è spento, i pulsanti AI non compaiono. L'informativa è versionata: quando cambia, le funzioni già accettate restano attive e quelle nuove si sbloccano dopo la conferma della versione aggiornata.</>,
+          <>Ogni suggerimento cita il sub-indice o la voce del catalogo per codice: il modello non può inventare indicatori né settori, il sistema riscontra ogni codice sul catalogo ufficiale.</>,
+          <>Nel registro resta traccia dell'uso della funzione (chi, quando, quale, quanti valori sostituiti) e delle richieste bloccate — mai del contenuto elaborato.</>,
+          <>Cosa l'AI NON fa: non crea clienti né fascicoli, non scrive punteggi, non registra titolari, non lavora nella coda di revisione né nelle proposte del programma. Interviene solo quando la chiami.</>,
         ]} />
         <Attenzione>
           La responsabilità professionale non si delega: la bozza va letta, corretta e assunta come
-          propria; il sub-indice suggerito va verificato sul caso concreto prima di citarlo nella
-          segnalazione.
+          propria; il sub-indice o il settore suggerito va verificato sul caso concreto prima di
+          usarlo nella segnalazione o nella valutazione.
         </Attenzione>
       </>
     ),

@@ -151,6 +151,22 @@ console.log('\n== AI-03 — «Chiedi all’AI (oggetto sociale)» nel fascicolo 
   await scatto('09-a2-dopo');
 }
 
+// ── AI-05: guida e Novità ──
+console.log('\n== AI-05 — Guida e Novità ==');
+{
+  await p.goto(`${BASE}/#guida`);
+  await p.waitForTimeout(1200);
+  await p.click('text=Assistente AI >> nth=0').catch(() => {});
+  await p.waitForTimeout(500);
+  const guida = await p.textContent('body');
+  verifica('guida: pseudonimizzazione automatica, «Rendi leggibile», «Chiedi all’AI», cosa NON fa', /pseudonimizzazione è automatica/.test(guida) && /Rendi leggibile/.test(guida) && /Chiedi all'AI/.test(guida) && /NON fa/.test(guida));
+  await scatto('10-guida');
+  await p.goto(`${BASE}/#novita`);
+  await p.waitForTimeout(1200);
+  verifica('Novità: voce del rilascio M21', /segnaposto prima dell’invio/.test(await p.textContent('body')));
+  await scatto('11-novita');
+}
+
 await b.close();
 console.log(`\n${ok} ok / ${fail} FAIL`);
 console.log('Scatti:', scatti.join(' '));

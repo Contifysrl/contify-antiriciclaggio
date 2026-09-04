@@ -73,7 +73,7 @@ worker/src/domain/     motore puro, senza dipendenze da runtime o database
   province.ts          anagrafica province + tabella di studio delle province a rischio contante (A.4)
   scadenze.ts          scadenzario, con distinzione legge / organizzazione
   indicatori-uif.ts    tassonomia del provvedimento UIF 12.5.2023
-worker/src/lib/        crittografia, sessioni, registro concatenato; coda.ts = coda di revisione con caricamento in blocco delle visure (AR-M19); registro-te.ts = consultazioni del registro dei titolari effettivi, prova ex co. 12, segnalazioni ex co. 7 (art. 21-ter, D.Lgs. 122/2026, AR-M20)
+worker/src/lib/        crittografia, sessioni, registro concatenato; coda.ts = coda di revisione con caricamento in blocco delle visure (AR-M19); registro-te.ts = consultazioni del registro dei titolari effettivi, prova ex co. 12, segnalazioni ex co. 7 (art. 21-ter, D.Lgs. 122/2026, AR-M20); pseudonimi.ts = pseudonimizzazione dei testi diretti all'AI (dizionario di contesto del tenant + pattern, cintura di sicurezza, AR-M21); ai.ts = le funzioni AI (indicatori, bozze, chat, motivazione co. 6 leggibile validata sui numeri, classificazione dell'oggetto sociale)
 worker/src/index.ts    API Hono
 web/                   SPA React
   src/lib/visura.ts    parser locale della visura camerale (nessuna AI: il PDF non esce dal browser, AR-M17)
@@ -161,6 +161,12 @@ Presidi implementati:
   SOS), lettore, revisore indipendente ex art. 16 co. 2 lett. b).
 - **Immutabilità.** Trigger SQL impediscono la modifica di valutazioni e autovalutazioni firmate
   e la cancellazione di documenti ancora in conservazione obbligatoria.
+- **AI senza nominativi, per costruzione.** Ogni testo diretto al modello passa da uno strato di
+  pseudonimizzazione (`lib/pseudonimi.ts`): nomi dell'archivio dello studio e dati con formato
+  riconoscibile (CF, P.IVA, IBAN, email, telefoni, indirizzi) diventano segnaposto stabili nella
+  singola chiamata; una cintura di sicurezza blocca la chiamata (422) se resta un identificativo;
+  la ri-sostituzione avviene nel worker. Nel registro resta l'uso con il solo conteggio dei
+  segnaposto. L'informativa accettata dallo studio è versionata (`docs/informativa-ai-v2.md`).
 - **Registro concatenato.** Ogni voce contiene l'impronta della precedente. La verifica è
   esposta in `GET /api/audit/verifica` ed è stata provata contro una manomissione reale: dopo un
   `UPDATE` diretto sul database, la verifica ha individuato la riga alterata.
