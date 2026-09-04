@@ -47,7 +47,7 @@ import { normalizzaPiva } from './lib/lookup/piva';
 import { registraTitolari } from './lib/titolarita';
 import { TIPI_CLIENTE, aggiornaClienteDaVisura, clienteDoppione, creaClienteDaVisura, risolviProfessionista } from './lib/da-visura';
 import { leggiProposte, propostaTitolarita, registraProposta, salvaCompagine, screeningCompagine, type CaricaIn, type SocioIn } from './lib/compagine';
-import { ErroreAi, MODELLO_DEFAULT, VERSIONE_INFORMATIVA_AI, aiAbilitata, generaBozza, informativaDaRiaccettare, rispostaChat, statoAi, suggerisciIndicatori } from './lib/ai';
+import { ErroreAi, MODELLO_DEFAULT, VERSIONE_INFORMATIVA_AI, aiAbilitata, generaBozza, informativaDaRiaccettare, riscriviMotivazioneCo6, rispostaChat, statoAi, suggerisciIndicatori } from './lib/ai';
 import { dizionarioTenant } from './lib/pseudonimi';
 import { parametriTenant, propostaFascicolo, tabellaProvince } from './lib/proposta-fascicolo';
 import { completezzaStudio } from './lib/completezza';
@@ -1502,10 +1502,6 @@ async function parametriAiTenant(c: Ctx): Promise<string | null> {
   return t?.parametri ?? null;
 }
 
-async function tenantConAiAbilitata(c: Ctx): Promise<boolean> {
-  return aiAbilitata(await parametriAiTenant(c));
-}
-
 /**
  * Gate delle funzioni nuove (AI-04): AI abilitata E informativa corrente
  * accettata. Restituisce la risposta d'errore da rimandare, o null se si può
@@ -1586,9 +1582,8 @@ api.post('/ai/abilita', soloAmministratore, async (c) => {
 
 /** Suggeritore di indicatori UIF: contenuto pre-SOS → riservato al titolare (art. 38). */
 api.post('/ai/indicatori', puoVedereSos, async (c) => {
-  if (!(await tenantConAiAbilitata(c))) {
-    return c.json({ errore: "L'assistente AI non è abilitato: il titolare può attivarlo dalle Impostazioni", codice: 'ai_disabilitata' }, 403);
-  }
+  const bloccata = await gateAi(c, false);
+  if (bloccata) return bloccata;
   const b = await c.req.json<any>().catch(() => ({}));
   const descrizione = String(b.descrizione ?? '').trim();
   if (descrizione.length < 30) {
@@ -1609,14 +1604,48 @@ api.post('/ai/indicatori', puoVedereSos, async (c) => {
 });
 
 api.post('/ai/bozza', puoScrivere, async (c) => {
-  if (!(await tenantConAiAbilitata(c))) {
-    return c.json({ errore: "L'assistente AI non è abilitato: il titolare può attivarlo dalle Impostazioni", codice: 'ai_disabilitata' }, 403);
-  }
   const tenantId = c.get('tenantId');
   const b = await c.req.json<any>().catch(() => ({}));
   const tipo = String(b.tipo ?? '');
-  if (tipo !== 'SCOPO_NATURA' && tipo !== 'MOTIVAZIONE_ASTENSIONE') {
+  if (tipo !== 'SCOPO_NATURA' && tipo !== 'MOTIVAZIONE_ASTENSIONE' && tipo !== 'MOTIVAZIONE_CO6') {
     return c.json({ errore: 'Tipo di bozza non riconosciuto' }, 400);
+  }
+  // Le funzioni nuove (AI-02) richiedono l'informativa corrente; quelle di prima no.
+  const bloccata = await gateAi(c, tipo === 'MOTIVAZIONE_CO6');
+  if (bloccata) return bloccata;
+
+  if (tipo === 'MOTIVAZIONE_CO6') {
+    // AR-M21 (AI-02): i fatti si ricalcolano dal DB (bozza deterministica di
+    // propostaTitolarita), mai dal client; dizionario del cliente.
+    const clienteId = String(b.clienteId ?? '');
+    const cliente = await c.env.DB.prepare('SELECT id, denominazione, tipo, codice_fiscale FROM clienti WHERE id = ? AND tenant_id = ?').bind(clienteId, tenantId).first<any>();
+    if (!cliente) return c.json({ errore: 'Cliente non trovato' }, 404);
+    // I fatti sono quelli della proposta viva registrata dalla visura (contengono
+    // data della visura e capitale, che la ricostruzione dall'archivio non ha);
+    // in mancanza, la bozza ricalcolata dall'archivio.
+    let fatti: string | null = null;
+    if (typeof b.propostaId === 'string' && b.propostaId) {
+      const viva = (await leggiProposte(c.env, tenantId, clienteId)).find((p) => p.id === b.propostaId && p.ambito === 'TITOLARITA' && p.stato === 'PROPOSTA');
+      if (typeof viva?.contenuto?.bozzaMotivazione === 'string') fatti = viva.contenuto.bozzaMotivazione;
+    }
+    if (!fatti) fatti = (await propostaTitolarita(c.env, tenantId, cliente)).bozzaMotivazione;
+    if (!fatti) {
+      return c.json({ errore: 'Per questo cliente il programma non propone il criterio residuale: non c’è una motivazione ex art. 20 co. 6 da riscrivere.' }, 400);
+    }
+    try {
+      const dizionario = await dizionarioTenant(c.env, tenantId, { clienteId });
+      const { esito, pseudonimi } = await riscriviMotivazioneCo6(c.env, fatti, dizionario);
+      await scriviAudit(c.env.DB, {
+        tenantId, utenteId: c.get('utente').id, azione: 'USO_AI', entita: 'clienti', entitaId: clienteId,
+        dettaglio: { funzione: 'motivazione_co6', pseudonimi, validata: esito.validata, mancanti: esito.mancanti.length, nuovi: esito.nuovi.length }, ip: c.get('ip'),
+      });
+      return c.json({
+        bozza: esito.testo, validata: esito.validata, provenienza: esito.validata ? 'AI' : 'PROGRAMMA', pseudonimi,
+        avviso: esito.validata ? null : 'La riscrittura dell’AI non riportava fedelmente i numeri dei fatti ed è stata scartata: resta la bozza scritta dal programma.',
+      });
+    } catch (e) {
+      return rispostaErroreAi(c, e, 'motivazione_co6');
+    }
   }
 
   // Il contesto arriva dal DATABASE, mai dal client: solo campi non
@@ -1659,9 +1688,8 @@ api.post('/ai/bozza', puoScrivere, async (c) => {
  * lato server; nel registro solo l'uso.
  */
 api.post('/ai/chat', async (c) => {
-  if (!(await tenantConAiAbilitata(c))) {
-    return c.json({ errore: "L'assistente AI non è abilitato: il titolare può attivarlo dalle Impostazioni", codice: 'ai_disabilitata' }, 403);
-  }
+  const bloccata = await gateAi(c, false);
+  if (bloccata) return bloccata;
   const b = await c.req.json<any>().catch(() => ({}));
   const messaggi = Array.isArray(b.messaggi) ? b.messaggi : [];
   const validi = messaggi

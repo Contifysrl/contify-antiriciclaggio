@@ -314,7 +314,7 @@ export async function suggerisciIndicatori(env: Env, descrizione: string, dizion
 
 // ── Bozze dei campi discorsivi ─────────────────────────────────
 
-export type TipoBozza = 'SCOPO_NATURA' | 'MOTIVAZIONE_ASTENSIONE';
+export type TipoBozza = 'SCOPO_NATURA' | 'MOTIVAZIONE_ASTENSIONE' | 'MOTIVAZIONE_CO6';
 
 export type ContestoBozza = {
   prestazione?: string;
@@ -386,6 +386,72 @@ export async function generaBozza(env: Env, tipo: TipoBozza, contesto: ContestoB
   if (!utente.trim()) throw new ErroreAi('Aggiungi qualche appunto: la bozza si scrive a partire dai fatti.', 400);
   const bozza = await chiamaClaude(env, { sistema, utente, maxTokens: 800, dizionario });
   return { esito: ps.ripristina(bozza.trim()).slice(0, 4000), pseudonimi: ps.pseudonimi };
+}
+
+// ── Motivazione ex art. 20 co. 6 leggibile (AR-M21, AI-02) ─────
+// La bozza deterministica (`bozzaMotivazioneCo6`) contiene TUTTI i fatti e i
+// nomi; l'AI la riscrive in italiano piano senza aggiungere né togliere
+// fatti. Il testo riscritto è validato sui NUMERI: ogni numero dei fatti
+// (quote, capitale, date, articoli) deve comparire, e nessun numero nuovo
+// può comparire. Altrimenti resta la bozza deterministica.
+
+/** Numeri di un testo, normalizzati: 30.000,00 → 30000; 07 → 7; 25,5 → 25.5; i segnaposto non contano. */
+export function numeriDelTesto(testo: string): Set<string> {
+  const senzaSegnaposto = testo.replace(/\[(?:PF|PG|CF|PIVA|IBAN|EMAIL|TEL|INDIRIZZO)_\d+\]/g, ' ');
+  const out = new Set<string>();
+  for (const m of senzaSegnaposto.matchAll(/\d+(?:[.,]\d+)*/g)) {
+    let t = m[0];
+    // «30.000» / «1.234.567,89»: i punti sono migliaia; la virgola è il decimale.
+    if (/^\d{1,3}(?:\.\d{3})+(?:,\d+)?$/.test(t)) t = t.replace(/\./g, '');
+    // «25.5» (decimale all'inglese) resta com'è; «25,5» → «25.5».
+    t = t.replace(',', '.');
+    if (t.includes('.')) t = t.replace(/\.?0+$/, '');   // 30000.00 → 30000, 25.50 → 25.5
+    t = t.replace(/^0+(?=\d)/, '');                       // 07 → 7
+    if (t) out.add(t);
+  }
+  return out;
+}
+
+export interface EsitoValidazioneFatti { ok: boolean; mancanti: string[]; nuovi: string[] }
+
+/** La riscrittura deve contenere tutti i numeri dei fatti e nessun numero in più. */
+export function validaRiscritturaFatti(fatti: string, riscritto: string): EsitoValidazioneFatti {
+  const a = numeriDelTesto(fatti);
+  const b = numeriDelTesto(riscritto);
+  const mancanti = [...a].filter((n) => !b.has(n));
+  const nuovi = [...b].filter((n) => !a.has(n));
+  return { ok: !mancanti.length && !nuovi.length, mancanti, nuovi };
+}
+
+export interface RiscritturaCo6 {
+  testo: string;
+  /** true = testo riscritto dall'AI e validato; false = si è tornati alla bozza deterministica. */
+  validata: boolean;
+  mancanti: string[];
+  nuovi: string[];
+}
+
+export async function riscriviMotivazioneCo6(env: Env, fatti: string, dizionario: Dizionario = DIZIONARIO_VUOTO): Promise<EsitoAi<RiscritturaCo6>> {
+  const ps = new Pseudonimizzatore(dizionario);
+  const fattiPs = ps.applica(fatti);
+  const sistema =
+    'Riscrivi in italiano piano e ordinato, per un fascicolo antiriciclaggio (art. 20 co. 6 DLgs. 231/2007), la motivazione che ti viene data. ' +
+    'È già completa e corretta: NON aggiungere né togliere fatti, NON aggiungere percentuali, importi, date o riferimenti normativi che non ci sono, ' +
+    'NON cambiare i numeri (scrivili esattamente come li trovi). Mantieni i segnaposto tali e quali. ' +
+    'Puoi solo riordinare, spezzare le frasi lunghe, togliere ripetizioni. Tono sobrio, terza persona. ' +
+    'Rispondi con il solo testo riscritto, senza premesse né commenti.';
+
+  let risposta: string;
+  if (env.AI_FIXTURES === '1') {
+    controllaPayload({ sistema, utente: fattiPs, maxTokens: 0, dizionario });
+    // Riscrittura di prova: le stesse frasi, una per riga, con un cappello. Nessun numero cambia.
+    risposta = 'Riscrittura di prova (fixtures).\n' + fattiPs.split(/(?<=[a-z0-9)]\.)\s+(?=[A-ZÀ-Ü])/).join('\n');
+  } else {
+    risposta = (await chiamaClaude(env, { sistema, utente: fattiPs.slice(0, 6000), maxTokens: 1200, dizionario })).trim();
+  }
+  const v = validaRiscritturaFatti(fattiPs, risposta);
+  const testo = v.ok ? ps.ripristina(risposta).slice(0, 6000) : fatti;
+  return { esito: { testo, validata: v.ok, mancanti: v.mancanti, nuovi: v.nuovi }, pseudonimi: ps.pseudonimi };
 }
 
 // ── Chat di assistenza in-app (AR-M10) ─────────────────────────

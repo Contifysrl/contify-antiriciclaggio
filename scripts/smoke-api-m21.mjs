@@ -17,6 +17,11 @@
  *  6. /ai/stato espone versione accettata/corrente; un tenant con la v1 (simulato scrivendo parametri nel
  *     D1 locale con wrangler) risulta «da riaccettare», le funzioni di prima restano attive; la conferma
  *     registra la v2 con data e autore, audit ABILITA_AI con la versione.
+ * AI-02 (motivazione ex art. 20 co. 6 leggibile):
+ *  7. cliente 4×25% → con la v1 `/ai/bozza MOTIVAZIONE_CO6` risponde 403 informativa_da_riaccettare → ri-accetta →
+ *     200 con la riscrittura validata sui numeri (fixture), nomi ri-sostituiti, audit con validata; registrazione
+ *     residuale con provenienza AI_PROFESSIONISTA → proposta MODIFICATA con la provenienza nell'esito;
+ *     cliente senza residuale → 400.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -64,6 +69,15 @@ function corpoDaVisura(v, extra = {}) {
 }
 const ultimoAudit = async (azione) => ((await req('GET', '/audit')).dati ?? []).filter((v) => v.azione === azione)[0] ?? null;
 const dettaglio = (voce) => { try { return JSON.parse(voce?.dettaglio ?? '{}'); } catch { return {}; } };
+
+function simulaV1() {
+  try {
+    const sql = path.join(qui, '..', '.wrangler', 'smoke-m21-v1.sql');
+    fs.writeFileSync(sql, `UPDATE tenants SET parametri = json_set(COALESCE(parametri,'{}'), '$.ai', json('{"abilitata":true,"accettataIl":"2026-08-01T10:00:00.000Z","da":"usr_tit"}')) WHERE id = 'ten_demo';\n`);
+    execSync(`npx wrangler d1 execute contify-antiriciclaggio --local --file=${sql}`, { cwd: path.join(qui, '..'), stdio: 'pipe' });
+    return true;
+  } catch (e) { console.log('  (simulazione v1 non riuscita: ' + String(e.message).slice(0, 120) + ')'); return false; }
+}
 
 const login = await req('POST', '/auth/login', { email: 'titolare@studiodemo.it', password: 'Antiriciclaggio!2026' });
 verifica('login professionista', login.stato === 200, login);
@@ -161,14 +175,7 @@ console.log('\n== 5. AI-04 — informativa versionata ==');
   verifica('audit ABILITA_AI con la versione dell’informativa', dettaglio(ab).versioneInformativa === 2, ab);
 
   // Tenant con la v1: parametri.ai senza versioneInformativa (com'erano fino ad AR-M20). Solo in locale.
-  let simulato = false;
-  try {
-    const sql = path.join(qui, '..', '.wrangler', 'smoke-m21-v1.sql');
-    fs.writeFileSync(sql, `UPDATE tenants SET parametri = json_set(COALESCE(parametri,'{}'), '$.ai', json('{"abilitata":true,"accettataIl":"2026-08-01T10:00:00.000Z","da":"usr_tit"}')) WHERE id = 'ten_demo';\n`);
-    execSync(`npx wrangler d1 execute contify-antiriciclaggio --local --file=${sql}`, { cwd: path.join(qui, '..'), stdio: 'pipe' });
-    simulato = true;
-  } catch (e) { console.log('  (simulazione v1 non riuscita: ' + String(e.message).slice(0, 120) + ')'); }
-  if (simulato) {
+  if (simulaV1()) {
     const st1 = await req('GET', '/ai/stato');
     verifica('tenant con accettazione precedente → versione 1, da riaccettare', st1.dati?.versioneAccettata === 1 && st1.dati?.daRiaccettare === true, st1.dati);
     const chat = await req('POST', '/ai/chat', { messaggi: [{ ruolo: 'utente', testo: 'Dove si registra il controllo costante?' }] });
@@ -182,6 +189,54 @@ console.log('\n== 5. AI-04 — informativa versionata ==');
     const st2 = await req('GET', '/ai/stato');
     verifica('dopo la conferma: versione 2, niente da riaccettare, data aggiornata', st2.dati?.versioneAccettata === 2 && st2.dati?.daRiaccettare === false && st2.dati?.accettataIl > '2026-08-02', st2.dati);
   }
+}
+
+// ── 6. AI-02 — motivazione ex art. 20 co. 6 leggibile ──
+console.log('\n== 6. AI-02 — motivazione co. 6 leggibile ==');
+{
+  const v4 = fixture('srl-quattro-soci-25.txt');
+  v4.codiceFiscale = `06666${suffisso}`; v4.partitaIva = v4.codiceFiscale; v4.denominazione = `QUATTRO SOCI PARITARI ${suffisso} SRL`;
+  const c4 = await req('POST', '/clienti/da-visura', corpoDaVisura(v4));
+  verifica('cliente 4×25% creato da visura', c4.stato === 201, c4.dati);
+  const id4 = c4.dati?.id;
+  const prop4 = c4.dati?.proposta;
+  verifica('la proposta ha la bozza deterministica della motivazione co. 6', typeof prop4?.bozzaMotivazione === 'string' && prop4.bozzaMotivazione.length > 100, prop4?.bozzaMotivazione?.slice(0, 200));
+  const numeri = (t) => [...String(t).matchAll(/\d+(?:[.,]\d+)*/g)].map((m) => m[0]);
+
+  if (simulaV1()) {
+    const r403 = await req('POST', '/ai/bozza', { tipo: 'MOTIVAZIONE_CO6', clienteId: id4 });
+    verifica('con la v1 la funzione nuova risponde 403 informativa_da_riaccettare', r403.stato === 403 && r403.dati?.codice === 'informativa_da_riaccettare', r403.dati);
+    await req('POST', '/ai/abilita', { abilita: true, accetto: true });
+  }
+  const r = await req('POST', '/ai/bozza', { tipo: 'MOTIVAZIONE_CO6', clienteId: id4, propostaId: prop4?.id });
+  verifica('riscrittura 200, validata sui numeri, provenienza AI', r.stato === 200 && r.dati?.validata === true && r.dati?.provenienza === 'AI', r.dati);
+  const bozza = String(r.dati?.bozza ?? '');
+  verifica('i nomi tornano al loro posto (nessun segnaposto, denominazione presente)', !/\[(PF|PG)_\d+\]/.test(bozza) && /QUATTRO SOCI PARITARI/i.test(bozza), bozza.slice(0, 300));
+  verifica('tutti i numeri dei fatti della proposta (data visura, capitale, quote) sono nella riscrittura', numeri(prop4.bozzaMotivazione).every((n) => bozza.includes(n)) && /40\.000,00/.test(bozza), { fatti: numeri(prop4.bozzaMotivazione), bozza: numeri(bozza) });
+  const rSenza = await req('POST', '/ai/bozza', { tipo: 'MOTIVAZIONE_CO6', clienteId: id4 });
+  verifica('senza propostaId i fatti si ricalcolano dall’archivio (200, validata)', rSenza.stato === 200 && rSenza.dati?.validata === true, rSenza.dati);
+  verifica('pseudonimi contati (denominazione + 4 soci + cariche ≥ 5)', r.dati?.pseudonimi >= 5, r.dati?.pseudonimi);
+  const det = dettaglio(await ultimoAudit('USO_AI'));
+  verifica('audit USO_AI motivazione_co6 con validata e pseudonimi, senza contenuto', det.funzione === 'motivazione_co6' && det.validata === true && det.pseudonimi >= 5, det);
+
+  // Registrazione residuale con la motivazione riscritta → proposta MODIFICATA con provenienza AI + professionista.
+  const a3 = (prop4?.alert ?? []).find((a) => a.codice === 'A3');
+  const candidati = a3?.azione?.candidati ?? [];
+  verifica('A3 con candidati per il residuale', candidati.length >= 1, prop4?.alert?.map((a) => a.codice));
+  const reg = await req('POST', `/clienti/${id4}/titolarita`, {
+    propostaId: prop4?.id, propostaModificata: true, provenienzaMotivazione: 'AI_PROFESSIONISTA',
+    titolari: candidati.map((c) => ({ nominativo: c.nome, codiceFiscale: c.id, criterio: 'RESIDUALE_POTERI', norma: 'art. 20 co. 5 DLgs. 231/2007', quota: null, pep: false, motivazione: bozza })),
+  });
+  verifica('titolare residuale registrato con la motivazione riscritta', reg.stato === 200 && reg.dati?.propostaEsito === 'MODIFICATA', reg.dati);
+  const comp = await req('GET', `/clienti/${id4}/compagine`);
+  const pTit = (comp.dati?.proposte ?? []).find((p) => p.id === prop4?.id);
+  verifica('esito della proposta: MODIFICATA con provenienza AI_PROFESSIONISTA', pTit?.stato === 'MODIFICATA' && pTit?.esito?.provenienzaMotivazione === 'AI_PROFESSIONISTA', pTit);
+
+  // Cliente senza residuale (due soci PF, proprietà diretta) → 400.
+  const rNo = await req('POST', '/ai/bozza', { tipo: 'MOTIVAZIONE_CO6', clienteId: id1 });
+  verifica('cliente con titolari per proprietà → 400 (niente motivazione co. 6 da riscrivere)', rNo.stato === 400, rNo.dati);
+  const rNoCli = await req('POST', '/ai/bozza', { tipo: 'MOTIVAZIONE_CO6', clienteId: 'cli_inesistente' });
+  verifica('cliente inesistente → 404', rNoCli.stato === 404, rNoCli.dati);
 }
 
 console.log(`\nRisultato: ${ok} ok, ${fail} fail`);

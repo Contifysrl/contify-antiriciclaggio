@@ -4,7 +4,10 @@
  *   AI-04: Impostazioni → Assistente AI: tenant con la v1 (simulata via wrangler sul D1 locale) → riquadro
  *          «L'informativa è cambiata» → conferma → «Informativa v2 accettata il … da …»; disabilita → informativa
  *          intera con spunta e «Abilita»; chat con il nuovo avviso.
- *   (le sezioni AI-02/AI-03/CON si aggiungono qui)
+ *   AI-02: scheda del cliente 4×25% → proposta con A3 → sequenza guidata → «Rendi leggibile (AI)» → il testo torna
+ *          nella textarea con l'avviso «verificato sui numeri» → registra col residuale → proposta MODIFICATA e
+ *          titolare residuale nella scheda.
+ *   (le sezioni AI-03/CON si aggiungono qui)
  *
  *   npm run build && npx wrangler dev --port 8787 --local
  *   node scripts/ui-m21.mjs        (CHROMIUM=/percorso/chrome se serve)
@@ -14,6 +17,7 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { leggiVisura } from '../web/src/lib/visura.ts';
 
 const BASE = process.env.BASE ?? 'http://localhost:8787';
 const qui = path.dirname(fileURLToPath(import.meta.url));
@@ -25,6 +29,19 @@ const scatto = async (nome) => { const f = `/tmp/m21-${nome}.png`; await p.scree
 let ok = 0, fail = 0;
 const verifica = (d, cond) => { if (cond) { ok++; console.log(`  ok   ${d}`); } else { fail++; console.log(`  FAIL ${d}`); } };
 p.on('pageerror', (e) => console.log('  PAGE ERROR', e.message));
+const fixture = (n) => leggiVisura(fs.readFileSync(path.join(qui, '..', 'tests', 'fixtures', 'visure', n), 'utf8'));
+const suffisso = String(Date.now()).slice(-6);
+function corpoDaVisura(v, extra = {}) {
+  return {
+    anagrafica: {
+      denominazione: v.denominazione, tipo: v.tipoProposto, codiceFiscale: v.codiceFiscale, partitaIva: v.partitaIva, paeseResidenza: 'IT',
+      attivitaPrevalente: v.attivitaPrevalente, ateco: v.ateco, datiIdentificativi: { sede: v.sede.testo, pec: v.pec, rea: v.rea, capitaleSociale: v.capitale.sottoscritto },
+    },
+    soci: v.soci, cariche: v.cariche, capitale: v.capitale, dataVisura: v.dataEstrazione, dataElencoSoci: v.dataElencoSoci,
+    telemetria: { tipoVisura: v.tipoVisura, formaVisura: v.formaVisura, pagine: 7, campiNonTrovati: [], avvisi: 0, soci: v.soci.length, cariche: v.cariche.length, tipoIncerto: false, dataEstrazione: v.dataEstrazione },
+    ...extra,
+  };
+}
 const api = (metodo, percorso, corpo) => p.evaluate(async ({ metodo, percorso, corpo }) => {
   const r = await fetch(`/api${percorso}`, { method: metodo, headers: corpo ? { 'Content-Type': 'application/json' } : {}, body: corpo ? JSON.stringify(corpo) : undefined });
   return r.json().catch(() => null);
@@ -72,6 +89,38 @@ console.log('\n== AI-04 — Impostazioni, informativa versionata ==');
   await p.waitForTimeout(500);
   verifica('chat: avviso «Descrivi i fatti, non le persone» con la sostituzione automatica', /Descrivi i fatti, non le persone/.test(await p.textContent('body')) && /segnaposto/.test(await p.textContent('body')));
   await scatto('04-chat-avviso');
+  await p.click('button[aria-label="Chiudi"]');
+}
+
+// ── AI-02: motivazione co. 6 leggibile dalla scheda del cliente ──
+console.log('\n== AI-02 — «Rendi leggibile (AI)» nella proposta di titolarità ==');
+{
+  const v4 = fixture('srl-quattro-soci-25.txt');
+  v4.codiceFiscale = `08888${suffisso}`; v4.partitaIva = v4.codiceFiscale; v4.denominazione = `PLAYWRIGHT QUATTRO ${suffisso} SRL`;
+  const creato = await api('POST', '/clienti/da-visura', corpoDaVisura(v4));
+  verifica('preparazione: cliente 4×25% con proposta A3', Boolean(creato?.id) && (creato?.proposta?.alert ?? []).some((a) => a.codice === 'A3'));
+  await p.goto(`${BASE}/#cliente?id=${creato.id}`);
+  await p.waitForTimeout(1500);
+  await p.click('button:has-text("Apri la sequenza guidata") >> nth=0');
+  await p.waitForTimeout(800);
+  const prima = await p.inputValue('[data-test=motivazione-co6]');
+  verifica('sequenza guidata con la bozza deterministica e il pulsante «Rendi leggibile (AI)»', prima.length > 100 && (await p.locator('[data-test=rendi-leggibile]').count()) === 1);
+  await scatto('05-sequenza-prima');
+  await p.click('[data-test=rendi-leggibile]');
+  await p.waitForTimeout(1500);
+  const dopo = await p.inputValue('[data-test=motivazione-co6]');
+  verifica('testo riscritto nella textarea, con i nomi e senza segnaposto', dopo !== prima && /Riscrittura di prova/.test(dopo) && !/\[(PF|PG)_\d+\]/.test(dopo) && /PLAYWRIGHT QUATTRO/i.test(dopo));
+  verifica('avviso «verificato sui numeri dei fatti»', /verificato sui numeri/.test(await p.textContent('[data-test=avviso-ai]')));
+  await scatto('06-riscritta');
+  await p.click('button:has-text("Registra col criterio residuale")');
+  await p.waitForTimeout(1500);
+  const comp = await api('GET', `/clienti/${creato.id}/compagine`);
+  const prop = (comp?.proposte ?? []).find((x) => x.id === creato?.proposta?.id);
+  verifica('proposta MODIFICATA con provenienza AI + professionista', prop?.stato === 'MODIFICATA' && prop?.esito?.provenienzaMotivazione === 'AI_PROFESSIONISTA');
+  await p.reload();
+  await p.waitForTimeout(1500);
+  verifica('scheda: titolare effettivo col criterio residuale', /residuale/i.test(await p.textContent('body')));
+  await scatto('07-scheda');
 }
 
 await b.close();

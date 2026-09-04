@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ErroreAi, aiAbilitata, controllaPayload, estraiJsonArray, prefiltraSubIndici } from '../worker/src/lib/ai';
+import { ErroreAi, aiAbilitata, controllaPayload, estraiJsonArray, numeriDelTesto, prefiltraSubIndici, validaRiscritturaFatti } from '../worker/src/lib/ai';
 import { compilaDizionario } from '../worker/src/lib/pseudonimi';
 import { SUB_INDICI_UIF_2023 } from '../worker/src/domain/sub-indici-uif';
 
@@ -51,5 +51,45 @@ describe('Assistente AI (AR-M9) — parti pure', () => {
     expect((errore as ErroreAi).residui).toEqual(['PF']);
     // Vale anche sulla conversazione: basta un turno sporco.
     expect(() => controllaPayload({ sistema: 's', messaggi: [{ role: 'user', content: 'ok' }, { role: 'assistant', content: 'CF RSSMRA80A01H501U' }], maxTokens: 1, dizionario })).toThrow(ErroreAi);
+  });
+
+  describe('AR-M21 AI-02 — validazione dei fatti sui numeri', () => {
+    const fatti =
+      'Risulta dalla visura camerale estratta il 10/07/2026 che il capitale sociale di euro 30.000,00 di [PG_1] è così ripartito: ' +
+      '[PF_1] 25%; [PF_2] 25%; [PF_3] 25%; [PF_4] 25%. Nessuna persona fisica detiene una partecipazione superiore al 25% del capitale ' +
+      '(art. 20 co. 2 DLgs. 231/2007). La visura non evidenzia diritti particolari ex art. 2468 co. 3 c.c. Si applica il criterio residuale dell’art. 20 co. 5.';
+
+    it('estrae i numeri normalizzati (migliaia, decimali, zeri iniziali) e ignora i segnaposto', () => {
+      expect([...numeriDelTesto('euro 30.000,00 il 07/09/2026, quota 25,50% e 33,33%, [PF_12], art. 2468')].sort()).toEqual(
+        ['2026', '2468', '25.5', '30000', '33.33', '7', '9'].sort(),
+      );
+    });
+
+    it('testo coerente → ok (numeri riordinati, frasi spezzate, formato 30000 vs 30.000,00)', () => {
+      const riscritto =
+        'Dalla visura camerale del 10/07/2026 risulta che il capitale di [PG_1], pari a 30000 euro, è diviso in quattro quote del 25% ' +
+        '([PF_1], [PF_2], [PF_3], [PF_4]). Nessuno supera il 25% (art. 20 co. 2 DLgs. 231/2007); non ci sono diritti particolari ' +
+        'ex art. 2468 co. 3 c.c. Si applica quindi il criterio residuale dell’art. 20 co. 5.';
+      expect(validaRiscritturaFatti(fatti, riscritto)).toEqual({ ok: true, mancanti: [], nuovi: [] });
+    });
+
+    it('numero mancante → scarto', () => {
+      const senzaCapitale = fatti.replace(' di euro 30.000,00', '');
+      const v = validaRiscritturaFatti(fatti, senzaCapitale);
+      expect(v.ok).toBe(false);
+      expect(v.mancanti).toEqual(['30000']);
+      expect(v.nuovi).toEqual([]);
+    });
+
+    it('numero nuovo (una percentuale o una data inventata) → scarto', () => {
+      const v = validaRiscritturaFatti(fatti, fatti + ' La quota di controllo è del 50% dal 2019.');
+      expect(v.ok).toBe(false);
+      expect(v.nuovi.sort()).toEqual(['2019', '50']);
+    });
+
+    it('un numero cambiato è insieme mancante e nuovo', () => {
+      const v = validaRiscritturaFatti(fatti, fatti.replace('30.000,00', '300.000,00'));
+      expect(v).toEqual({ ok: false, mancanti: ['30000'], nuovi: ['300000'] });
+    });
   });
 });

@@ -206,8 +206,29 @@ export function PropostaTitolaritaBox({ clienteId, proposta, onRegistrata, vaiA,
   const [invio, setInvio] = useState(false);
   const [scarta, setScarta] = useState(false);
   const [motivoScarto, setMotivoScarto] = useState('');
+  // AR-M21 (AI-02): «Rendi leggibile (AI)» — solo con AI abilitata e informativa corrente accettata.
+  const [aiPronta, setAiPronta] = useState(false);
+  const [aiInCorso, setAiInCorso] = useState(false);
+  const [aiAvviso, setAiAvviso] = useState('');
+  const [motivazioneDaAi, setMotivazioneDaAi] = useState(false);
 
-  useEffect(() => { setMotivazione(proposta.bozzaMotivazione ?? ''); setScelti({}); setEsito(''); }, [proposta]);
+  useEffect(() => { setMotivazione(proposta.bozzaMotivazione ?? ''); setScelti({}); setEsito(''); setMotivazioneDaAi(false); setAiAvviso(''); }, [proposta]);
+  useEffect(() => {
+    if (!proposta.bozzaMotivazione) return;
+    api.get<{ abilitata: boolean; daRiaccettare: boolean }>('/ai/stato').then((s) => setAiPronta(s.abilitata && !s.daRiaccettare)).catch(() => setAiPronta(false));
+  }, [proposta.bozzaMotivazione]);
+
+  const rendiLeggibile = async () => {
+    setAiAvviso('');
+    setErrore('');
+    setAiInCorso(true);
+    try {
+      const r = await api.post<{ bozza: string; validata: boolean; avviso: string | null }>('/ai/bozza', { tipo: 'MOTIVAZIONE_CO6', clienteId, propostaId: proposta.id ?? undefined });
+      setMotivazione(r.bozza);
+      setMotivazioneDaAi(r.validata);
+      setAiAvviso(r.validata ? 'Testo riscritto dall’AI e verificato sui numeri dei fatti: leggilo, correggilo e firmalo.' : (r.avviso ?? ''));
+    } catch (e) { setErrore((e as Error).message); } finally { setAiInCorso(false); }
+  };
 
   const { analisi, alert } = proposta;
   const a3 = alert.find((a) => a.codice === 'A3');
@@ -216,11 +237,11 @@ export function PropostaTitolaritaBox({ clienteId, proposta, onRegistrata, vaiA,
   const perProprieta = ['PROPRIETA_DIRETTA', 'PROPRIETA_INDIRETTA'].includes(analisi.criterioApplicato);
   const a8 = alert.find((a) => a.codice === 'A8');
 
-  const registra = async (titolari: any[], modificata: boolean) => {
+  const registra = async (titolari: any[], modificata: boolean, provenienzaMotivazione?: 'AI_PROFESSIONISTA') => {
     setErrore('');
     setInvio(true);
     try {
-      await api.post(`/clienti/${clienteId}/titolarita`, { titolari, propostaId: proposta.id ?? undefined, propostaModificata: modificata });
+      await api.post(`/clienti/${clienteId}/titolarita`, { titolari, propostaId: proposta.id ?? undefined, propostaModificata: modificata, provenienzaMotivazione });
       setEsito('Titolarità registrata: la proposta risulta valutata e applicata. La fotografia precedente resta storicizzata.');
       setSequenza(false);
       onRegistrata?.();
@@ -244,7 +265,7 @@ export function PropostaTitolaritaBox({ clienteId, proposta, onRegistrata, vaiA,
     registra(scelte.map((c) => ({
       nominativo: c.nome, codiceFiscale: /^[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]$/.test(c.id) ? c.id : null,
       criterio: 'RESIDUALE_POTERI', norma: 'art. 20 co. 5 DLgs. 231/2007', quota: null, pep: false, motivazione: motivazione.trim(),
-    })), modificata);
+    })), modificata, motivazioneDaAi ? 'AI_PROFESSIONISTA' : undefined);
   };
 
   const scartaProposta = async () => {
@@ -395,8 +416,16 @@ export function PropostaTitolaritaBox({ clienteId, proposta, onRegistrata, vaiA,
               ) : (
                 <div className="text-xs text-red-600 mt-1">Nessuna carica con poteri letta dalla visura: registra a mano dal fascicolo, con motivazione.</div>
               )}
-              <label className="label mt-3">Motivazione ex art. 20 co. 6 (bozza scritta dai fatti: correggila e firmala)</label>
-              <textarea className="input min-h-[140px] text-xs" value={motivazione} onChange={(e) => setMotivazione(e.target.value)} />
+              <div className="flex items-end justify-between gap-2 mt-3">
+                <label className="label !mb-0">Motivazione ex art. 20 co. 6 (bozza scritta dai fatti: correggila e firmala)</label>
+                {aiPronta && (
+                  <button type="button" className="btn btn-secondary btn-sm" data-test="rendi-leggibile" onClick={rendiLeggibile} disabled={aiInCorso || invio} title="L’AI riscrive la bozza in italiano piano senza aggiungere né togliere fatti; i nomi viaggiano come segnaposto">
+                    {aiInCorso ? 'L’assistente riscrive…' : 'Rendi leggibile (AI)'}
+                  </button>
+                )}
+              </div>
+              <textarea className="input min-h-[140px] text-xs" data-test="motivazione-co6" value={motivazione} onChange={(e) => { setMotivazione(e.target.value); }} />
+              {aiAvviso && <div className={`text-xs mt-1 ${motivazioneDaAi ? 'text-teal-700' : 'text-amber-700'}`} data-test="avviso-ai">{aiAvviso}</div>}
             </li>
           </ol>
           <div className="flex justify-end gap-2">

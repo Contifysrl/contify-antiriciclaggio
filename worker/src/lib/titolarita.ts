@@ -49,6 +49,8 @@ export async function registraTitolari(
     propostaEsito = b.propostaModificata ? 'MODIFICATA' : 'APPLICATA';
     const esito = JSON.stringify(await cifra(env.MASTER_KEY, tenantId, JSON.stringify({
       motivazione: b.propostaMotivazione ?? null, titolariRegistrati: b.titolari.map((t: any) => ({ nominativo: t.nominativo, criterio: t.criterio, quota: t.quota ?? null })),
+      // AR-M21 (AI-02): la motivazione co. 6 riscritta dall'AI e firmata dal professionista.
+      provenienzaMotivazione: b.provenienzaMotivazione === 'AI_PROFESSIONISTA' ? 'AI_PROFESSIONISTA' : 'PROFESSIONISTA',
     })));
     await env.DB.prepare(
       "UPDATE proposte SET stato = ?, esito = ?, rivista_da = ?, rivista_il = datetime('now') WHERE id = ? AND tenant_id = ? AND cliente_id = ? AND stato = 'PROPOSTA'",
