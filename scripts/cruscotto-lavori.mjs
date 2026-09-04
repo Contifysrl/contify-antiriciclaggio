@@ -22,6 +22,10 @@ const STATI = {
   '[-]': { codice: 'rinviato', etichetta: 'Rinviato', colore: '#cbd5e1' },
 };
 
+// Titolo e sottotitolo dall'H1 del piano («# Piano dei lavori Contify AR — AR-M21 «…»»): lo stesso script
+// serve per ogni piano.
+const h1 = (md.match(/^# (.+)$/m)?.[1] ?? 'Piano dei lavori').trim();
+const titoloPiano = h1.replace(/^Piano dei lavori Contify AR\s*[—-]\s*/i, '');
 const sezioni = [];
 let corrente = null;
 let intestazione = null;
@@ -33,7 +37,6 @@ for (const riga of md.split('\n')) {
   if (h2) {
     inDiario = /^Diario/.test(h2[1]);
     corrente = inDiario || /^Legenda|^Decisioni/.test(h2[1]) ? null : { titolo: h2[1].trim(), attivita: [] };
-    if (corrente) sezioni.push(corrente);
     intestazione = null;
     continue;
   }
@@ -43,6 +46,7 @@ for (const riga of md.split('\n')) {
   if (!intestazione) { intestazione = celle; continue; }
   if (inDiario) { diario.push(celle); continue; }
   if (!corrente) continue;
+  if (!sezioni.includes(corrente)) sezioni.push(corrente);   // solo le sezioni con una tabella
   const idx = (nome) => intestazione.findIndex((c) => c.toLowerCase().startsWith(nome));
   const stato = celle[idx('stato')] ?? '';
   const def = STATI[stato] ?? STATI['[ ]'];
@@ -77,7 +81,7 @@ const oggi = new Date().toLocaleDateString('it-IT', { day: '2-digit', month: '2-
 
 const html = `<!DOCTYPE html>
 <html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Contify AR — Cruscotto lavori M17→M20</title>
+<title>Contify AR — Cruscotto lavori ${esc(titoloPiano)}</title>
 <style>
 :root{--brand:#048587;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--bg:#f8fafc}
 *{box-sizing:border-box}body{margin:0;font:15px/1.5 -apple-system,Segoe UI,Inter,sans-serif;color:var(--ink);background:var(--bg)}
@@ -103,7 +107,7 @@ code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12.5px}
 footer{color:var(--muted);font-size:12px;text-align:center;margin-top:30px}
 @media print{.filtri{display:none}section h2{cursor:default}}
 </style></head><body>
-<header><div class="logo">AR</div><div><h1>Contify AR — Piano dei lavori M17 → M20</h1><div class="sub">«Partire al contrario»: dalla visura al fascicolo proposto · generato il ${oggi} da <code>${esc(sorgente)}</code></div></div></header>
+<header><div class="logo">AR</div><div><h1>Contify AR — Piano dei lavori ${esc(titoloPiano)}</h1><div class="sub">generato il ${oggi} da <code>${esc(sorgente)}</code></div></div></header>
 <main>
 <div class="kpi">
   <div class="card"><div class="n">${pct(totale)}%</div><div class="l">Avanzamento complessivo</div>${barra(totale)}</div>
