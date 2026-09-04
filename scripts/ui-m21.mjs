@@ -7,7 +7,9 @@
  *   AI-02: scheda del cliente 4×25% → proposta con A3 → sequenza guidata → «Rendi leggibile (AI)» → il testo torna
  *          nella textarea con l'avviso «verificato sui numeri» → registra col residuale → proposta MODIFICATA e
  *          titolare residuale nella scheda.
- *   (le sezioni AI-03/CON si aggiungono qui)
+ *   AI-03: fascicolo di un cliente con oggetto sociale non riconosciuto → «Chiedi all'AI (oggetto sociale)» in A.2 →
+ *          esito nel riquadro, A.2 = 4 con badge «AI — da confermare» e provenienza.
+ *   (le sezioni CON si aggiungono qui)
  *
  *   npm run build && npx wrangler dev --port 8787 --local
  *   node scripts/ui-m21.mjs        (CHROMIUM=/percorso/chrome se serve)
@@ -121,6 +123,32 @@ console.log('\n== AI-02 — «Rendi leggibile (AI)» nella proposta di titolarit
   await p.waitForTimeout(1500);
   verifica('scheda: titolare effettivo col criterio residuale', /residuale/i.test(await p.textContent('body')));
   await scatto('07-scheda');
+}
+
+// ── AI-03: classificazione dell'oggetto sociale dal fascicolo proposto ──
+console.log('\n== AI-03 — «Chiedi all’AI (oggetto sociale)» nel fascicolo proposto ==');
+{
+  const v = fixture('srl-due-soci-pf.txt');
+  v.codiceFiscale = `09990${suffisso}`; v.partitaIva = v.codiceFiscale; v.denominazione = `PLAYWRIGHT METALLI ${suffisso} SRL`;
+  v.ateco = '46.90.00'; v.attivitaPrevalente = 'Commercio all’ingrosso non specializzato';
+  const corpo = corpoDaVisura(v);
+  corpo.anagrafica.datiIdentificativi = { ...corpo.anagrafica.datiIdentificativi, oggettoSociale: `La ${v.denominazione} acquista da privati e rivende monili e gioie usate, lingotti e monete.`, visuraDel: v.dataEstrazione };
+  const creato = await api('POST', '/clienti/da-visura', corpo);
+  const fasc = await api('POST', '/fascicoli', { clienteId: creato?.id, prestazioneCodice: 'CONSULENZA_TRIBUTARIA', dataConferimento: new Date().toISOString().slice(0, 10) });
+  verifica('preparazione: cliente con oggetto sociale e fascicolo', Boolean(creato?.id && fasc?.id));
+  await p.goto(`${BASE}/#fascicolo?id=${fasc.id}`);
+  await p.waitForSelector('[data-test=fascicolo-proposto]', { timeout: 15000 });
+  await p.waitForTimeout(800);
+  const rigaPrima = await p.textContent('[data-test=proposta-prevalente_attivita]');
+  verifica('A.2 = 1 proposto con il pulsante «Chiedi all’AI»', /non rientra nei settori esposti/.test(rigaPrima) && (await p.locator('[data-test=chiedi-ai-settore]').count()) === 1);
+  await scatto('08-a2-prima');
+  await p.click('[data-test=chiedi-ai-settore]');
+  await p.waitForTimeout(1800);
+  const esito = await p.textContent('[data-test=esito-ai-settore]');
+  verifica('esito: l’AI propone «Compro oro…» (punteggio 4)', /Compro oro/.test(esito) && /punteggio 4/.test(esito));
+  const rigaDopo = await p.textContent('[data-test=proposta-prevalente_attivita]');
+  verifica('A.2 = 4 con badge «AI — da confermare» e motivazione con la provenienza', /AI — da confermare/.test(rigaDopo) && /riconosciuto dall’AI/.test(rigaDopo) && (await p.locator('[data-test=chiedi-ai-settore]').count()) === 0);
+  await scatto('09-a2-dopo');
 }
 
 await b.close();

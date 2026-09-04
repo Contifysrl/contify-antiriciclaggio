@@ -99,6 +99,7 @@ export async function propostaFascicolo(
             dataCostituzione: dettagli.dataCostituzione ?? null, statoAttivita: dettagli.statoAttivita ?? null,
             inLiquidazione: dettagli.inLiquidazione ?? null, proceduraConcorsuale: dettagli.proceduraConcorsuale ?? null,
             oggettoSociale: dettagli.oggettoSociale ?? null, visuraDel: dettagli.visuraDel ?? null,
+            settoreAi: dettagli.settoreAi && typeof dettagli.settoreAi === 'object' ? dettagli.settoreAi : null,
           }
         : null,
     },

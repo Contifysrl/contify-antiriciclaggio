@@ -454,6 +454,68 @@ export async function riscriviMotivazioneCo6(env: Env, fatti: string, dizionario
   return { esito: { testo, validata: v.ok, mancanti: v.mancanti, nuovi: v.nuovi }, pseudonimi: ps.pseudonimi };
 }
 
+// ── Classificazione dell'oggetto sociale (AR-M21, AI-03) ─────────
+// Quando né ATECO né parole chiave riconoscono un settore esposto, su
+// richiesta del professionista l'AI legge oggetto sociale e attività
+// (pseudonimizzati: la denominazione può comparire nell'oggetto) e risponde
+// con UN codice del catalogo o NESSUNO, più un motivo. Il codice è sempre
+// riscontrato sul catalogo: il modello non può inventare settori.
+
+export interface VoceSettoreAi { codice: string; etichetta: string; motivo: string }
+export interface EsitoSettoreAi { codice: string | null; motivo: string }
+
+export async function classificaSettore(env: Env, testo: string, voci: VoceSettoreAi[], dizionario: Dizionario = DIZIONARIO_VUOTO): Promise<EsitoAi<EsitoSettoreAi>> {
+  const ps = new Pseudonimizzatore(dizionario);
+  const testoPs = ps.applica(testo.slice(0, 5000));
+  const sistema =
+    'Sei un assistente per professionisti italiani soggetti alla normativa antiriciclaggio (DLgs. 231/2007). ' +
+    'Ti viene dato l\'oggetto sociale (e l\'attività prevalente) di una società e un catalogo di settori esposti al rischio di riciclaggio, ' +
+    'ciascuno con codice, etichetta e motivo. Indica il settore del catalogo in cui rientra l\'attività PREVALENTE descritta, ' +
+    'solo se rientra davvero; altrimenti NESSUNO. Le clausole di stile («la società può compiere tutte le operazioni…», elenchi di attività accessorie) non contano. ' +
+    'Rispondi con UN SOLO oggetto JSON, senza altro testo: {"codice":"<codice del catalogo oppure NESSUNO>","motivo":"una frase"}. Non inventare codici.';
+  const utente =
+    `OGGETTO SOCIALE E ATTIVITÀ:\n${testoPs}\n\nCATALOGO DEI SETTORI ESPOSTI:\n${voci.map((v) => `${v.codice} — ${v.etichetta}: ${v.motivo}`).join('\n')}\nNESSUNO — nessun settore esposto riconoscibile`;
+
+  let risposta: string;
+  if (env.AI_FIXTURES === '1') {
+    controllaPayload({ sistema, utente, maxTokens: 0, dizionario });
+    // Classificazione di prova: qualche parola che il catalogo NON conosce ma un lettore capirebbe.
+    const t = testoPs.toLowerCase();
+    const codice = /monili|lingott|gioie\b|monete d.oro|monete/.test(t) && voci.some((v) => v.codice === 'COMPRO_ORO') ? 'COMPRO_ORO'
+      : /puntate|quote di gioco|sale da gioco/.test(t) && voci.some((v) => v.codice === 'GIOCO') ? 'GIOCO'
+      : 'NESSUNO';
+    risposta = JSON.stringify({ codice, motivo: codice === 'NESSUNO' ? 'Classificazione di prova (fixtures): nessun settore esposto riconoscibile.' : `Classificazione di prova (fixtures): l’oggetto sociale descrive ${codice === 'COMPRO_ORO' ? 'il commercio di preziosi usati' : 'attività di gioco'}.` });
+  } else {
+    risposta = await chiamaClaude(env, { sistema, utente, maxTokens: 300, dizionario });
+  }
+  const grezzo = estraiJsonOggetto(risposta);
+  const codiceGrezzo = String(grezzo?.codice ?? '').trim().toUpperCase();
+  const motivo = ps.ripristina(String(grezzo?.motivo ?? '').slice(0, 400));
+  // Riscontro sul catalogo: un codice sconosciuto vale come «nessuna risposta utile», mai come un settore.
+  const codice = codiceGrezzo === 'NESSUNO' ? null : voci.some((v) => v.codice === codiceGrezzo) ? codiceGrezzo : null;
+  if (!codice && codiceGrezzo !== 'NESSUNO') {
+    return { esito: { codice: null, motivo: codiceGrezzo ? `Risposta non riscontrabile sul catalogo (${codiceGrezzo.slice(0, 40)}): nessuna proposta.` : 'Risposta non leggibile: nessuna proposta.' }, pseudonimi: ps.pseudonimi };
+  }
+  return { esito: { codice, motivo }, pseudonimi: ps.pseudonimi };
+}
+
+/** Primo oggetto JSON nella risposta del modello, tollerando testo attorno. */
+export function estraiJsonOggetto(testo: string): any | null {
+  const inizio = testo.indexOf('{');
+  if (inizio < 0) return null;
+  let profondita = 0;
+  for (let i = inizio; i < testo.length; i++) {
+    if (testo[i] === '{') profondita++;
+    if (testo[i] === '}') {
+      profondita--;
+      if (profondita === 0) {
+        try { const v = JSON.parse(testo.slice(inizio, i + 1)); return v && typeof v === 'object' ? v : null; } catch { return null; }
+      }
+    }
+  }
+  return null;
+}
+
 // ── Chat di assistenza in-app (AR-M10) ─────────────────────────
 // Risponde su come si usa Contify AR e sulla normativa di riferimento.
 // Le conversazioni NON vengono conservate: viaggiano dal browser al

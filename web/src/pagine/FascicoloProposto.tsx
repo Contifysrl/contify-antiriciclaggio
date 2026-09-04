@@ -17,6 +17,10 @@ export interface FattoreProposto {
   motivazione: string;
   fonte: string;
   daVerificare?: boolean;
+  /** AR-M21 (AI-03): punteggio proposto dall'AI sull'oggetto sociale, da confermare. */
+  provenienzaAi?: { settore: string; motivo: string; data: string } | null;
+  /** AR-M21 (AI-03): si può chiedere all'AI di classificare l'oggetto sociale. */
+  richiedibileAi?: boolean;
 }
 
 export interface PropostaFascicoloDto {
@@ -77,9 +81,25 @@ export function FascicoloProposto({ fascicoloId, clienteId, esente, valutata, ag
   const [aperto, setAperto] = useState(!valutata);
   const [esecutoreForm, setEsecutoreForm] = useState<{ nominativo: string; codiceFiscale: string; caricaTesto: string; carica: string | null } | null>(null);
   const [invio, setInvio] = useState(false);
+  // AR-M21 (AI-03): «Chiedi all'AI» solo con AI abilitata e informativa corrente accettata.
+  const [aiPronta, setAiPronta] = useState(false);
+  const [aiInCorso, setAiInCorso] = useState(false);
+  const [aiEsito, setAiEsito] = useState('');
 
   const carica = () => api.get<PropostaFascicoloDto>(`/fascicoli/${fascicoloId}/proposta`).then(setP).catch((e) => setErrore(e.message));
   useEffect(() => { carica(); /* eslint-disable-next-line */ }, [fascicoloId, aggiornaAl]);
+  useEffect(() => {
+    api.get<{ abilitata: boolean; daRiaccettare: boolean }>('/ai/stato').then((s) => setAiPronta(s.abilitata && !s.daRiaccettare)).catch(() => setAiPronta(false));
+  }, []);
+
+  const chiediSettoreAi = async () => {
+    setAiInCorso(true); setErrore(''); setAiEsito('');
+    try {
+      const r = await api.post<{ settore: { etichetta: string; punteggio: number } | null; motivo: string }>('/ai/settore', { clienteId, fascicoloId });
+      setAiEsito(r.settore ? `L’AI propone «${r.settore.etichetta}» (punteggio ${r.settore.punteggio}): ${r.motivo}` : `L’AI non ha riconosciuto settori esposti: ${r.motivo}`);
+      await carica();
+    } catch (e) { setErrore((e as Error).message); } finally { setAiInCorso(false); }
+  };
 
   if (errore) return <Riquadro tipo="avviso">Proposta del fascicolo non disponibile: {errore}</Riquadro>;
   if (!p) return null;
@@ -178,11 +198,20 @@ export function FascicoloProposto({ fascicoloId, clienteId, esente, valutata, ag
                     <tr key={f.codice} data-test={`proposta-${f.codice}`}>
                       <td><strong>{f.etichetta}</strong></td>
                       <td className="mono" style={{ whiteSpace: 'nowrap' }}>
-                        {f.punteggio !== null ? <><span style={{ fontSize: 18, fontWeight: 700 }}>{f.punteggio}</span> <Badge tone="teal">proposto</Badge></> : <Badge tone={f.daVerificare ? 'amber' : 'gray'}>{f.daVerificare ? 'da verificare' : 'chiesto'}</Badge>}
+                        {f.punteggio !== null ? <><span style={{ fontSize: 18, fontWeight: 700 }}>{f.punteggio}</span> <Badge tone={f.provenienzaAi ? 'amber' : 'teal'}>{f.provenienzaAi ? 'AI — da confermare' : 'proposto'}</Badge></> : <Badge tone={f.daVerificare ? 'amber' : 'gray'}>{f.daVerificare ? 'da verificare' : 'chiesto'}</Badge>}
                       </td>
                       <td className="text-sm">
                         {f.motivazione}
                         <div className="text-xs text-ink-400 mt-1">Fonte: {f.fonte}</div>
+                        {f.codice === 'prevalente_attivita' && f.richiedibileAi && aiPronta && !valutata && (
+                          <div className="mt-1">
+                            <button type="button" className="btn btn-secondary btn-sm" data-test="chiedi-ai-settore" onClick={chiediSettoreAi} disabled={aiInCorso || invio}
+                              title="L’AI legge l’oggetto sociale (con i nomi sostituiti da segnaposto) e propone una voce del catalogo dei settori esposti, o nessuna; il punteggio resta una proposta da confermare">
+                              {aiInCorso ? 'L’assistente legge l’oggetto sociale…' : 'Chiedi all’AI (oggetto sociale)'}
+                            </button>
+                          </div>
+                        )}
+                        {f.codice === 'prevalente_attivita' && aiEsito && <div className="text-xs text-teal-700 mt-1" data-test="esito-ai-settore">{aiEsito}</div>}
                         {f.codice === 'area_geografica_cliente' && f.daVerificare && !p.tabellaProvinceCompilata && (
                           <div className="text-xs mt-1"><a href="#impostazioni" onClick={(e) => { e.preventDefault(); vaiA('impostazioni'); }}>Compila la tabella delle province in Impostazioni</a></div>
                         )}

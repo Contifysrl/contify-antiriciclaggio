@@ -454,6 +454,19 @@ export async function propostaTitolarita(
   return { analisi, alert, bozzaMotivazione: bozza, soci: radice.soci, cariche: radice.cariche, catena };
 }
 
+/**
+ * AR-M21 (AI-03): aggiorna in place il contenuto cifrato di una proposta
+ * ancora aperta (es. la RISCHIO_A del fascicolo dopo la classificazione AI del
+ * settore), così la proposta registrata coincide con quella viva.
+ */
+export async function aggiornaContenutoProposta(env: Env, tenantId: string, propostaId: string, modifica: (contenuto: any) => any): Promise<boolean> {
+  const r = await env.DB.prepare("SELECT contenuto FROM proposte WHERE id = ? AND tenant_id = ? AND stato = 'PROPOSTA'").bind(propostaId, tenantId).first<any>();
+  if (!r) return false;
+  const contenuto = (await decifraJson<any>(env, tenantId, r.contenuto)) ?? {};
+  await env.DB.prepare('UPDATE proposte SET contenuto = ? WHERE id = ? AND tenant_id = ?').bind(await cifraJson(env, tenantId, modifica(contenuto)), propostaId, tenantId).run();
+  return true;
+}
+
 /** Registra la proposta (cifrata) e restituisce l'id. I codici alert restano in chiaro: nessun dato personale. */
 export async function registraProposta(
   env: Env,

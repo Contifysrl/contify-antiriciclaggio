@@ -22,6 +22,11 @@
  *     200 con la riscrittura validata sui numeri (fixture), nomi ri-sostituiti, audit con validata; registrazione
  *     residuale con provenienza AI_PROFESSIONISTA → proposta MODIFICATA con la provenienza nell'esito;
  *     cliente senza residuale → 400.
+ * AI-03 (classificazione dell'oggetto sociale, solo su richiesta):
+ *  8. cliente con ATECO neutro e oggetto sociale che il catalogo non riconosce («monili, lingotti») → A.2 = 1
+ *     richiedibile → POST /ai/settore → COMPRO_ORO con provenienza AI, A.2 = 4 «da confermare» nella proposta
+ *     viva e nella RISCHIO_A registrata, motivazione della valutazione con la provenienza; settore già
+ *     riconosciuto → 400; cliente senza oggetto sociale → 400; audit con l'esito e senza contenuto.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -237,6 +242,58 @@ console.log('\n== 6. AI-02 — motivazione co. 6 leggibile ==');
   verifica('cliente con titolari per proprietà → 400 (niente motivazione co. 6 da riscrivere)', rNo.stato === 400, rNo.dati);
   const rNoCli = await req('POST', '/ai/bozza', { tipo: 'MOTIVAZIONE_CO6', clienteId: 'cli_inesistente' });
   verifica('cliente inesistente → 404', rNoCli.stato === 404, rNoCli.dati);
+}
+
+// ── 7. AI-03 — classificazione dell'oggetto sociale ──
+console.log('\n== 7. AI-03 — classificazione dell’oggetto sociale su richiesta ==');
+{
+  const v = fixture('srl-due-soci-pf.txt');
+  v.codiceFiscale = `07777${suffisso}`; v.partitaIva = v.codiceFiscale; v.denominazione = `BANCO METALLI ${suffisso} SRL`;
+  v.ateco = '46.90.00'; v.attivitaPrevalente = 'Commercio all’ingrosso non specializzato';
+  const oggetto = `La ${v.denominazione} ha per oggetto l’acquisto da privati e la rivendita di monili e gioie usate, lingotti e monete, nonché ogni attività connessa.`;
+  const corpo = corpoDaVisura(v);
+  corpo.anagrafica.datiIdentificativi = { ...corpo.anagrafica.datiIdentificativi, oggettoSociale: oggetto, visuraDel: v.dataEstrazione };
+  const c = await req('POST', '/clienti/da-visura', corpo);
+  verifica('cliente con oggetto sociale non riconosciuto dal catalogo', c.stato === 201, c.dati);
+  const idS = c.dati?.id;
+  const f = await req('POST', '/fascicoli', { clienteId: idS, prestazioneCodice: 'CONSULENZA_TRIBUTARIA', dataConferimento: oggi });
+  const idFS = f.dati?.id;
+  const prima = await req('GET', `/fascicoli/${idFS}/proposta`);
+  const a2prima = prima.dati?.tabellaA?.prevalente_attivita;
+  verifica('prima: A.2 = 1 proposto, richiedibile all’AI, senza provenienza AI', a2prima?.punteggio === 1 && a2prima?.richiedibileAi === true && !a2prima?.provenienzaAi, a2prima);
+
+  const r = await req('POST', '/ai/settore', { clienteId: idS, fascicoloId: idFS });
+  verifica('classificazione: COMPRO_ORO (punteggio 4) con motivo', r.stato === 200 && r.dati?.settore?.codice === 'COMPRO_ORO' && r.dati?.settore?.punteggio === 4 && typeof r.dati?.motivo === 'string', r.dati);
+  verifica('la denominazione nell’oggetto sociale è stata pseudonimizzata (≥ 1)', r.dati?.pseudonimi >= 1, r.dati?.pseudonimi);
+  verifica('la proposta RISCHIO_A registrata del fascicolo è stata aggiornata', r.dati?.propostaAggiornata === true, r.dati);
+  const dopo = await req('GET', `/fascicoli/${idFS}/proposta`);
+  const a2 = dopo.dati?.tabellaA?.prevalente_attivita;
+  verifica('dopo: A.2 = 4 con provenienza AI «da confermare» e voce del catalogo', a2?.punteggio === 4 && a2?.provenienzaAi?.settore === 'COMPRO_ORO' && /da confermare/.test(a2?.motivazione ?? '') && /ANR-5\.3\.2/.test(a2?.fonte ?? ''), a2);
+  verifica('la provenienza della proposta e la motivazione della valutazione citano l’AI', /proposto dall’AI/.test(dopo.dati?.provenienza ?? '') && /AI/.test(dopo.dati?.motivazioneValutazione ?? ''), dopo.dati?.provenienza);
+  const reg = (dopo.dati?.proposte ?? []).find((x) => x.ambito === 'RISCHIO_A' && x.stato === 'PROPOSTA');
+  verifica('RISCHIO_A registrata: punteggio A.2 = 4 e settoreAi nel contenuto', reg?.contenuto?.punteggi?.prevalente_attivita === 4 && reg?.contenuto?.settoreAi?.codice === 'COMPRO_ORO', reg?.contenuto?.punteggi);
+  const det = dettaglio(await ultimoAudit('USO_AI'));
+  verifica('audit USO_AI settore con esito e pseudonimi, senza l’oggetto sociale', det.funzione === 'settore' && det.esito === 'COMPRO_ORO' && det.pseudonimi >= 1 && !JSON.stringify(det).includes('monili'), det);
+
+  // Il flusso M18: applicare la Tabella A proposta con un punteggio diverso richiede la motivazione dello scostamento.
+  const punteggi = Object.fromEntries(Object.values(dopo.dati.tabellaA).map((x) => [x.codice, x.punteggio]));
+  const scost = await req('POST', `/fascicoli/${idFS}/valutazioni`, {
+    tabellaA: { natura_giuridica: 2, prevalente_attivita: 2, comportamento: 1, area_geografica_cliente: 1 }, tabellaB: { tipologia: 1, modalita_svolgimento: 1, ammontare: 1, frequenza_durata: 1, ragionevolezza: 1, area_geografica_destinazione: 1 },
+    circostanze: {}, proposta: { id: reg?.id, punteggi, provenienza: dopo.dati.provenienza },
+  });
+  verifica('scostarsi dal punteggio proposto dall’AI senza motivazione → 400', scost.stato === 400, scost.dati);
+
+  // Settore già riconosciuto → 400; cliente senza oggetto sociale → 400.
+  const nudo = await req('POST', '/clienti', { tipo: 'SOCIETA_CAPITALI', denominazione: `SENZA OGGETTO ${suffisso} SRL` });
+  const gia = await req('POST', '/ai/settore', { clienteId: nudo.dati?.id });
+  verifica('cliente senza oggetto sociale né attività → 400', gia.stato === 400, gia.dati);
+  const alfa = await req('POST', '/ai/settore', { clienteId: 'cli_alfa' });
+  verifica('cliente con la sola attività prevalente («Costruzioni edili») → l’AI legge quella: NESSUNO', alfa.stato === 200 && alfa.dati?.settore === null, alfa.dati);
+  const vOro = fixture('srl-due-soci-pf.txt');
+  vOro.codiceFiscale = `09999${suffisso}`; vOro.partitaIva = vOro.codiceFiscale; vOro.denominazione = `ORO VERO ${suffisso} SRL`; vOro.ateco = '47.77.00';
+  const cOro = await req('POST', '/clienti/da-visura', corpoDaVisura(vOro));
+  const rOro = await req('POST', '/ai/settore', { clienteId: cOro.dati?.id });
+  verifica('ATECO 47.77 già riconosciuto → 400 settore_gia_riconosciuto', rOro.stato === 400 && rOro.dati?.codice === 'settore_gia_riconosciuto', rOro.dati);
 }
 
 console.log(`\nRisultato: ${ok} ok, ${fail} fail`);

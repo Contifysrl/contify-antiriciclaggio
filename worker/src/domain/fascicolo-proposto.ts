@@ -30,7 +30,7 @@ import type { Punteggio } from './types';
 import type { Alert, SocioCompagine } from './alert-titolarita';
 import type { CodiceCarica, RisultatoAnalisiTitolarita } from './titolare-effettivo';
 import { CARICHE_CON_POTERI, etichettaCarica } from './titolare-effettivo';
-import { settoreEsposto, settoriRichiamati, type VoceSettore } from './settori-esposti';
+import { voceSettorePerCodice, settoreEsposto, settoriRichiamati, type VoceSettore } from './settori-esposti';
 import { provincia as infoProvincia, siglaProvinciaDaTesto, type TabellaProvinceContante } from './province';
 import type { EsitoPaeseAltoRischio } from './norme';
 
@@ -48,6 +48,13 @@ export interface DettagliCliente {
   proceduraConcorsuale?: string | null;
   oggettoSociale?: string | null;
   visuraDel?: string | null;
+  /**
+   * AR-M21 (AI-03): classificazione dell'oggetto sociale chiesta dal
+   * professionista all'AI quando né ATECO né parole chiave riconoscono un
+   * settore. È una PROPOSTA con provenienza AI: il codice si riscontra sul
+   * catalogo; NESSUNO = l'AI non ha riconosciuto settori esposti.
+   */
+  settoreAi?: { codice: string; motivo: string; data: string; da?: string | null } | null;
 }
 
 export interface CaricaProposta {
@@ -110,6 +117,10 @@ export interface FattoreProposto {
   fonte: string;
   /** Vero quando la proposta dipende da un dato che lo studio deve ancora compilare o verificare. */
   daVerificare?: boolean;
+  /** AR-M21 (AI-03): il punteggio viene da una classificazione dell'AI, da confermare. */
+  provenienzaAi?: { settore: string; motivo: string; data: string } | null;
+  /** AR-M21 (AI-03): il professionista può chiedere all'AI di classificare l'oggetto sociale. */
+  richiedibileAi?: boolean;
 }
 
 export interface EsecutoreProposto {
@@ -203,6 +214,9 @@ export function proponiFascicolo(input: InputFascicoloProposto): FascicoloPropos
     : sociReali.length || cariche.length
       ? 'dati camerali in archivio'
       : 'anagrafica del cliente (nessuna visura in archivio)';
+  const provenienzaCompleta = d.settoreAi && d.settoreAi.codice !== 'NESSUNO'
+    ? `${provenienza}; settore A.2 proposto dall’AI sull’oggetto sociale il ${dataIt(d.settoreAi.data)}, da confermare`
+    : provenienza;
 
   const circostanze: CircostanzaSuggerita[] = [];
   const alert: AlertFascicolo[] = [];
@@ -272,17 +286,31 @@ export function proponiFascicolo(input: InputFascicoloProposto): FascicoloPropos
         fonte: `${v.fonti.join(', ')} — tabella dei settori esposti vigente dal ${dataIt(settore.serie!.da)}`,
       };
     }
+    // AR-M21 (AI-03): classificazione dell'AI chiesta dal professionista, riscontrata sul catalogo.
+    const ai = d.settoreAi ? voceSettorePerCodice(d.settoreAi.codice, input.data) : null;
+    if (ai && d.settoreAi) {
+      const v = ai.voce;
+      return {
+        ...base, punteggio: v.punteggio, stato: 'PROPOSTO',
+        motivazione: `settore «${v.etichetta}» riconosciuto dall’AI nell’oggetto sociale — da confermare: ${d.settoreAi.motivo.replace(/\.\s*$/, '')}. Voce del catalogo: ${v.motivo}`,
+        fonte: `classificazione AI del ${dataIt(d.settoreAi.data)} riscontrata sul catalogo (${v.fonti.join(', ')}) — tabella dei settori esposti vigente dal ${dataIt(ai.serie.da)}`,
+        provenienzaAi: { settore: v.codice, motivo: d.settoreAi.motivo, data: d.settoreAi.data },
+      };
+    }
+    // Si può chiedere all'AI solo se c'è un testo da leggere (oggetto sociale o attività) e non l'ha già detto «NESSUNO».
+    const richiedibileAi = Boolean((d.oggettoSociale || cliente.attivitaPrevalente) && !(d.settoreAi && d.settoreAi.codice === 'NESSUNO'));
     if (cliente.ateco || cliente.attivitaPrevalente) {
       return {
         ...base, punteggio: 1, stato: 'PROPOSTO',
-        motivazione: `${[cliente.ateco ? `ATECO ${cliente.ateco}` : null, cliente.attivitaPrevalente].filter(Boolean).join(' — ')}: non rientra nei settori esposti individuati dalle fonti (Analisi nazionale dei rischi 2024, indicatori UIF). Resta da valutare la coerenza fra l’attività svolta in concreto, la struttura organizzativa e le dimensioni`,
+        motivazione: `${[cliente.ateco ? `ATECO ${cliente.ateco}` : null, cliente.attivitaPrevalente].filter(Boolean).join(' — ')}: non rientra nei settori esposti individuati dalle fonti (Analisi nazionale dei rischi 2024, indicatori UIF)${d.settoreAi?.codice === 'NESSUNO' ? `; anche l’AI, letto l’oggetto sociale il ${dataIt(d.settoreAi.data)}, non vi ha riconosciuto settori esposti` : ''}. Resta da valutare la coerenza fra l’attività svolta in concreto, la struttura organizzativa e le dimensioni`,
         fonte: settore.serie ? `tabella dei settori esposti vigente dal ${dataIt(settore.serie.da)} (${settore.serie.fonte})` : FONTE_CNDCEC,
+        richiedibileAi,
       };
     }
     return {
       ...base, punteggio: null, stato: 'CHIESTO',
       motivazione: 'attività prevalente e ATECO non noti: completa l’anagrafica (dalla visura o a mano) per una proposta fondata sulle fonti',
-      fonte: FONTE_CNDCEC, daVerificare: true,
+      fonte: FONTE_CNDCEC, daVerificare: true, richiedibileAi,
     };
   })();
 
@@ -391,13 +419,13 @@ export function proponiFascicolo(input: InputFascicoloProposto): FascicoloPropos
 
   const tabellaA = { natura_giuridica: a1, prevalente_attivita: a2, comportamento: a3, area_geografica_cliente: a4 };
   const motivazioneValutazione =
-    `Tabella A proposta dal programma (${provenienza}) e valutata dal professionista. ` +
+    `Tabella A proposta dal programma (${provenienzaCompleta}) e valutata dal professionista. ` +
     Object.values(tabellaA)
       .filter((f) => f.stato === 'PROPOSTO' && f.punteggio !== null)
       .map((f) => `${f.etichetta}: ${f.punteggio} — ${f.motivazione}`)
       .join(' · ');
 
-  return { tabellaA, circostanze, esecutore, checklist, alert, provenienza, motivazioneValutazione };
+  return { tabellaA, circostanze, esecutore, checklist, alert, provenienza: provenienzaCompleta, motivazioneValutazione };
 }
 
 // --------------------------------------------------------------- esecutore

@@ -3,7 +3,7 @@ import { analizzaTitolaritaEffettiva, type Carica, type NodoPartecipazione } fro
 import { calcolaAlertTitolarita, type InputAlert, type SocioCompagine } from '../worker/src/domain/alert-titolarita';
 import { paeseAltoRischio } from '../worker/src/domain/norme';
 import { proponiFascicolo, proponiEsecutore, type InputFascicoloProposto, type CaricaProposta } from '../worker/src/domain/fascicolo-proposto';
-import { settoreEsposto, settoriRichiamati, SETTORI_ESPOSTI } from '../worker/src/domain/settori-esposti';
+import { settoreEsposto, settoriRichiamati, voceSettorePerCodice, SETTORI_ESPOSTI } from '../worker/src/domain/settori-esposti';
 import { PROVINCE, normalizzaTabellaProvince, siglaProvinciaDaTesto, type TabellaProvinceContante } from '../worker/src/domain/province';
 
 const OGGI = '2026-09-03';
@@ -237,5 +237,54 @@ describe('Fascicolo proposto — esecutore, checklist, A9/A10', () => {
     const ampia = proponiFascicolo(base({ cliente: { ...base().cliente, dettagli: { ...base().cliente.dettagli, capitaleSociale: 10000, oggettoSociale: 'commercio di oro e preziosi; gestione di sale scommesse; raccolta e smaltimento di rifiuti; consulenza' } } }));
     expect(ampia.alert.find((a) => /Oggetto sociale molto ampio/.test(a.titolo))?.gravita).toBe('media');
     expect(ampia.tabellaA.prevalente_attivita.punteggio).toBe(4); // vince il settore col punteggio più alto
+  });
+});
+
+describe('AR-M21 AI-03 — classificazione dell’oggetto sociale con provenienza AI', () => {
+  const oggetto = 'acquisto da privati e rivendita di monili e gioie usate, lingotti e monete';
+  const cli = (settoreAi: any) => ({ ...base().cliente, ateco: '46.90.00', attivitaPrevalente: 'Commercio all’ingrosso non specializzato', dettagli: { ...base().cliente.dettagli, oggettoSociale: oggetto, settoreAi } });
+
+  it('senza classificazione: A.2 = 1 e si può chiedere all’AI (c’è un oggetto sociale)', () => {
+    const p = proponiFascicolo(base({ cliente: cli(null) }));
+    const a2 = p.tabellaA.prevalente_attivita;
+    expect(settoreEsposto({ ateco: '46.90.00', attivita: 'Commercio all’ingrosso non specializzato', oggettoSociale: oggetto }, OGGI).voce).toBeNull();
+    expect(a2.punteggio).toBe(1);
+    expect(a2.richiedibileAi).toBe(true);
+    expect(a2.provenienzaAi).toBeUndefined();
+  });
+
+  it('con la classificazione AI riscontrata sul catalogo: punteggio della voce, provenienza AI «da confermare», nel testo della valutazione', () => {
+    const p = proponiFascicolo(base({ cliente: cli({ codice: 'COMPRO_ORO', motivo: 'descrive il commercio di preziosi usati', data: OGGI }) }));
+    const a2 = p.tabellaA.prevalente_attivita;
+    expect(a2.punteggio).toBe(4);
+    expect(a2.stato).toBe('PROPOSTO');
+    expect(a2.provenienzaAi?.settore).toBe('COMPRO_ORO');
+    expect(a2.motivazione).toMatch(/riconosciuto dall’AI nell’oggetto sociale — da confermare/);
+    expect(a2.fonte).toMatch(/classificazione AI del/);
+    expect(p.provenienza).toMatch(/proposto dall’AI sull’oggetto sociale/);
+    expect(p.motivazioneValutazione).toMatch(/AI/);
+  });
+
+  it('NESSUNO: A.2 resta 1, lo dice nella motivazione e non si richiede più', () => {
+    const p = proponiFascicolo(base({ cliente: cli({ codice: 'NESSUNO', motivo: 'nessun settore', data: OGGI }) }));
+    const a2 = p.tabellaA.prevalente_attivita;
+    expect(a2.punteggio).toBe(1);
+    expect(a2.motivazione).toMatch(/anche l’AI/);
+    expect(a2.richiedibileAi).toBe(false);
+  });
+
+  it('un codice inventato dall’AI non è riscontrabile sul catalogo e non cambia la proposta', () => {
+    expect(voceSettorePerCodice('NARCOTRAFFICO', OGGI)).toBeNull();
+    expect(voceSettorePerCodice('compro_oro', OGGI)?.voce.codice).toBe('COMPRO_ORO');
+    const p = proponiFascicolo(base({ cliente: cli({ codice: 'NARCOTRAFFICO', motivo: 'x', data: OGGI }) }));
+    expect(p.tabellaA.prevalente_attivita.punteggio).toBe(1);
+    expect(p.tabellaA.prevalente_attivita.provenienzaAi).toBeUndefined();
+  });
+
+  it('se ATECO o parole chiave riconoscono il settore, la classificazione AI non conta', () => {
+    const p = proponiFascicolo(base({ cliente: { ...cli({ codice: 'GIOCO', motivo: 'x', data: OGGI }), ateco: '47.77.00' } }));
+    expect(p.tabellaA.prevalente_attivita.punteggio).toBe(4);
+    expect(p.tabellaA.prevalente_attivita.provenienzaAi).toBeUndefined();
+    expect(p.tabellaA.prevalente_attivita.motivazione).toMatch(/ATECO 47\.77\.00/);
   });
 });

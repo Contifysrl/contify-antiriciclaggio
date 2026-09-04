@@ -247,6 +247,14 @@ export function settoreEsposto(
   return { voce: null, via: null, serie: info };
 }
 
+/** Voce del catalogo per codice, nella serie vigente alla data (AR-M21, AI-03: i codici dell'AI si riscontrano qui). */
+export function voceSettorePerCodice(codice: string | null | undefined, data: string): { voce: VoceSettore; serie: { da: string; fonte: string } } | null {
+  const serie = SETTORI_ESPOSTI.find((s) => data >= s.da && (s.a === null || data <= s.a));
+  if (!serie || !codice) return null;
+  const voce = serie.voci.find((v) => v.codice === String(codice).trim().toUpperCase());
+  return voce ? { voce, serie: { da: serie.da, fonte: serie.fonte } } : null;
+}
+
 /** Tutti i settori esposti richiamati da un testo (per l'indicatore «oggetto sociale molto ampio», A10). */
 export function settoriRichiamati(testo: string | null | undefined, data: string): VoceSettore[] {
   const serie = SETTORI_ESPOSTI.find((s) => data >= s.da && (s.a === null || data <= s.a));

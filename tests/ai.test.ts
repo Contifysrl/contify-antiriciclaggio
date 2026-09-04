@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ErroreAi, aiAbilitata, controllaPayload, estraiJsonArray, numeriDelTesto, prefiltraSubIndici, validaRiscritturaFatti } from '../worker/src/lib/ai';
+import { ErroreAi, aiAbilitata, classificaSettore, controllaPayload, estraiJsonArray, estraiJsonOggetto, numeriDelTesto, prefiltraSubIndici, validaRiscritturaFatti } from '../worker/src/lib/ai';
 import { compilaDizionario } from '../worker/src/lib/pseudonimi';
 import { SUB_INDICI_UIF_2023 } from '../worker/src/domain/sub-indici-uif';
 
@@ -90,6 +90,31 @@ describe('Assistente AI (AR-M9) — parti pure', () => {
     it('un numero cambiato è insieme mancante e nuovo', () => {
       const v = validaRiscritturaFatti(fatti, fatti.replace('30.000,00', '300.000,00'));
       expect(v).toEqual({ ok: false, mancanti: ['30000'], nuovi: ['300000'] });
+    });
+  });
+
+  describe('AR-M21 AI-03 — classificazione del settore', () => {
+    const voci = [{ codice: 'COMPRO_ORO', etichetta: 'Compro oro', motivo: 'm' }, { codice: 'GIOCO', etichetta: 'Gioco', motivo: 'm' }];
+    const env: any = { AI_FIXTURES: '1' };
+
+    it('estraiJsonOggetto tollera testo attorno', () => {
+      expect(estraiJsonOggetto('Ecco: {"codice":"GIOCO","motivo":"x"} fine')).toEqual({ codice: 'GIOCO', motivo: 'x' });
+      expect(estraiJsonOggetto('niente')).toBeNull();
+    });
+
+    it('fixture: oggetto sociale con «monili … lingotti» → COMPRO_ORO; testo neutro → NESSUNO (codice null)', async () => {
+      const a = await classificaSettore(env, 'Oggetto sociale: acquisto e rivendita di monili usati e lingotti', voci);
+      expect(a.esito.codice).toBe('COMPRO_ORO');
+      const b = await classificaSettore(env, 'Oggetto sociale: consulenza informatica', voci);
+      expect(b.esito.codice).toBeNull();
+      expect(b.esito.motivo).toMatch(/nessun settore/i);
+    });
+
+    it('il testo passa dalla pseudonimizzazione (la denominazione nell’oggetto sociale diventa un segnaposto)', async () => {
+      const dizionario = compilaDizionario([{ tipo: 'PG', nome: 'Gioielleria Zancanaro Srl' }]);
+      const r = await classificaSettore(env, 'Oggetto sociale: la Gioielleria Zancanaro Srl compra monili usati', voci, dizionario);
+      expect(r.pseudonimi).toBe(1);
+      expect(r.esito.codice).toBe('COMPRO_ORO');
     });
   });
 });

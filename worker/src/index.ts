@@ -46,16 +46,16 @@ import { aggiornaListeSanzioni, caricaListe, eseguiScreeningTenant, listeDaAggio
 import { normalizzaPiva } from './lib/lookup/piva';
 import { registraTitolari } from './lib/titolarita';
 import { TIPI_CLIENTE, aggiornaClienteDaVisura, clienteDoppione, creaClienteDaVisura, risolviProfessionista } from './lib/da-visura';
-import { leggiProposte, propostaTitolarita, registraProposta, salvaCompagine, screeningCompagine, type CaricaIn, type SocioIn } from './lib/compagine';
-import { ErroreAi, MODELLO_DEFAULT, VERSIONE_INFORMATIVA_AI, aiAbilitata, generaBozza, informativaDaRiaccettare, riscriviMotivazioneCo6, rispostaChat, statoAi, suggerisciIndicatori } from './lib/ai';
+import { aggiornaContenutoProposta, leggiProposte, propostaTitolarita, registraProposta, salvaCompagine, screeningCompagine, type CaricaIn, type SocioIn } from './lib/compagine';
+import { ErroreAi, MODELLO_DEFAULT, VERSIONE_INFORMATIVA_AI, aiAbilitata, classificaSettore, generaBozza, informativaDaRiaccettare, riscriviMotivazioneCo6, rispostaChat, statoAi, suggerisciIndicatori } from './lib/ai';
 import { dizionarioTenant } from './lib/pseudonimi';
-import { parametriTenant, propostaFascicolo, tabellaProvince } from './lib/proposta-fascicolo';
+import { dettagliCliente, parametriTenant, propostaFascicolo, tabellaProvince } from './lib/proposta-fascicolo';
 import { completezzaStudio } from './lib/completezza';
 import { accodaVisure, applicaTuttoCoda, applicaVoceCoda, caricaPdfCoda, leggiCoda, scartaVoceCoda } from './lib/coda';
 import { REGOLE_COMPLETEZZA } from './domain/completezza';
 import { corpoDichiarazioneArt22, normalizzaRispostaArt22, precompilaDichiarazione, segnaliDaValutare, type PrecompilataArt22, type RispostaArt22 } from './lib/dichiarazione-art22';
 import { PROVINCE, RIFERIMENTO_MAPPA_ANR, normalizzaTabellaProvince } from './domain/province';
-import { SETTORI_ESPOSTI } from './domain/settori-esposti';
+import { SETTORI_ESPOSTI, settoreEsposto, voceSettorePerCodice } from './domain/settori-esposti';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 
 import { CNDCEC_2025 } from './domain/rulesets/cndcec-2025';
@@ -1679,6 +1679,69 @@ api.post('/ai/bozza', puoScrivere, async (c) => {
     return c.json({ bozza, pseudonimi });
   } catch (e) {
     return rispostaErroreAi(c, e, tipo.toLowerCase());
+  }
+});
+
+/**
+ * AR-M21 (AI-03): classificazione dell'oggetto sociale, SOLO su richiesta del
+ * professionista, quando né ATECO né parole chiave riconoscono un settore
+ * esposto. L'esito non scrive alcun punteggio: resta nei dettagli cifrati del
+ * cliente come `settoreAi` (proposta con provenienza AI, da confermare nel
+ * flusso di M18) e aggiorna la proposta RISCHIO_A viva del fascicolo.
+ */
+api.post('/ai/settore', puoScrivere, async (c) => {
+  const tenantId = c.get('tenantId');
+  const u = c.get('utente');
+  const b = await c.req.json<any>().catch(() => ({}));
+  const bloccata = await gateAi(c, true);
+  if (bloccata) return bloccata;
+  const clienteId = String(b.clienteId ?? '');
+  const cliente = await c.env.DB.prepare('SELECT * FROM clienti WHERE id = ? AND tenant_id = ?').bind(clienteId, tenantId).first<any>();
+  if (!cliente) return c.json({ errore: 'Cliente non trovato' }, 404);
+  const dettagli = (await dettagliCliente(c.env, tenantId, cliente)) ?? {};
+  const data = oggi();
+  const gia = settoreEsposto({ ateco: cliente.ateco, attivita: cliente.attivita_prevalente, oggettoSociale: dettagli.oggettoSociale }, data);
+  if (gia.voce) {
+    return c.json({ errore: `Il settore è già riconosciuto dal programma («${gia.voce.etichetta}», via ${gia.via === 'ATECO' ? 'codice ATECO' : 'parole chiave'}): non serve chiedere all’AI.`, codice: 'settore_gia_riconosciuto' }, 400);
+  }
+  const testo = [cliente.attivita_prevalente ? `Attività prevalente: ${cliente.attivita_prevalente}` : null, dettagli.oggettoSociale ? `Oggetto sociale: ${dettagli.oggettoSociale}` : null].filter(Boolean).join('\n');
+  if (!testo) return c.json({ errore: 'Non c’è un oggetto sociale né un’attività prevalente da leggere: completa l’anagrafica (dalla visura o a mano).' }, 400);
+  const serie = SETTORI_ESPOSTI.find((s) => data >= s.da && (s.a === null || data <= s.a));
+  const voci = (serie?.voci ?? []).map((v) => ({ codice: v.codice, etichetta: v.etichetta, motivo: v.motivo }));
+  try {
+    const dizionario = await dizionarioTenant(c.env, tenantId, { clienteId });
+    const { esito, pseudonimi } = await classificaSettore(c.env, testo, voci, dizionario);
+    const riscontro = esito.codice ? voceSettorePerCodice(esito.codice, data) : null;
+    const settoreAi = { codice: riscontro ? riscontro.voce.codice : 'NESSUNO', motivo: esito.motivo, data, da: u.id };
+    // Persistenza nei dettagli cifrati del cliente: la proposta viva del fascicolo lo legge da lì.
+    const nuovo = await cifra(c.env.MASTER_KEY, tenantId, JSON.stringify({ ...dettagli, settoreAi }));
+    await c.env.DB.prepare("UPDATE clienti SET dati_identificativi = ?, aggiornato_il = datetime('now') WHERE id = ? AND tenant_id = ?").bind(JSON.stringify(nuovo), clienteId, tenantId).run();
+    // La proposta RISCHIO_A registrata per il fascicolo (se aperta) si allinea alla proposta viva.
+    let propostaAggiornata = false;
+    if (typeof b.fascicoloId === 'string' && b.fascicoloId) {
+      const f = await c.env.DB.prepare('SELECT id, esecutore FROM fascicoli WHERE id = ? AND tenant_id = ? AND cliente_id = ?').bind(b.fascicoloId, tenantId, clienteId).first<any>();
+      if (f) {
+        const aggiornato = await c.env.DB.prepare('SELECT * FROM clienti WHERE id = ? AND tenant_id = ?').bind(clienteId, tenantId).first<any>();
+        const pf = await propostaFascicolo(c.env, tenantId, aggiornato ?? cliente, { id: String(f.id), esecutore: f.esecutore });
+        const viva = (await leggiProposte(c.env, tenantId, clienteId)).find((x) => x.ambito === 'RISCHIO_A' && x.stato === 'PROPOSTA' && x.contenuto?.fascicoloId === f.id);
+        if (viva) {
+          propostaAggiornata = await aggiornaContenutoProposta(c.env, tenantId, viva.id, (contenuto) => ({
+            ...contenuto, tabellaA: pf.tabellaA, punteggi: Object.fromEntries(Object.values(pf.tabellaA).map((x) => [x.codice, x.punteggio])),
+            provenienza: pf.provenienza, settoreAi,
+          }));
+        }
+      }
+    }
+    await scriviAudit(c.env.DB, {
+      tenantId, utenteId: u.id, azione: 'USO_AI', entita: 'clienti', entitaId: clienteId,
+      dettaglio: { funzione: 'settore', pseudonimi, esito: settoreAi.codice, propostaAggiornata }, ip: c.get('ip'),
+    });
+    return c.json({
+      settore: riscontro ? { codice: riscontro.voce.codice, etichetta: riscontro.voce.etichetta, punteggio: riscontro.voce.punteggio, motivo: esito.motivo, fonti: riscontro.voce.fonti } : null,
+      motivo: esito.motivo, pseudonimi, propostaAggiornata,
+    });
+  } catch (e) {
+    return rispostaErroreAi(c, e, 'settore');
   }
 });
 
