@@ -533,7 +533,7 @@ function costruisciChecklist(input: InputFascicoloProposto, esecutore: Esecutore
       });
     });
     c({
-      codice: 'DICHIARAZIONE_ART22', etichetta: 'Dichiarazione del cliente sul titolare effettivo (art. 22)', tipoDocumento: 'DICHIARAZIONE_ART22', obbligatoria: true,
+      codice: 'DICHIARAZIONE_ART22', etichetta: 'Dichiarazione del cliente (art. 22, mod. AV.4)', tipoDocumento: 'DICHIARAZIONE_ART22', obbligatoria: true,
       perche: codici.has('A2')
         ? 'il cliente deve fornire per iscritto le informazioni sul titolare effettivo; qui servono anche le domande di controllo (patti, vincoli, interposizioni) che la visura non può dare'
         : 'il cliente deve fornire per iscritto, sotto la propria responsabilità, le informazioni sul titolare effettivo e sullo status di PEP',

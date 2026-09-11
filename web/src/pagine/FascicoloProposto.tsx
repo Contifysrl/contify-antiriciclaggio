@@ -258,7 +258,7 @@ export function FascicoloProposto({ fascicoloId, clienteId, esente, valutata, ag
           <div className="mt-2 flex gap-2 flex-wrap items-center">
             <button className="btn btn-secondary btn-sm" data-test="scarica-art22"
               onClick={() => api.scarica(`/clienti/${clienteId}/dichiarazione-art22?fascicolo=${fascicoloId}`).catch((e) => setErrore(e.message))}>
-              Dichiarazione art. 22 precompilata (.docx)
+              Dichiarazione del cliente mod. AV.4 (art. 22) precompilata — .docx
             </button>
             <span className="text-xs text-ink-500">Per la firma in presenza. A distanza: «Nuova richiesta al cliente» qui sotto, con la dichiarazione precompilata.</span>
           </div>

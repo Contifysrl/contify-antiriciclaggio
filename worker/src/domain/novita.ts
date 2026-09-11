@@ -15,6 +15,16 @@ export interface VoceNovita {
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-09-11-dichiarazione-av4-scopo-prestazione',
+    data: '2026-09-11',
+    titolo: 'Dichiarazione del cliente mod. AV.4: scopo e natura della prestazione richiesta',
+    punti: [
+      'La dichiarazione art. 22 si chiama ora con il nome della modulistica CNDCEC, «Dichiarazione del cliente (mod. AV.4)», nei pulsanti, nei tipi di documento, nella checklist e in «Da completare»: è lo stesso documento di prima.',
+      'Nuova prima sezione «Scopo e natura della prestazione richiesta» (art. 18 co. 1 lett. c): il modulo riporta la prestazione del fascicolo (descrizione, rapporto continuativo o occasionale, data di conferimento) e, se l’hai già scritto, lo scopo e la natura registrati nel fascicolo. Il cliente conferma o precisa; se non hai ancora scritto nulla, lo indica lui.',
+      'A distanza la sezione è obbligatoria come le altre. La precisazione del cliente non sovrascrive il campo del fascicolo: ti torna fra i «segnali da valutare», da riscontrare per compatibilità con quanto risulta allo studio (art. 19 co. 1 lett. c). Le dichiarazioni generate prima di oggi restano valide così come sono.',
+    ],
+  },
+  {
     id: '2026-09-10-ai-con-pseudonimizzazione',
     data: '2026-09-10',
     titolo: 'Assistente AI: nomi e dati identificativi sostituiti da segnaposto prima dell’invio, motivazione co. 6 leggibile, classificazione dell’oggetto sociale',

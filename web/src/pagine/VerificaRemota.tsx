@@ -14,6 +14,8 @@ interface DichiarazioneTePre {
   esecutore: { nominativo: string; carica: string } | null;
   domande: string[];
   senzaCompagine: boolean;
+  /** AR-M22: scopo e natura della prestazione (art. 18 co. 1 lett. c), dal fascicolo. */
+  prestazione?: { codice: string; descrizione: string; tipoRapporto: 'CONTINUATIVO' | 'OCCASIONALE'; dataConferimento: string | null; scopoNatura: string | null } | null;
 }
 
 interface InfoRichiesta {
@@ -94,6 +96,10 @@ function ModuloVerifica({ token, info, onInviata }: { token: string; info: InfoR
   const pre = info.dichiarazioneTe ?? null;
   const [conferma, setConferma] = useState<'CONFERMA' | 'CORREGGE' | ''>('');
   const [correzioni, setCorrezioni] = useState('');
+  // AR-M22: scopo e natura della prestazione.
+  const prestazione = pre?.prestazione ?? null;
+  const [scopo, setScopo] = useState<'CONFERMA' | 'PRECISA' | ''>(prestazione && !prestazione.scopoNatura ? 'PRECISA' : '');
+  const [scopoTesto, setScopoTesto] = useState('');
   const [risposte, setRisposte] = useState<Record<string, { risposta: 'SI' | 'NO' | ''; dettagli: string }>>({});
   const [pepSoggetti, setPepSoggetti] = useState<Record<string, { pep: boolean | null; dettagli: string }>>({});
   const soggettiPep = pre ? [
@@ -125,6 +131,10 @@ function ModuloVerifica({ token, info, onInviata }: { token: string; info: InfoR
     if (info.richieste.pep && !pep) { setErrore('Indica se sei una persona politicamente esposta'); return; }
     if (info.richieste.documento && files.length === 0) { setErrore('Allega il documento d’identità'); return; }
     if (pre && info.richieste.dichiarazioneTe) {
+      if (prestazione) {
+        if (!scopo) { setErrore('Indica se lo scopo della prestazione è quello descritto oppure precisalo'); return; }
+        if (scopo === 'PRECISA' && !scopoTesto.trim()) { setErrore('Indica lo scopo per cui richiedi la prestazione allo studio'); return; }
+      }
       if (!conferma) { setErrore('Indica se confermi o correggi la ricostruzione del titolare effettivo'); return; }
       if (conferma === 'CORREGGE' && !correzioni.trim() && !titolari.some((t) => t.nominativo.trim())) { setErrore('Descrivi cosa non corrisponde o indica i titolari effettivi'); return; }
       if (pre.domande.some((d) => !risposte[d]?.risposta)) { setErrore('Rispondi a tutte le domande sul controllo della società'); return; }
@@ -136,6 +146,7 @@ function ModuloVerifica({ token, info, onInviata }: { token: string; info: InfoR
       const dati: any = { dichiarazione: { accettata: true, nomeDichiarante } };
       if (pre && info.richieste.dichiarazioneTe) {
         dati.dichiarazioneTe = {
+          scopo: prestazione ? { conferma: scopo, testo: scopo === 'PRECISA' ? scopoTesto.trim() : '' } : null,
           conferma,
           correzioni: conferma === 'CORREGGE' ? correzioni.trim() : '',
           titolari: conferma === 'CORREGGE' ? titolari.filter((t) => t.nominativo.trim()).map((t) => ({ nominativo: t.nominativo.trim(), codiceFiscale: t.codiceFiscale.trim().toUpperCase(), quota: t.quota.trim() })) : [],
@@ -214,6 +225,37 @@ function ModuloVerifica({ token, info, onInviata }: { token: string; info: InfoR
             <ul className="text-xs text-ink-500 list-disc ml-5">
               {files.map((f, i) => <li key={i}>{f.name} ({Math.round(f.size / 1024)} KB)</li>)}
             </ul>
+          )}
+        </section>
+      )}
+
+      {pre && info.richieste.dichiarazioneTe && prestazione && (
+        <section className="space-y-3" data-test="dichiarazione-scopo">
+          <h2 className="!text-base !m-0">Scopo e natura della prestazione richiesta</h2>
+          <p className="text-sm text-ink-500">
+            La legge chiede allo studio di conoscere lo scopo e la natura della prestazione (art. 18 co. 1 lett. c DLgs. 231/2007)
+            e al cliente di fornire l'informazione per iscritto (art. 22).
+          </p>
+          <div className="rounded-lg bg-ink-50 border border-ink-100 px-4 py-3 text-sm space-y-1">
+            <div>Prestazione richiesta: <strong>{prestazione.descrizione}</strong> ({prestazione.tipoRapporto === 'OCCASIONALE' ? 'prestazione occasionale' : 'rapporto continuativo'}{prestazione.dataConferimento ? `, conferita il ${dataIt(prestazione.dataConferimento)}` : ''}).</div>
+            {prestazione.scopoNatura && <div>Scopo e natura, come risultano allo studio: <em>{prestazione.scopoNatura}</em></div>}
+          </div>
+          {prestazione.scopoNatura ? (
+            <div className="flex gap-2">
+              <label className={`flex-1 border rounded-lg px-3 py-2 cursor-pointer text-sm ${scopo === 'CONFERMA' ? 'border-teal-400 bg-teal-50' : 'border-ink-200'}`}>
+                <input type="radio" className="!w-auto mr-2" checked={scopo === 'CONFERMA'} onChange={() => setScopo('CONFERMA')} data-test="conferma-scopo" />
+                Confermo: lo scopo è quello descritto
+              </label>
+              <label className={`flex-1 border rounded-lg px-3 py-2 cursor-pointer text-sm ${scopo === 'PRECISA' ? 'border-amber-400 bg-amber-50' : 'border-ink-200'}`}>
+                <input type="radio" className="!w-auto mr-2" checked={scopo === 'PRECISA'} onChange={() => setScopo('PRECISA')} data-test="precisa-scopo" />
+                Preciso o integro
+              </label>
+            </div>
+          ) : (
+            <p className="text-sm">Lo studio non ha ancora descritto lo scopo: lo indichi lei qui sotto.</p>
+          )}
+          {scopo === 'PRECISA' && (
+            <textarea className="input" rows={3} value={scopoTesto} onChange={(e) => setScopoTesto(e.target.value)} placeholder="es. tenuta della contabilità e adempimenti fiscali dell'attività di …; assistenza nella cessione di …" data-test="scopo-testo" />
           )}
         </section>
       )}

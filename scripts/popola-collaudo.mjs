@@ -495,7 +495,8 @@ passo('Verifica a distanza: una richiesta aperta e una completata dal cliente co
   const fd2 = new FormData();
   fd2.set('dati', JSON.stringify({
     dichiarazione: { accettata: true, nomeDichiarante: pre.esecutore?.nominativo ?? 'ESPOSITO MARIA' },
-    dichiarazioneTe: { conferma: 'CONFERMA', risposte: (pre.domande ?? []).map((d) => ({ domanda: d, risposta: 'NO' })), pep: soggetti.map((n) => ({ nominativo: n, ruolo: 'TITOLARE_EFFETTIVO', pep: false })) },
+    // AR-M22: scopo e natura (art. 18 co. 1 lett. c) — confermato se lo studio l'ha scritto, altrimenti indicato dal cliente.
+    dichiarazioneTe: { scopo: pre.prestazione ? (pre.prestazione.scopoNatura ? { conferma: 'CONFERMA' } : { conferma: 'PRECISA', testo: 'Tenuta della contabilità e adempimenti fiscali dell’attività' }) : null, conferma: 'CONFERMA', risposte: (pre.domande ?? []).map((d) => ({ domanda: d, risposta: 'NO' })), pep: soggetti.map((n) => ({ nominativo: n, ruolo: 'TITOLARE_EFFETTIVO', pep: false })) },
   }));
   await new Sessione('cliente').deve('POST', `/pubblico/verifica/${tok2}`, null, fd2, [200], { senzaCookie: true });
   const l2 = await amm.deve('GET', `/fascicoli/${fEs.id}/verifiche-remote`);

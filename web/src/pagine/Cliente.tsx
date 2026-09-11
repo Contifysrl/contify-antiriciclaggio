@@ -359,7 +359,7 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
             )}
             <div style={{ marginTop: 12 }}>
               <button className="btn btn-secondary btn-sm" data-test="cliente-art22" onClick={() => api.scarica(`/clienti/${id}/dichiarazione-art22`).catch((e) => setErrore(e.message))}>
-                Dichiarazione art. 22 precompilata (.docx)
+                Dichiarazione del cliente mod. AV.4 (art. 22) precompilata — .docx
               </button>
               <span className="text-xs text-ink-400" style={{ marginLeft: 8 }}>Da far firmare al cliente in presenza; a distanza si invia dal fascicolo (AR-M18).</span>
             </div>
@@ -443,7 +443,7 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
             </label>
             <select className="input" style={{ width: 'auto' }} value={tipoDoc} onChange={(e) => setTipoDoc(e.target.value)} title="Tipo di documento: alimenta la checklist del fascicolo">
               <option value="VISURA">Visura camerale</option>
-              <option value="DICHIARAZIONE_ART22">Dichiarazione art. 22 firmata</option>
+              <option value="DICHIARAZIONE_ART22">Dichiarazione del cliente firmata (art. 22, mod. AV.4)</option>
               <option value="ESTRATTO_REGISTRO_TE">Estratto del registro TE (prova dell’iscrizione)</option>
               <option value="DOCUMENTO_IDENTITA">Documento d’identità</option>
               <option value="DOCUMENTAZIONE_ESTERA">Documentazione estera equivalente</option>

@@ -17,6 +17,13 @@
  * Confine da non superare: la dichiarazione del cliente NON scrive i titolari
  * effettivi. Torna al professionista come documento del fascicolo e come
  * risposte da valutare (artt. 20-22).
+ *
+ * AR-M22: la dichiarazione è il «mod. AV.4» della modulistica CNDCEC e apre
+ * con lo SCOPO E LA NATURA della prestazione richiesta (art. 18 co. 1 lett. c):
+ * il programma la precompila con la prestazione del fascicolo e lo scopo già
+ * scritto dal professionista; il cliente conferma o precisa. Anche qui il
+ * campo del fascicolo resta del professionista: la precisazione del cliente
+ * torna come segnale, da riscontrare per compatibilità (art. 19 co. 1 lett. c).
  */
 
 import type { Env } from './tipi';
@@ -43,9 +50,21 @@ const ETICHETTA_CRITERIO: Record<string, string> = {
   PROCEDURA_CONCORSUALE: 'organo della procedura',
 };
 
+/** Prestazione del fascicolo per la sezione «scopo e natura» (art. 18 co. 1 lett. c). */
+export interface PrestazioneArt22 {
+  codice: string;
+  descrizione: string;
+  tipoRapporto: 'CONTINUATIVO' | 'OCCASIONALE';
+  dataConferimento: string | null;
+  /** Scopo e natura come già scritti dal professionista nel fascicolo (art. 19 co. 1 lett. c), se ci sono. */
+  scopoNatura: string | null;
+}
+
 export interface PrecompilataArt22 {
   versione: 1;
   generataIl: string;
+  /** Assente nelle dichiarazioni generate prima di AR-M22 o senza fascicolo: la sezione «scopo» allora non si chiede. */
+  prestazione?: PrestazioneArt22 | null;
   cliente: { id: string; denominazione: string; codiceFiscale: string | null; partitaIva: string | null; tipo: string; sede: string | null };
   fonte: { visuraDel: string | null; dataElencoSoci: string | null; capitaleSottoscritto: number | null };
   ripartizione: Array<{ nome: string; tipo: string; quotaPercento: number; diritto: string; quoteProprie: boolean; paese: string | null }>;
@@ -63,6 +82,8 @@ export interface PrecompilataArt22 {
 
 /** Risposte del cliente (dal modulo a distanza o trascritte dal professionista). */
 export interface RispostaArt22 {
+  /** Scopo e natura della prestazione: conferma di quanto risulta allo studio, oppure precisazione del cliente. */
+  scopo?: { conferma: 'CONFERMA' | 'PRECISA'; testo: string | null } | null;
   conferma: 'CONFERMA' | 'CORREGGE';
   correzioni?: string | null;
   titolari?: Array<{ nominativo: string; codiceFiscale?: string | null; quota?: string | number | null }>;
@@ -79,10 +100,20 @@ const euro = (n: number) => n.toLocaleString('it-IT', { minimumFractionDigits: 2
 
 /** Costruisce la dichiarazione precompilata dai dati in archivio. */
 export async function precompilaDichiarazione(env: Env, tenantId: string, cliente: any, fascicoloId: string | null): Promise<PrecompilataArt22> {
-  const [dettagli, pf] = await Promise.all([
+  const [dettagli, pf, fasc] = await Promise.all([
     dettagliCliente(env, tenantId, cliente),
     propostaFascicolo(env, tenantId, cliente, fascicoloId ? { id: fascicoloId } : null),
+    fascicoloId
+      ? env.DB.prepare('SELECT prestazione_codice, prestazione_descrizione, tipo_rapporto, data_conferimento, scopo_natura FROM fascicoli WHERE id = ? AND tenant_id = ?').bind(fascicoloId, tenantId).first<any>()
+      : Promise.resolve(null),
   ]);
+  const prestazione: PrestazioneArt22 | null = fasc
+    ? {
+        codice: String(fasc.prestazione_codice), descrizione: String(fasc.prestazione_descrizione),
+        tipoRapporto: fasc.tipo_rapporto === 'OCCASIONALE' ? 'OCCASIONALE' : 'CONTINUATIVO',
+        dataConferimento: fasc.data_conferimento ?? null, scopoNatura: String(fasc.scopo_natura ?? '').trim() || null,
+      }
+    : null;
   const pt = pf.titolarita;
   const a2 = pt.alert.find((a) => a.codice === 'A2');
   const domande = a2 && a2.azione.tipo === 'DOMANDE_ART22' ? a2.azione.domande : DOMANDE_CONTROLLO_BASE;
@@ -90,6 +121,7 @@ export async function precompilaDichiarazione(env: Env, tenantId: string, client
   return {
     versione: 1,
     generataIl: new Date().toISOString(),
+    prestazione,
     cliente: {
       id: cliente.id, denominazione: cliente.denominazione, codiceFiscale: cliente.codice_fiscale ?? null, partitaIva: cliente.partita_iva ?? null,
       tipo: cliente.tipo, sede: dettagli?.sede ?? null,
@@ -115,6 +147,15 @@ export async function precompilaDichiarazione(env: Env, tenantId: string, client
 /** Validazione minima delle risposte arrivate dal modulo pubblico (dati del cliente: mai fidarsi). */
 export function normalizzaRispostaArt22(input: any, precompilata: PrecompilataArt22): { errore?: string; risposta?: RispostaArt22 } {
   if (!input || typeof input !== 'object') return { errore: 'Dichiarazione sul titolare effettivo mancante' };
+  let scopo: RispostaArt22['scopo'] = null;
+  if (precompilata.prestazione) {
+    const sc = input.scopo && typeof input.scopo === 'object' ? input.scopo : null;
+    const testo = String(sc?.testo ?? '').trim().slice(0, 1000);
+    if (sc?.conferma === 'CONFERMA' && precompilata.prestazione.scopoNatura) scopo = { conferma: 'CONFERMA', testo: null };
+    else if ((sc?.conferma === 'PRECISA' || sc?.conferma === 'CONFERMA') && testo) scopo = { conferma: 'PRECISA', testo };
+    else if (precompilata.prestazione.scopoNatura) return { errore: 'Indica se lo scopo della prestazione è quello descritto oppure precisalo' };
+    else return { errore: 'Indica lo scopo per cui richiedi la prestazione allo studio' };
+  }
   const conferma = input.conferma === 'CORREGGE' ? 'CORREGGE' : input.conferma === 'CONFERMA' ? 'CONFERMA' : null;
   if (!conferma) return { errore: 'Indica se confermi o correggi la ricostruzione del titolare effettivo' };
   const risposte: RispostaArt22['risposte'] = [];
@@ -136,12 +177,13 @@ export function normalizzaRispostaArt22(input: any, precompilata: PrecompilataAr
     : undefined;
   const correzioni = conferma === 'CORREGGE' ? String(input.correzioni ?? '').slice(0, 2000) : null;
   if (conferma === 'CORREGGE' && !correzioni && !(titolari && titolari.length)) return { errore: 'Se correggi la ricostruzione, descrivi cosa non corrisponde o indica i titolari effettivi' };
-  return { risposta: { conferma, correzioni, titolari, risposte, pep, canale: 'DISTANZA' } };
+  return { risposta: { scopo, conferma, correzioni, titolari, risposte, pep, canale: 'DISTANZA' } };
 }
 
 /** Indizi che il professionista deve valutare: risposte «Sì» al controllo, correzioni, PEP dichiarati. */
 export function segnaliDaValutare(r: RispostaArt22): string[] {
   const out: string[] = [];
+  if (r.scopo?.conferma === 'PRECISA' && r.scopo.testo) out.push(`il cliente ha indicato lo scopo della prestazione: «${r.scopo.testo}» — da riscontrare con scopo e natura del fascicolo (art. 19 co. 1 lett. c)`);
   if (r.conferma === 'CORREGGE') out.push('il cliente ha corretto la ricostruzione dei titolari effettivi');
   for (const x of r.risposte) if (x.risposta === 'SI') out.push(`risposta affermativa: «${x.domanda}»${x.dettagli ? ` — ${x.dettagli}` : ''}`);
   for (const p of r.pep) if (p.pep) out.push(`${p.nominativo} dichiarato persona politicamente esposta${p.dettagli ? ` (${p.dettagli})` : ''}`);
@@ -159,8 +201,8 @@ export function corpoDichiarazioneArt22(dati: { tenant: any; precompilata: Preco
   const { tenant, precompilata: p, risposta: r } = dati;
   const casella = (v: boolean | null) => (v === null ? '☐' : v ? '☒' : '☐');
   let corpo =
-    titolo1('Dichiarazione del cliente sul titolare effettivo') +
-    occhiello('Art. 22 co. 1-2 del DLgs. 21.11.2007 n. 231 — informazioni fornite dal cliente sotto la propria responsabilità') +
+    titolo1('Dichiarazione del cliente (mod. AV.4)') +
+    occhiello('Artt. 18 co. 1 lett. c) e 22 co. 1-2 del DLgs. 21.11.2007 n. 231 — informazioni fornite dal cliente sotto la propria responsabilità (modulistica CNDCEC, allegato AV.4)') +
     tabellaDati([
       ['Resa a', tenant.denominazione],
       ['Cliente', p.cliente.denominazione],
@@ -176,8 +218,32 @@ export function corpoDichiarazioneArt22(dati: { tenant: any; precompilata: Preco
       'dall’art. 55 co. 3 del DLgs. 231/2007 per chi fornisce dati falsi o informazioni non veritiere, ai sensi dell’art. 22 dello stesso decreto dichiara quanto segue.',
   );
 
-  // 1. Assetto proprietario dalla visura.
-  corpo += titolo2('1. Assetto proprietario risultante dal Registro Imprese');
+  // 1. Scopo e natura della prestazione (AR-M22, art. 18 co. 1 lett. c).
+  if (p.prestazione) {
+    const pr = p.prestazione;
+    corpo += titolo2('1. Scopo e natura della prestazione richiesta (art. 18 co. 1 lett. c)');
+    corpo += testo(
+      `Il dichiarante richiede allo studio la prestazione professionale «${pr.descrizione}»` +
+        ` (${pr.tipoRapporto === 'OCCASIONALE' ? 'prestazione occasionale' : 'rapporto continuativo'}${pr.dataConferimento ? `, conferita il ${dataIt(pr.dataConferimento)}` : ''}).`,
+    );
+    if (pr.scopoNatura) {
+      corpo += testo(`Scopo e natura della prestazione, come risultano allo studio: ${pr.scopoNatura}`);
+      corpo += par([run(`${casella(r?.scopo ? r.scopo.conferma === 'CONFERMA' : null)} CONFERMO che lo scopo e la natura della prestazione sono quelli descritti.`, { bold: true })]);
+      corpo += par([
+        run(`${casella(r?.scopo ? r.scopo.conferma === 'PRECISA' : null)} PRECISO: `, { bold: true }),
+        run(r?.scopo?.conferma === 'PRECISA' ? (r.scopo.testo || '') : '________________________________________________'),
+      ]);
+    } else {
+      corpo += par([
+        run('Il dichiarante indica lo scopo per cui richiede la prestazione e la natura dell’operazione o del rapporto: ', { bold: true }),
+        run(r?.scopo?.testo || '________________________________________________'),
+      ]);
+    }
+  }
+
+  // 2. Assetto proprietario dalla visura.
+  const n = (i: number) => String(p.prestazione ? i + 1 : i);
+  corpo += titolo2(`${n(1)}. Assetto proprietario risultante dal Registro Imprese`);
   if (p.senzaCompagine) {
     corpo += testo('Non risultano in archivio dati camerali sulla compagine: il dichiarante indica di seguito i soci e le rispettive quote.');
     corpo += tabella([rigaIntestazione(['Socio', 'Quota %', 'Diritto'], [5240, 1800, 2600]), ...[1, 2, 3, 4].map(() => [
@@ -204,7 +270,7 @@ export function corpoDichiarazioneArt22(dati: { tenant: any; precompilata: Preco
   }
 
   // 2. Titolari effettivi individuati.
-  corpo += titolo2('2. Titolare effettivo individuato in base ai dati camerali');
+  corpo += titolo2(`${n(2)}. Titolare effettivo individuato in base ai dati camerali`);
   if (p.titolariProposti.length) {
     corpo += testo('In base a tale ripartizione, applicando l’art. 20 del DLgs. 231/2007, il titolare effettivo è individuato in:');
     const righe: Cella[][] = [rigaIntestazione(['Persona fisica', 'Criterio', 'Quota'], [3800, 4440, 1400])];
@@ -219,7 +285,7 @@ export function corpoDichiarazioneArt22(dati: { tenant: any; precompilata: Preco
   } else if (!p.senzaCompagine) {
     corpo += testo(
       'In base a tale ripartizione nessuna persona fisica detiene, direttamente o indirettamente, una partecipazione superiore alla soglia di legge: ' +
-        'il criterio della proprietà non individua titolari effettivi. Si applicano, nell’ordine, il criterio del controllo (art. 20 co. 3), sulla base delle risposte al punto 3, e il criterio residuale (art. 20 co. 5).',
+        `il criterio della proprietà non individua titolari effettivi. Si applicano, nell’ordine, il criterio del controllo (art. 20 co. 3), sulla base delle risposte al punto ${n(3)}, e il criterio residuale (art. 20 co. 5).`,
     );
   } else {
     corpo += testo('Il dichiarante indica le persone fisiche che possiedono o controllano in ultima istanza il cliente (art. 20):');
@@ -239,7 +305,7 @@ export function corpoDichiarazioneArt22(dati: { tenant: any; precompilata: Preco
   }
 
   // 3. Domande di controllo.
-  corpo += titolo2('3. Informazioni che risultano solo al cliente (art. 20 co. 3)');
+  corpo += titolo2(`${n(3)}. Informazioni che risultano solo al cliente (art. 20 co. 3)`);
   corpo += testo('La visura camerale non riporta patti, accordi o vincoli che possono attribuire il controllo a soggetti diversi da quelli indicati. Il dichiarante risponde:');
   const righeD: Cella[][] = [rigaIntestazione(['Domanda', 'Sì', 'No', 'Se sì, precisare'], [5240, 600, 600, 3200])];
   for (const d of p.domande) {
@@ -254,7 +320,7 @@ export function corpoDichiarazioneArt22(dati: { tenant: any; precompilata: Preco
   corpo += tabella(righeD, { larghezze: [5240, 600, 600, 3200] });
 
   // 4. PEP.
-  corpo += titolo2('4. Persone politicamente esposte (art. 1 co. 2 lett. dd)');
+  corpo += titolo2(`${n(4)}. Persone politicamente esposte (art. 1 co. 2 lett. dd)`);
   corpo += testo(
     'È «politicamente esposta» la persona fisica che occupa o ha cessato da meno di un anno importanti cariche pubbliche, nonché i suoi familiari e coloro che con essa intrattengono notoriamente stretti legami. Il dichiarante indica, per ciascuna persona:',
   );
@@ -278,7 +344,7 @@ export function corpoDichiarazioneArt22(dati: { tenant: any; precompilata: Preco
   corpo += tabella(righeP, { larghezze: [3200, 2400, 700, 900, 2440] });
 
   // 5. Impegni e firma.
-  corpo += titolo2('5. Dichiarazione di veridicità e impegno all’aggiornamento');
+  corpo += titolo2(`${n(5)}. Dichiarazione di veridicità e impegno all’aggiornamento`);
   corpo += elenco([
     'Le informazioni fornite sono esatte e veritiere (art. 22 co. 1 DLgs. 231/2007).',
     'Il dichiarante si impegna a comunicare tempestivamente ogni variazione dei dati forniti, anche ai fini del controllo costante (art. 19 co. 1 lett. c) e art. 22 co. 1).',

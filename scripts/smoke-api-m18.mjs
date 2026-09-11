@@ -119,6 +119,7 @@ console.log('\n== 4. Fascicolo con esecutore proposto ==');
 const e1 = fp1b.dati.esecutore;
 const f1 = await req('POST', '/fascicoli', {
   clienteId: id1, prestazioneCodice: 'CONSULENZA_TRIBUTARIA', tipoRapporto: 'CONTINUATIVO', dataConferimento: '2026-09-01',
+  scopoNatura: 'Consulenza tributaria continuativa per l’attività di commercio all’ingrosso',
   esecutore: { nominativo: e1.nominativo, codiceFiscale: e1.codiceFiscale, carica: e1.carica, caricaTesto: e1.caricaTesto, fonte: e1.fonte, daProposta: true },
 });
 verifica('fascicolo 201 con proposta registrata ed esecutore APPLICATA', f1.stato === 201 && typeof f1.dati?.propostaFascicoloId === 'string' && f1.dati?.esecutore === 'APPLICATA', f1.dati);
@@ -172,19 +173,23 @@ const token = vr.dati?.url?.split('token=')[1];
 const pub = await req('GET', `/pubblico/verifica/${token}`, null, null, { senzaCookie: true });
 verifica('pagina pubblica: compagine (2 soci), 2 titolari proposti, 5 domande, esecutore; sezione titolari libera spenta', pub.dati?.dichiarazioneTe?.ripartizione?.length === 2 && pub.dati?.dichiarazioneTe?.titolariProposti?.length === 2 && pub.dati?.dichiarazioneTe?.domande?.length === 5 && pub.dati?.dichiarazioneTe?.esecutore?.nominativo && pub.dati?.richieste?.titolari === false && pub.dati?.richieste?.precompilata === undefined, pub.dati);
 const pre = pub.dati.dichiarazioneTe;
+verifica('AV.4: pagina pubblica con prestazione e scopo del fascicolo (art. 18 co. 1 lett. c)', pre?.prestazione?.codice === 'CONSULENZA_TRIBUTARIA' && /commercio all’ingrosso/.test(pre?.prestazione?.scopoNatura ?? '') && pre?.prestazione?.tipoRapporto === 'CONTINUATIVO', pre?.prestazione);
 const invio = (dati) => { const fd = new FormData(); fd.set('dati', JSON.stringify(dati)); return req('POST', `/pubblico/verifica/${token}`, null, fd, { senzaCookie: true }); };
-const r0 = await invio({ dichiarazione: { accettata: true, nomeDichiarante: 'Mario Rossi' }, dichiarazioneTe: { conferma: 'CONFERMA', risposte: [], pep: [] } });
+const rs = await invio({ dichiarazione: { accettata: true, nomeDichiarante: 'Mario Rossi' }, dichiarazioneTe: { conferma: 'CONFERMA', risposte: [], pep: [] } });
+verifica('AV.4: senza scopo → 400 (prima delle domande)', rs.stato === 400 && /scopo/.test(rs.dati?.errore ?? ''), rs.dati);
+const r0 = await invio({ dichiarazione: { accettata: true, nomeDichiarante: 'Mario Rossi' }, dichiarazioneTe: { scopo: { conferma: 'CONFERMA' }, conferma: 'CONFERMA', risposte: [], pep: [] } });
 verifica('senza risposte alle domande → 400', r0.stato === 400 && /domande/.test(r0.dati?.errore ?? ''), r0.dati);
 const soggetti = [...pre.titolariProposti.map((t) => t.nominativo), pre.esecutore.nominativo].filter((x, i, a) => a.indexOf(x) === i);
 const r1 = await invio({
   dichiarazione: { accettata: true, nomeDichiarante: pre.esecutore.nominativo },
-  dichiarazioneTe: { conferma: 'CONFERMA', risposte: pre.domande.map((d) => ({ domanda: d, risposta: 'NO' })), pep: soggetti.map((n) => ({ nominativo: n, ruolo: 'TITOLARE_EFFETTIVO', pep: false })) },
+  dichiarazioneTe: { scopo: { conferma: 'CONFERMA' }, conferma: 'CONFERMA', risposte: pre.domande.map((d) => ({ domanda: d, risposta: 'NO' })), pep: soggetti.map((n) => ({ nominativo: n, ruolo: 'TITOLARE_EFFETTIVO', pep: false })) },
 });
 verifica('conferma completa → ok', r1.stato === 200 && r1.dati?.ok === true, r1.dati);
 const lista = await req('GET', `/fascicoli/${fid1}/verifiche-remote`);
 const rid = lista.dati?.find((x) => x.stato === 'COMPLETATA')?.id;
 const det = await req('GET', `/verifiche-remote/${rid}`);
 verifica('lo studio vede risposte e precompilata; nessun segnale', det.dati?.dati?.dichiarazioneTe?.conferma === 'CONFERMA' && det.dati?.precompilata?.titolariProposti?.length === 2 && det.dati?.segnali?.length === 0, det.dati?.segnali);
+verifica('AV.4: scopo confermato conservato nella risposta', det.dati?.dati?.dichiarazioneTe?.scopo?.conferma === 'CONFERMA', det.dati?.dati?.dichiarazioneTe?.scopo);
 const acq = await req('POST', `/verifiche-remote/${rid}/acquisisci`, { acquisisciDichiarazione: true });
 verifica('acquisizione: dichiarazione nel fascicolo, titolari confermati restituiti al professionista', acq.dati?.applicato?.includes('dichiarazione_art22') && acq.dati?.titolariDichiarati?.length === 2 && acq.dati?.titolariDichiarati?.[0]?.confermato === true, acq.dati);
 const fdet3 = await req('GET', `/fascicoli/${fid1}`);
@@ -198,6 +203,7 @@ const fd2 = new FormData();
 fd2.set('dati', JSON.stringify({
   dichiarazione: { accettata: true, nomeDichiarante: 'Mario Rossi' },
   dichiarazioneTe: {
+    scopo: { conferma: 'PRECISA', testo: 'anche l’assistenza nella cessione del ramo d’azienda' },
     conferma: 'CORREGGE', correzioni: 'La quota di ESPOSITO MARIA è stata ceduta il 1.8.2026', titolari: [{ nominativo: 'NUOVO SOCIO', codiceFiscale: 'NVSSCO80A01H501U', quota: '70' }],
     risposte: pre.domande.map((d, i) => ({ domanda: d, risposta: i === 0 ? 'SI' : 'NO', dettagli: i === 0 ? 'patto parasociale del 2024' : '' })),
     pep: soggetti.map((n, i) => ({ nominativo: n, ruolo: 'TITOLARE_EFFETTIVO', pep: i === 0, dettagli: i === 0 ? 'consigliere regionale dal 2023' : '' })),
@@ -208,9 +214,12 @@ verifica('correzione con Sì e PEP → accettata', r2.stato === 200, r2.dati);
 const lista2 = await req('GET', `/fascicoli/${fid1}/verifiche-remote`);
 const rid2 = lista2.dati?.find((x) => x.stato === 'COMPLETATA')?.id;
 const det2 = await req('GET', `/verifiche-remote/${rid2}`);
-verifica('tre segnali da valutare (correzione, Sì al controllo, PEP)', det2.dati?.segnali?.length === 3, det2.dati?.segnali);
+verifica('quattro segnali da valutare (scopo precisato, correzione, Sì al controllo, PEP)', det2.dati?.segnali?.length === 4 && /scopo della prestazione/.test(det2.dati?.segnali?.[0] ?? ''), det2.dati?.segnali);
 const acq2 = await req('POST', `/verifiche-remote/${rid2}/acquisisci`, { acquisisciDichiarazione: false });
-verifica('senza acquisire il documento: titolari corretti tornano al professionista, non si scrive nulla', acq2.dati?.titolariDichiarati?.[0]?.nominativo === 'NUOVO SOCIO' && !acq2.dati?.applicato?.includes('dichiarazione_art22') && acq2.dati?.segnali?.length === 3, acq2.dati);
+verifica('senza acquisire il documento: titolari corretti tornano al professionista, non si scrive nulla', acq2.dati?.titolariDichiarati?.[0]?.nominativo === 'NUOVO SOCIO' && !acq2.dati?.applicato?.includes('dichiarazione_art22') && acq2.dati?.segnali?.length === 4, acq2.dati);
+const fsc = await req('GET', `/fascicoli/${fid1}`);
+const scopoFasc = fsc.dati?.fascicolo?.scopo_natura ?? '';
+verifica('AV.4: la precisazione del cliente NON sovrascrive scopo_natura del fascicolo', /commercio all’ingrosso/.test(scopoFasc) && !/ramo d’azienda/.test(scopoFasc), scopoFasc);
 const te1 = await req('GET', `/clienti/${id1}`);
 verifica('titolari effettivi NON scritti dalla dichiarazione', (te1.dati?.titolariEffettivi ?? []).length === 0, te1.dati?.titolariEffettivi);
 

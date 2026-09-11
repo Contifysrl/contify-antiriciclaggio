@@ -1295,6 +1295,8 @@ api.get('/pubblico/verifica/:token', async (c) => {
           cliente: precompilata.cliente, fonte: precompilata.fonte, ripartizione: precompilata.ripartizione, cariche: precompilata.cariche,
           titolariProposti: precompilata.titolariProposti.map((t) => ({ nominativo: t.nominativo, etichettaCriterio: t.etichettaCriterio, quota: t.quota })),
           criterioApplicato: precompilata.criterioApplicato, esecutore: precompilata.esecutore, domande: precompilata.domande, senzaCompagine: precompilata.senzaCompagine,
+          // AR-M22: scopo e natura della prestazione (art. 18 co. 1 lett. c), precompilati dal fascicolo.
+          prestazione: precompilata.prestazione ?? null,
         }
       : null,
     scadeIl: r.scade_il,

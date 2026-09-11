@@ -361,14 +361,18 @@ const SEZIONI: Sezione[] = [
           <>La <K>checklist dei documenti</K> è dedotta dalla struttura: visura, identità dell'esecutore e di ciascun titolare effettivo, dichiarazione art. 22, documentazione estera per i soci esteri, mandato fiduciario, visura della controllante. Lo stato si aggiorna con i documenti conservati (carica i file con il tipo giusto).</>,
           <>Alert <K>A9</K> (società in liquidazione o in procedura) e <K>A10</K> (costituzione da meno di dodici mesi, sede in provincia a rischio contante, oggetto sociale molto ampio rispetto al capitale) sono indicatori da considerare nella Tabella A: non bloccano nulla.</>,
         ]} />
-        <H>La dichiarazione del cliente sul titolare effettivo (art. 22)</H>
+        <H>La dichiarazione del cliente (art. 22, mod. AV.4)</H>
         <P>
           È l'atto che la legge mette in capo al cliente: fornire per iscritto, sotto la propria
-          responsabilità, le informazioni sul titolare effettivo. Il programma la genera{' '}
-          <K>già compilata</K> dai dati camerali — ripartizione del capitale, titolari individuati con il
-          criterio applicato, domande sul controllo che la visura non può dare (patti, diritti
-          particolari, vincoli sulle quote, interposizioni), status PEP per ciascun titolare effettivo e
-          per l'esecutore — in due modi: <Btn>Dichiarazione art. 22 precompilata (.docx)</Btn> per la
+          responsabilità, le informazioni necessarie all'adeguata verifica <Norma>art. 22</Norma> — lo
+          scopo e la natura della prestazione richiesta <Norma>art. 18 co. 1 lett. c</Norma> e il
+          titolare effettivo. È il modello <K>AV.4</K> della modulistica CNDCEC. Il programma la genera{' '}
+          <K>già compilata</K>: prestazione e scopo dal fascicolo (il cliente conferma o precisa; la tua
+          descrizione nel fascicolo non viene toccata, la precisazione ti torna come segnale da
+          riscontrare <Norma>art. 19 co. 1 lett. c</Norma>), ripartizione del capitale, titolari
+          individuati con il criterio applicato, domande sul controllo che la visura non può dare (patti,
+          diritti particolari, vincoli sulle quote, interposizioni), status PEP per ciascun titolare
+          effettivo e per l'esecutore — in due modi: <Btn>Dichiarazione del cliente mod. AV.4</Btn> per la
           firma in presenza, oppure <Btn>Nuova richiesta al cliente…</Btn> con la casella{' '}
           <K>precompilata</K>: il cliente conferma o corregge da casa e la dichiarazione torna nel
           fascicolo come documento con la trascrizione integrale. Le risposte «Sì», le correzioni e i PEP

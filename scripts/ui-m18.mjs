@@ -122,6 +122,10 @@ await cliPage.waitForSelector('[data-test=dichiarazione-te]', { timeout: 15000 }
 await cliPage.screenshot({ path: '/tmp/m18-8-cliente.png', fullPage: true }); scatti.push('/tmp/m18-8-cliente.png');
 const testoCliente = await cliPage.textContent('[data-test=dichiarazione-te]');
 verifica('il cliente vede la ripartizione e il titolare individuato', /capitale/.test(testoCliente) && /Titolare effettivo individuato/.test(testoCliente));
+// AR-M22: sezione «scopo e natura» (art. 18 co. 1 lett. c) — il fascicolo è nato senza scopo: lo indica il cliente.
+const testoScopo = await cliPage.textContent('[data-test=dichiarazione-scopo]');
+verifica('AV.4: il cliente vede la prestazione richiesta e il campo dello scopo', /Consulenza/i.test(testoScopo) && (await cliPage.isVisible('[data-test=scopo-testo]')));
+await cliPage.fill('[data-test=scopo-testo]', 'Consulenza fiscale per l’attività di commercio');
 await cliPage.click('[data-test=conferma-te]');
 const domande = await cliPage.locator('[data-test^=domanda-]').count();
 verifica(`cinque domande sul controllo (${domande})`, domande === 5);
@@ -142,7 +146,9 @@ await p.waitForSelector('button:has-text("Esamina e acquisisci")', { timeout: 15
 await p.click('button:has-text("Esamina e acquisisci")');
 await p.waitForSelector('[data-test=dichiarazione-ricevuta]', { timeout: 10000 });
 await scatto('9-esamina');
-verifica('lo studio vede la dichiarazione confermata senza segnali', /confermato/.test(await p.textContent('[data-test=dichiarazione-ricevuta]')));
+const ricevuta = await p.textContent('[data-test=dichiarazione-ricevuta]');
+verifica('lo studio vede la dichiarazione con il solo segnale dello scopo indicato dal cliente (art. 19 co. 1 lett. c)', /scopo della prestazione/.test(ricevuta) && !/corretto la ricostruzione/.test(ricevuta) && !/politicamente esposta/.test(ricevuta));
+verifica('AV.4: lo scopo dichiarato dal cliente è mostrato allo studio', /commercio/.test(await p.textContent('[data-test=scopo-dichiarato]').catch(() => '')));
 await p.click('button:has-text("Acquisisci quanto selezionato")');
 await p.waitForTimeout(2000);
 await scatto('10-acquisita');

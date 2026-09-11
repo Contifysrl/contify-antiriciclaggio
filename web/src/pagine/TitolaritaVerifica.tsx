@@ -329,7 +329,7 @@ function NuovaRichiestaModal({ fascicoloId, onChiudi, onCreata }: {
         <div className="space-y-2">
           {voce('datiIdentificativi', 'Dati identificativi (nome, nascita, residenza, estremi documento)')}
           {voce('documento', 'Copia del documento d’identità (upload)')}
-          {voce('dichiarazioneTe', 'Dichiarazione art. 22 PRECOMPILATA dai dati camerali: compagine, titolari individuati, domande sul controllo, PEP (AR-M18)')}
+          {voce('dichiarazioneTe', 'Dichiarazione del cliente (mod. AV.4) PRECOMPILATA: scopo e natura della prestazione, compagine, titolari individuati, domande sul controllo, PEP')}
           {!cosa.dichiarazioneTe && voce('titolari', 'Dichiarazione di titolarità effettiva compilata dal cliente da zero (per società ed enti)')}
           {!cosa.dichiarazioneTe && voce('pep', 'Dichiarazione sullo status di persona politicamente esposta')}
         </div>
@@ -412,7 +412,10 @@ function EsaminaModal({ richiestaId, onChiudi, onAcquisita }: {
             )}
             {d?.dichiarazioneTe && (
               <section data-test="dichiarazione-ricevuta">
-                <h3 className="!mt-0 !mb-2">Dichiarazione art. 22 (precompilata)</h3>
+                <h3 className="!mt-0 !mb-2">Dichiarazione del cliente (art. 22, mod. AV.4)</h3>
+                {d.dichiarazioneTe.scopo && (
+                  <p data-test="scopo-dichiarato"><span className="text-ink-400">Scopo e natura della prestazione:</span> {d.dichiarazioneTe.scopo.conferma === 'PRECISA' ? d.dichiarazioneTe.scopo.testo : 'confermati come descritti nel fascicolo'}</p>
+                )}
                 {dettaglio.segnali?.length > 0
                   ? <Riquadro tipo="avviso"><strong>Da valutare:</strong><ul className="list-disc ml-5">{dettaglio.segnali.map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></Riquadro>
                   : <Riquadro tipo="info">Il cliente ha <strong>confermato</strong> la ricostruzione, ha risposto «No» a tutte le domande sul controllo e nessuno è dichiarato PEP.</Riquadro>}
@@ -483,7 +486,7 @@ function EsaminaModal({ richiestaId, onChiudi, onAcquisita }: {
               {d?.dichiarazioneTe && (
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" className="!w-4" checked={applica.acquisisciDichiarazione} onChange={(e) => setApplica({ ...applica, acquisisciDichiarazione: e.target.checked })} />
-                  Dichiarazione art. 22 come documento del fascicolo (.docx con la trascrizione integrale)
+                  Dichiarazione del cliente (art. 22, mod. AV.4) come documento del fascicolo (.docx con la trascrizione integrale)
                 </label>
               )}
             </section>

@@ -206,11 +206,11 @@ export const REGOLE_COMPLETEZZA: RegolaCompletezza[] = [
     pagina: 'cliente', azione: 'Rinnova la visura e confronta le differenze («Aggiorna da visura»)',
   },
   {
-    codice: 'ART22_ASSENTE', etichetta: 'Dichiarazione del cliente sul titolare effettivo mancante', gravita: 'media',
+    codice: 'ART22_ASSENTE', etichetta: 'Dichiarazione del cliente (mod. AV.4) mancante', gravita: 'media',
     norma: 'art. 22 co. 1 e 2 DLgs. 231/2007',
     fonte: `${AV1}, sez. «Titolare effettivo»: dichiarazione scritta del cliente sotto la propria responsabilità`,
     quando: 'Cliente società, ente o trust con fascicolo vivo soggetto a verifica e nessuna dichiarazione art. 22 (o autocertificazione) fra i documenti conservati.',
-    pagina: 'fascicolo', azione: 'Acquisisci la dichiarazione art. 22 (in presenza o a distanza)',
+    pagina: 'fascicolo', azione: 'Acquisisci la dichiarazione del cliente mod. AV.4 (art. 22), in presenza o a distanza',
   },
   {
     codice: 'SCREENING_DA_DECIDERE', etichetta: 'Corrispondenze nelle liste sanzioni da decidere', gravita: 'alta',
