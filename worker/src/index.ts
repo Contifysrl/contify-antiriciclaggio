@@ -2709,7 +2709,7 @@ api.get('/fascicoli/:id', async (c) => {
   const tenantId = c.get('tenantId');
   const id = c.req.param('id');
   const f = await c.env.DB.prepare(
-    `SELECT f.*, cl.denominazione AS cliente, cl.pep, cl.paese_residenza,
+    `SELECT f.*, cl.denominazione AS cliente, cl.tipo AS cliente_tipo, cl.pep, cl.paese_residenza,
             p.nome AS professionista, i.nome AS identificatore
      FROM fascicoli f
      JOIN clienti cl ON cl.id = f.cliente_id

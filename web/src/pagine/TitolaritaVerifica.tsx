@@ -188,9 +188,11 @@ export function TitolaritaEffettiva({ clienteId, fascicoloId, titolari, precompi
 
 // ── Sezione: verifica a distanza ───────────────────────────────
 
-export function VerificaADistanza({ fascicoloId, clienteId, onDatiAcquisiti, onTitolariDichiarati }: {
+export function VerificaADistanza({ fascicoloId, clienteId, personaFisica = false, onDatiAcquisiti, onTitolariDichiarati }: {
   fascicoloId: string;
   clienteId: string;
+  /** Cliente persona fisica: la dichiarazione AV.4 a distanza segue l'opzione 1 (AR-M23c). */
+  personaFisica?: boolean;
   onDatiAcquisiti: () => void;
   onTitolariDichiarati: (titolari: any[]) => void;
 }) {
@@ -257,6 +259,7 @@ export function VerificaADistanza({ fascicoloId, clienteId, onDatiAcquisiti, onT
       {nuova && (
         <NuovaRichiestaModal
           fascicoloId={fascicoloId}
+          personaFisica={personaFisica}
           onChiudi={() => setNuova(false)}
           onCreata={(r) => { setNuova(false); setLinkCreato(r); carica(); }}
         />
@@ -291,12 +294,15 @@ export function VerificaADistanza({ fascicoloId, clienteId, onDatiAcquisiti, onT
   );
 }
 
-function NuovaRichiestaModal({ fascicoloId, onChiudi, onCreata }: {
+function NuovaRichiestaModal({ fascicoloId, personaFisica = false, onChiudi, onCreata }: {
   fascicoloId: string;
+  personaFisica?: boolean;
   onChiudi: () => void;
   onCreata: (r: { url: string; scadeIl: string; emailInviata: boolean }) => void;
 }) {
-  const [cosa, setCosa] = useState({ datiIdentificativi: true, documento: true, titolari: false, pep: true, dichiarazioneTe: false });
+  // AR-M23c: la dichiarazione mod. AV.4 è il documento che «Da completare» chiede a ogni cliente
+  // (regola ART22_ASSENTE, persone fisiche comprese): parte selezionata, si toglie se non serve.
+  const [cosa, setCosa] = useState({ datiIdentificativi: true, documento: true, titolari: false, pep: true, dichiarazioneTe: true });
   const [email, setEmail] = useState('');
   const [errore, setErrore] = useState('');
   const [invio, setInvio] = useState(false);
@@ -335,13 +341,20 @@ function NuovaRichiestaModal({ fascicoloId, onChiudi, onCreata }: {
           {!cosa.dichiarazioneTe && voce('titolari', 'Dichiarazione di titolarità effettiva compilata dal cliente da zero (per società ed enti)')}
           {!cosa.dichiarazioneTe && voce('pep', 'Dichiarazione sullo status di persona politicamente esposta')}
         </div>
-        {cosa.dichiarazioneTe && (
+        {cosa.dichiarazioneTe && (personaFisica ? (
+          <Riquadro tipo="info">
+            Persona fisica (mod. AV.4, opzione 1): il cliente troverà i propri dati già compilati, dichiarerà di agire in proprio
+            (o per conto di un’altra persona: in quel caso ti torna un segnale da valutare), il proprio status di PEP, lo scopo della
+            prestazione, attività e ambito territoriale; fondi e mezzi di pagamento restano facoltativi. Al ritorno la dichiarazione
+            diventa un documento del fascicolo.
+          </Riquadro>
+        ) : (
           <Riquadro tipo="info">
             Il cliente vedrà la ricostruzione fatta dal programma (soci, quote, titolari effettivi individuati) e dovrà confermarla o correggerla,
             rispondere alle domande che la visura non può dare (patti, vincoli, interposizioni) e dichiarare lo status di PEP per ciascun titolare
             effettivo e per l’esecutore (la domanda PEP generica è assorbita). Al ritorno la dichiarazione diventa un documento del fascicolo.
           </Riquadro>
-        )}
+        ))}
         <div>
           <label className="label">Email del cliente (facoltativa: se la indichi, l’invito parte da qui)</label>
           <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="cliente@esempio.it" />
@@ -418,17 +431,60 @@ function EsaminaModal({ richiestaId, onChiudi, onAcquisita }: {
                 {d.dichiarazioneTe.scopo && (
                   <p data-test="scopo-dichiarato"><span className="text-ink-400">Scopo e natura della prestazione:</span> {d.dichiarazioneTe.scopo.conferma === 'PRECISA' ? d.dichiarazioneTe.scopo.testo : 'confermati come descritti nel fascicolo'}</p>
                 )}
+                {/* AR-M23c: chi ha reso la dichiarazione e che cosa ha dichiarato di sé (prima si vedeva solo nel .docx). */}
+                {d.dichiarazioneTe.dichiarante?.nome && (
+                  <p data-test="dichiarante-ricevuto">
+                    <span className="text-ink-400">Resa da:</span> <strong>{d.dichiarazioneTe.dichiarante.nome}</strong>
+                    {d.dichiarazioneTe.dichiarante.codiceFiscale ? ` — ${d.dichiarazioneTe.dichiarante.codiceFiscale}` : ''}
+                    {d.dichiarazioneTe.dichiarante.qualita ? `, ${d.dichiarazioneTe.dichiarante.qualita}` : ''}
+                    {[d.dichiarazioneTe.dichiarante.natoA, d.dichiarazioneTe.dichiarante.natoIl ? formattaData(d.dichiarazioneTe.dichiarante.natoIl) : null].filter(Boolean).length
+                      ? ` · nato/a ${[d.dichiarazioneTe.dichiarante.natoA ? `a ${d.dichiarazioneTe.dichiarante.natoA}` : null, d.dichiarazioneTe.dichiarante.natoIl ? `il ${formattaData(d.dichiarazioneTe.dichiarante.natoIl)}` : null].filter(Boolean).join(' ')}` : ''}
+                    {d.dichiarazioneTe.dichiarante.residenza ? ` · residente in ${d.dichiarazioneTe.dichiarante.residenza}` : ''}
+                    {d.dichiarazioneTe.dichiarante.domicilio ? ` (domicilio: ${d.dichiarazioneTe.dichiarante.domicilio})` : ''}
+                    {d.dichiarazioneTe.pepDichiarante
+                      ? <> · PEP: <strong>{d.dichiarazioneTe.pepDichiarante.pep ? `SÌ${d.dichiarazioneTe.pepDichiarante.dettagli ? ` (${d.dichiarazioneTe.pepDichiarante.dettagli})` : ''}` : 'no'}</strong></>
+                      : null}
+                  </p>
+                )}
+                {dettaglio.precompilata?.opzione === 1 && (
+                  <p data-test="in-proprio-ricevuto">
+                    {d.dichiarazioneTe.conferma === 'CORREGGE'
+                      ? <>Dichiara di agire <strong>per conto di un’altra persona</strong> (non in proprio): la dichiarazione va rifatta con l’opzione 2 del modello, con i dati dell’esecutore.</>
+                      : <>Dichiara di <strong>agire in proprio</strong>: nessun titolare effettivo diverso da sé (mod. AV.4, opzione 1).</>}
+                  </p>
+                )}
+                {(d.dichiarazioneTe.attivita || d.dichiarazioneTe.ambito) && (
+                  <p>
+                    {d.dichiarazioneTe.attivita ? <><span className="text-ink-400">Attività:</span> {d.dichiarazioneTe.attivita}</> : null}
+                    {d.dichiarazioneTe.ambito ? <>{d.dichiarazioneTe.attivita ? ' · ' : ''}<span className="text-ink-400">Ambito:</span> {[
+                      d.dichiarazioneTe.ambito.italiaProvincia ? `Italia (${d.dichiarazioneTe.ambito.italiaProvincia})` : null,
+                      d.dichiarazioneTe.ambito.paeseUe ? `UE: ${d.dichiarazioneTe.ambito.paeseUe}` : null,
+                      d.dichiarazioneTe.ambito.paeseExtraUe ? `extra UE: ${d.dichiarazioneTe.ambito.paeseExtraUe}` : null,
+                      d.dichiarazioneTe.ambito.paeseRischio ? `paese a rischio: ${d.dichiarazioneTe.ambito.paeseRischio}` : null,
+                    ].filter(Boolean).join(', ') || '—'}</> : null}
+                  </p>
+                )}
+                {(d.dichiarazioneTe.provenienzaFondi || d.dichiarazioneTe.mezziPagamento) && (
+                  <p>
+                    {d.dichiarazioneTe.provenienzaFondi ? <><span className="text-ink-400">Provenienza dei fondi:</span> {d.dichiarazioneTe.provenienzaFondi}</> : null}
+                    {d.dichiarazioneTe.mezziPagamento ? <>{d.dichiarazioneTe.provenienzaFondi ? ' · ' : ''}<span className="text-ink-400">Mezzi di pagamento:</span> {d.dichiarazioneTe.mezziPagamento}</> : null}
+                  </p>
+                )}
                 {dettaglio.segnali?.length > 0
                   ? <Riquadro tipo="avviso"><strong>Da valutare:</strong><ul className="list-disc ml-5">{dettaglio.segnali.map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></Riquadro>
-                  : <Riquadro tipo="info">Il cliente ha <strong>confermato</strong> la ricostruzione, ha risposto «No» a tutte le domande sul controllo e nessuno è dichiarato PEP.</Riquadro>}
+                  : dettaglio.precompilata?.opzione === 1
+                    ? <Riquadro tipo="info">Il cliente ha <strong>confermato</strong> di agire in proprio e non è dichiarato PEP.</Riquadro>
+                    : <Riquadro tipo="info">Il cliente ha <strong>confermato</strong> la ricostruzione, ha risposto «No» a tutte le domande sul controllo e nessuno è dichiarato PEP.</Riquadro>}
                 {d.dichiarazioneTe.conferma === 'CORREGGE' && d.dichiarazioneTe.correzioni && <p><span className="text-ink-400">Correzioni:</span> {d.dichiarazioneTe.correzioni}</p>}
-                <details className="text-sm">
-                  <summary className="cursor-pointer text-ink-500">Risposte alle domande sul controllo ({d.dichiarazioneTe.risposte?.length ?? 0})</summary>
-                  <ul className="list-disc ml-5 mt-1">
-                    {(d.dichiarazioneTe.risposte ?? []).map((r: any, i: number) => <li key={i}><strong>{r.risposta}</strong> — {r.domanda}{r.dettagli ? ` (${r.dettagli})` : ''}</li>)}
-                  </ul>
-                  <div className="mt-1">PEP: {(d.dichiarazioneTe.pep ?? []).map((x: any) => `${x.nominativo}: ${x.pep ? 'SÌ' : 'no'}`).join(' · ') || '—'}</div>
-                </details>
+                {((d.dichiarazioneTe.risposte?.length ?? 0) > 0 || (d.dichiarazioneTe.pep?.length ?? 0) > 0) && (
+                  <details className="text-sm">
+                    <summary className="cursor-pointer text-ink-500">Risposte alle domande sul controllo ({d.dichiarazioneTe.risposte?.length ?? 0})</summary>
+                    <ul className="list-disc ml-5 mt-1">
+                      {(d.dichiarazioneTe.risposte ?? []).map((r: any, i: number) => <li key={i}><strong>{r.risposta}</strong> — {r.domanda}{r.dettagli ? ` (${r.dettagli})` : ''}</li>)}
+                    </ul>
+                    <div className="mt-1">PEP: {(d.dichiarazioneTe.pep ?? []).map((x: any) => `${x.nominativo}: ${x.pep ? 'SÌ' : 'no'}`).join(' · ') || '—'}</div>
+                  </details>
+                )}
               </section>
             )}
             {Array.isArray(d?.titolari) && d.titolari.length > 0 && (

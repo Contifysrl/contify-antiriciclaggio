@@ -911,6 +911,7 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
       <VerificaADistanza
         fascicoloId={id}
         clienteId={d.fascicolo.cliente_id}
+        personaFisica={d.fascicolo.cliente_tipo === 'PERSONA_FISICA'}
         onDatiAcquisiti={carica}
         onTitolariDichiarati={setTitolariDichiarati}
       />
@@ -1029,8 +1030,9 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
                 <div className="campo">
                   <label>Perché lo elimini</label>
                   <input data-test="motivazione-elimina" value={motivazioneElimina} onChange={(e) => setMotivazioneElimina(e.target.value)} placeholder="es. aperto per errore sul cliente sbagliato" autoFocus />
+                  {/* La doppia conferma («Elimina» → «Elimina definitivamente») è nella finestra che si apre: qui il pulsante non promette nulla di definitivo. */}
                   <button className="azione" style={{ background: '#dc2626' }} disabled={motivazioneElimina.trim().length < 5} data-test="elimina-fascicolo" onClick={() => setConfermaElimina(true)}>
-                    Elimina definitivamente
+                    Elimina…
                   </button>
                   <button className="azione secondaria" style={{ marginLeft: 8 }} onClick={() => { setEliminaForm(false); setMotivazioneElimina(''); }}>Annulla</button>
                 </div>

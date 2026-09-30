@@ -139,6 +139,23 @@ await p.waitForSelector('[data-test=archivio-documenti]', { timeout: 15000 });
 await p.waitForTimeout(800);
 const esamina = await p.locator('button:has-text("Esamina")').first();
 verifica('lo studio vede la richiesta completata', await esamina.isVisible().catch(() => false));
+// AR-M23c: nell'esame lo studio legge chi ha reso la dichiarazione e che cosa ha dichiarato di sé.
+await esamina.click();
+await p.waitForSelector('[data-test=dichiarazione-ricevuta]', { timeout: 10000 });
+const ricevuta = await p.textContent('[data-test=dichiarazione-ricevuta]');
+verifica('esame: «Resa da» con nome e CF del dichiarante e PEP: no', await p.isVisible('[data-test=dichiarante-ricevuto]') && new RegExp(`VERDI GINO ${suffisso}`).test(ricevuta) && /PEP: no/.test(ricevuta));
+verifica('esame: «agire in proprio» (opzione 1) e niente riquadro delle domande sul controllo', await p.isVisible('[data-test=in-proprio-ricevuto]') && /agire in proprio/.test(ricevuta) && !/Risposte alle domande sul controllo/.test(ricevuta));
+await scatto('7b-esame-pf');
+await p.keyboard.press('Escape');
+await p.waitForTimeout(400);
+// AR-M23c: la nuova richiesta parte con la AV.4 selezionata e, per la persona fisica, spiega l'opzione 1.
+await p.click('button:has-text("Nuova richiesta al cliente")');
+await p.waitForSelector('text=Richiedi i dati al cliente', { timeout: 5000 });
+const modalRichiesta = p.locator('.fixed', { hasText: 'Richiedi i dati al cliente' }).first(); // la barra laterale è «fixed» anche lei
+const richiestaTesto = await modalRichiesta.textContent();
+verifica('nuova richiesta: AV.4 già selezionata e nota per la persona fisica (opzione 1)', (await modalRichiesta.locator('input[type=checkbox]').nth(2).isChecked()) && /opzione 1/.test(richiestaTesto ?? ''));
+await modalRichiesta.locator('button:has-text("Annulla")').click();
+await p.waitForTimeout(300);
 
 // ── 5. Eliminazione di un fascicolo vuoto ─────────────────────
 const f2 = await p.evaluate(async (id) => (await fetch('/api/fascicoli', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clienteId: id, prestazioneCodice: 'CONSULENZA_TRIBUTARIA', tipoRapporto: 'OCCASIONALE', importoOperazione: 1000, dataConferimento: new Date().toISOString().slice(0, 10) }) })).json(), pf.id);

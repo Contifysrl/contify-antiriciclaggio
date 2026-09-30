@@ -103,7 +103,7 @@ verifica('valutazione consolidata', await p.isVisible('h3:has-text("Valutazione 
 await p.click('button:has-text("Nuova richiesta al cliente…")');
 await p.waitForTimeout(300);
 const M = 'div.fixed.inset-0';
-await p.click(`${M} label:has-text("PRECOMPILATA") input`);
+await p.locator(`${M} label:has-text("PRECOMPILATA") input`).check(); // da AR-M23c è già selezionata: si assicura, non si inverte
 await p.click(`${M} input[type=checkbox] >> nth=0`); // togli dati identificativi
 await p.click(`${M} input[type=checkbox] >> nth=1`); // togli documento
 await p.click(`${M} button:has-text("Crea il collegamento")`);
