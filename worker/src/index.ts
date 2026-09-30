@@ -45,7 +45,7 @@ import { SOGLIE_AVVISO_CANONE, bloccoPerStato, giorniAllaScadenza, statoValido }
 import { cercaAnagrafica, limiteSuperato } from './lib/lookup';
 import { aggiornaListeSanzioni, caricaListe, eseguiScreeningTenant, listeDaAggiornare, screeningSchedulato } from './lib/sanzioni';
 import { normalizzaPiva } from './lib/lookup/piva';
-import { registraTitolari } from './lib/titolarita';
+import { assicuraTitolaritaPersonaFisica, chiudiTitolaritaPersonaFisica, registraTitolari } from './lib/titolarita';
 import { TIPI_CLIENTE, aggiornaClienteDaVisura, clienteDoppione, creaClienteDaVisura, risolviProfessionista } from './lib/da-visura';
 import { aggiornaContenutoProposta, leggiProposte, propostaTitolarita, registraProposta, salvaCompagine, screeningCompagine, type CaricaIn, type SocioIn } from './lib/compagine';
 import { ErroreAi, MODELLO_DEFAULT, VERSIONE_INFORMATIVA_AI, aiAbilitata, classificaSettore, generaBozza, informativaDaRiaccettare, riscriviMotivazioneCo6, rispostaChat, statoAi, suggerisciIndicatori } from './lib/ai';
@@ -54,7 +54,9 @@ import { dettagliCliente, parametriTenant, propostaFascicolo, tabellaProvince } 
 import { completezzaStudio } from './lib/completezza';
 import { accodaVisure, applicaTuttoCoda, applicaVoceCoda, caricaPdfCoda, leggiCoda, scartaVoceCoda } from './lib/coda';
 import { REGOLE_COMPLETEZZA } from './domain/completezza';
-import { corpoDichiarazioneArt22, normalizzaRispostaArt22, precompilaDichiarazione, segnaliDaValutare, type PrecompilataArt22, type RispostaArt22 } from './lib/dichiarazione-art22';
+import { completaPrecompilata, corpoDichiarazioneArt22, normalizzaRispostaArt22, precompilaDichiarazione, segnaliDaValutare, type PrecompilataArt22, type RispostaArt22 } from './lib/dichiarazione-art22';
+import { collegamentiFascicolo, eliminaFascicolo, modificaFascicolo, prossimoCodiceFascicolo } from './lib/fascicolo';
+import { acquisisciDocumento, contentDisposition, documentiDelCliente } from './lib/documenti';
 import { PROVINCE, RIFERIMENTO_MAPPA_ANR, normalizzaTabellaProvince } from './domain/province';
 import { SETTORI_ESPOSTI, settoreEsposto, voceSettorePerCodice } from './domain/settori-esposti';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
@@ -996,12 +998,13 @@ api.post('/clienti/import', puoScrivere, async (c) => {
     const indicato = String(r.professionista ?? '').trim().toLowerCase();
     const professionistaId = (indicato && (perEmail.get(indicato) ?? perNome.get(indicato))) || predefinito.id;
 
+    const idCliente = nuovoId('cli');
     await c.env.DB.prepare(
       `INSERT INTO clienti (id, tenant_id, tipo, denominazione, codice_fiscale, partita_iva,
         paese_residenza, attivita_prevalente, ateco, pep, note, creato_da, professionista_id)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).bind(
-      nuovoId('cli'), tenantId, tipo, denominazione, cf, piva,
+      idCliente, tenantId, tipo, denominazione, cf, piva,
       String(r.paeseResidenza ?? 'IT').trim().toUpperCase() || 'IT',
       String(r.attivitaPrevalente ?? '').trim() || null,
       String(r.ateco ?? '').trim() || null,
@@ -1014,6 +1017,8 @@ api.post('/clienti/import', puoScrivere, async (c) => {
     if (piva) giaPiva.add(piva);
     giaNome.add(denominazione.toLowerCase());
     creati++;
+    // AR-M23: persona fisica → titolare effettivo = il cliente stesso.
+    await assicuraTitolaritaPersonaFisica(c.env, tenantId, u, c.get('ip'), { id: idCliente, tipo, denominazione, codice_fiscale: cf });
   }
 
   await scriviAudit(c.env.DB, {
@@ -1123,7 +1128,7 @@ api.get('/verifiche-remote/:id', puoScrivere, async (c) => {
   const { richieste, precompilata } = await precompilataDaRichiesta(c.env, tenantId, r.richieste);
   return c.json({
     id: r.id, stato: r.stato, richieste, dati, precompilata,
-    segnali: dati?.dichiarazioneTe ? segnaliDaValutare(dati.dichiarazioneTe as RispostaArt22) : [],
+    segnali: dati?.dichiarazioneTe ? segnaliDaValutare(dati.dichiarazioneTe as RispostaArt22, precompilata ? completaPrecompilata(precompilata).opzione : undefined) : [],
     allegati: JSON.parse(r.allegati ?? '[]').map((a: any, i: number) => ({ indice: i, nome: a.nome, mime: a.mime, dimensione: a.dimensione, sha256: a.sha256 })),
     completataIl: r.completata_il, scadeIl: r.scade_il,
   });
@@ -1212,8 +1217,8 @@ api.post('/verifiche-remote/:id/acquisisci', puoScrivere, async (c) => {
   let titolariDichiarati: any[] = dati.titolari ?? [];
   if (dati.dichiarazioneTe) {
     const risposta = dati.dichiarazioneTe as RispostaArt22;
-    segnali = segnaliDaValutare(risposta);
     const { precompilata } = await precompilataDaRichiesta(c.env, tenantId, r.richieste);
+    segnali = segnaliDaValutare(risposta, precompilata ? completaPrecompilata(precompilata).opzione : undefined);
     if (risposta.conferma === 'CORREGGE' && risposta.titolari?.length) titolariDichiarati = risposta.titolari;
     else if (precompilata) titolariDichiarati = precompilata.titolariProposti.map((t) => ({ nominativo: t.nominativo, quota: t.quota != null ? String(t.quota) : '', confermato: true }));
     if (b.acquisisciDichiarazione !== false && precompilata) {
@@ -1297,6 +1302,13 @@ api.get('/pubblico/verifica/:token', async (c) => {
           criterioApplicato: precompilata.criterioApplicato, esecutore: precompilata.esecutore, domande: precompilata.domande, senzaCompagine: precompilata.senzaCompagine,
           // AR-M22: scopo e natura della prestazione (art. 18 co. 1 lett. c), precompilati dal fascicolo.
           prestazione: precompilata.prestazione ?? null,
+          // AR-M23: modello AV.4 per opzione — chi firma, società, titolari con relazione, attività e ambito (dati del cliente stesso).
+          opzione: precompilata.opzione ?? null,
+          dichiarante: precompilata.dichiarante ?? null,
+          societa: precompilata.societa ?? null,
+          titolari: (precompilata.titolari ?? []).map((t) => ({ nominativo: t.nominativo, codiceFiscale: t.codiceFiscale, natoA: t.natoA, natoIl: t.natoIl, residenza: t.residenza, relazione: t.relazione, etichettaCriterio: t.etichettaCriterio, quota: t.quota })),
+          attivita: precompilata.attivita ?? null,
+          ambito: precompilata.ambito ?? null,
         }
       : null,
     scadeIl: r.scade_il,
@@ -1331,7 +1343,13 @@ api.post('/pubblico/verifica/:token', async (c) => {
   if (richiesteAperte.dichiarazioneTe && precompilata) {
     const esito = normalizzaRispostaArt22(dati.dichiarazioneTe, precompilata);
     if (esito.errore) return c.json({ errore: esito.errore }, 400);
-    dati.dichiarazioneTe = { ...esito.risposta, resaIl: dati.dichiarazione.dataOra, dichiarante: { nome: String(dati.dichiarazione.nomeDichiarante ?? '').slice(0, 200) || null, qualita: precompilata.esecutore?.carica ?? null } };
+    // AR-M23: il dichiarante porta i propri dati (nome, CF, nascita, residenza) dal modulo; il nome di chi compila resta il riferimento.
+    const nomeCompila = String(dati.dichiarazione.nomeDichiarante ?? '').slice(0, 200) || null;
+    const d0 = esito.risposta!.dichiarante ?? {};
+    dati.dichiarazioneTe = {
+      ...esito.risposta, resaIl: dati.dichiarazione.dataOra,
+      dichiarante: { ...d0, nome: d0.nome || nomeCompila, qualita: d0.qualita || precompilata.dichiarante?.qualita || precompilata.esecutore?.carica || null },
+    };
   } else {
     delete dati.dichiarazioneTe;
   }
@@ -2188,6 +2206,8 @@ api.post('/clienti', puoScrivere, async (c) => {
     .run();
 
   await scriviAudit(c.env.DB, { tenantId, utenteId: u.id, azione: 'CREA_CLIENTE', entita: 'clienti', entitaId: id, ip: c.get('ip') });
+  // AR-M23: persona fisica → titolare effettivo = il cliente stesso, registrato subito.
+  await assicuraTitolaritaPersonaFisica(c.env, tenantId, u, c.get('ip'), { id, tipo: b.tipo, denominazione: b.denominazione, codice_fiscale: b.codiceFiscale ?? null });
   return c.json({ id }, 201);
 });
 
@@ -2213,10 +2233,8 @@ api.get('/clienti/:id', async (c) => {
   ).bind(id, tenantId).all();
 
   const collegamenti = await collegamentiCliente(c.env.DB, tenantId, id);
-  // AR-M17: documenti agganciati al cliente (visure, incarico) e compagine vigente in sintesi.
-  const { results: documenti } = await c.env.DB.prepare(
-    'SELECT id, tipo, nome_file, dimensione, sha256, data_riferimento, data_acquisizione, conserva_fino_al FROM documenti WHERE cliente_id = ? AND tenant_id = ? ORDER BY data_acquisizione DESC',
-  ).bind(id, tenantId).all();
+  // AR-M17 → AR-M23: archivio unico — documenti del cliente E dei suoi fascicoli, con il codice del fascicolo.
+  const documenti = await documentiDelCliente(c.env.DB, tenantId, id);
   const compagine = await c.env.DB.prepare(
     `SELECT (SELECT COUNT(*) FROM partecipazioni WHERE cliente_id = ?1 AND tenant_id = ?2 AND valido_al IS NULL) AS soci,
             (SELECT COUNT(*) FROM cariche WHERE cliente_id = ?1 AND tenant_id = ?2 AND valido_al IS NULL) AS cariche,
@@ -2300,6 +2318,12 @@ api.patch('/clienti/:id', puoScrivere, async (c) => {
     tenantId, utenteId: u.id, azione: 'AGGIORNA_CLIENTE', entita: 'clienti', entitaId: id,
     dettaglio: { campi: Object.keys(b) }, ip: c.get('ip'),
   });
+  // AR-M23: la natura giuridica governa la titolarità automatica della persona fisica.
+  if (b.tipo !== undefined) {
+    const agg = await c.env.DB.prepare('SELECT id, tipo, denominazione, codice_fiscale FROM clienti WHERE id = ? AND tenant_id = ?').bind(id, tenantId).first<any>();
+    if (agg?.tipo === 'PERSONA_FISICA') await assicuraTitolaritaPersonaFisica(c.env, tenantId, u, c.get('ip'), agg);
+    else await chiudiTitolaritaPersonaFisica(c.env, tenantId, String(id));
+  }
   return c.json({ ok: true });
 });
 
@@ -2468,63 +2492,22 @@ api.post('/proposte/:id/esito', puoScrivere, async (c) => {
  * termine resta NULL finché esiste un rapporto in essere.
  */
 api.post('/clienti/:id/documenti', puoScrivere, async (c) => {
-  const tenantId = c.get('tenantId');
-  const u = c.get('utente');
-  const clienteId = c.req.param('id') as string;
-  const cliente = await c.env.DB.prepare('SELECT id FROM clienti WHERE id = ? AND tenant_id = ?').bind(clienteId, tenantId).first<any>();
-  if (!cliente) return c.json({ errore: 'Cliente non trovato' }, 404);
-
   const form = await c.req.formData();
   const campo = form.get('file');
   if (typeof campo === 'string' || campo === null) return c.json({ errore: 'File mancante' }, 400);
-  const file = campo as File;
-  if (file.size > 20 * 1024 * 1024) return c.json({ errore: 'File troppo grande (massimo 20 MB).' }, 413);
-
-  const buf = await file.arrayBuffer();
-  const sha = await sha256Hex(buf);
-  const tipo = String(form.get('tipo') ?? 'VISURA');
-  // La stessa visura caricata due volte non si duplica: si restituisce quella esistente.
-  const esistente = await c.env.DB.prepare('SELECT id, conserva_fino_al FROM documenti WHERE tenant_id = ? AND cliente_id = ? AND sha256 = ?')
-    .bind(tenantId, clienteId, sha).first<any>();
-  if (esistente) return c.json({ id: esistente.id, sha256: sha, conservaFinoAl: esistente.conserva_fino_al, giaPresente: true }, 200);
-
-  const id = nuovoId('doc');
-  const nome = file.name.replace(/[^\w.\- àèéìòù()]/gi, '_').slice(0, 120) || 'documento.pdf';
-  const r2Key = `${tenantId}/cliente/${clienteId}/${id}-${nome}`;
-  await c.env.DOCS.put(r2Key, buf, { httpMetadata: { contentType: file.type || 'application/octet-stream' } });
-  const dataRif = String(form.get('dataRiferimento') ?? '');
-  await c.env.DB.prepare(
-    `INSERT INTO documenti (id, tenant_id, cliente_id, tipo, nome_file, mime, dimensione, r2_key, sha256,
-      data_riferimento, data_acquisizione, conserva_fino_al, creato_da)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-  ).bind(id, tenantId, clienteId, tipo, nome, file.type || 'application/octet-stream', buf.byteLength, r2Key, sha,
-    /^\d{4}-\d{2}-\d{2}$/.test(dataRif) ? dataRif : oggi(), oggi(), null, u.id).run();
-
-  await scriviAudit(c.env.DB, { tenantId, utenteId: u.id, azione: 'ACQUISISCI_DOCUMENTO', entita: 'documenti', entitaId: id, dettaglio: { sha256: sha, clienteId, tipo }, ip: c.get('ip') });
-  return c.json({ id, sha256: sha, conservaFinoAl: null }, 201);
+  // AR-M23: acquisizione unica (lib/documenti.ts) — stessa logica del fascicolo.
+  const r = await acquisisciDocumento(c.env, c.get('tenantId'), c.get('utente'), c.get('ip'), {
+    clienteId: c.req.param('id') as string, file: campo as File, tipo: String(form.get('tipo') ?? 'VISURA'), dataRiferimento: String(form.get('dataRiferimento') ?? ''),
+  });
+  if ('errore' in r) return c.json({ errore: r.errore }, r.stato);
+  return c.json(r, r.giaPresente ? 200 : 201);
 });
 
+/** AR-M23: archivio unico del cliente — documenti agganciati al cliente e ai suoi fascicoli. */
 api.get('/clienti/:id/documenti', async (c) => {
-  const tenantId = c.get('tenantId');
-  const { results } = await c.env.DB.prepare(
-    `SELECT d.id, d.tipo, d.nome_file, d.mime, d.dimensione, d.sha256, d.data_riferimento, d.data_acquisizione, d.conserva_fino_al, d.fascicolo_id, u.nome AS acquisito_da
-     FROM documenti d LEFT JOIN utenti u ON u.id = d.creato_da
-     WHERE d.tenant_id = ? AND d.cliente_id = ? ORDER BY d.data_acquisizione DESC, d.creato_il DESC`,
-  ).bind(tenantId, c.req.param('id')).all();
-  return c.json(results ?? []);
+  return c.json(await documentiDelCliente(c.env.DB, c.get('tenantId'), c.req.param('id') as string));
 });
 
-// ===========================================================================
-// IL FASCICOLO PROPOSTO (AR-M18)
-//
-// Dai dati camerali il programma propone Tabella A (A.1, A.2, A.4 con
-// motivazione e fonte; A.3 sempre chiesto), esecutore, checklist dei
-// documenti, circostanze di legge e alert A9-A10. Niente produce effetti
-// finché il professionista non consolida: le proposte restano in `proposte`
-// con il loro esito, come per la titolarità (M17).
-// ===========================================================================
-
-/** Proposta viva per il cliente: serve al form «Nuovo fascicolo» (esecutore) e alla scheda cliente. */
 api.get('/clienti/:id/fascicolo-proposto', async (c) => {
   const tenantId = c.get('tenantId');
   const cliente = await c.env.DB.prepare('SELECT * FROM clienti WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tenantId).first<any>();
@@ -2638,10 +2621,8 @@ api.post('/fascicoli', puoScrivere, async (c) => {
   const prestazione = prestazioneObbligatoria(b.prestazioneCodice);
 
   const anno = (b.dataConferimento ?? oggi()).slice(0, 4);
-  const conteggio = await c.env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM fascicoli WHERE tenant_id = ? AND codice LIKE ?",
-  ).bind(tenantId, `${anno}/%`).first<{ n: number }>();
-  const codice = `${anno}/${String((conteggio?.n ?? 0) + 1).padStart(4, '0')}`;
+  // AR-M23: MAX+1, non COUNT+1 — un fascicolo eliminato non fa rinascere il suo numero.
+  const codice = await prossimoCodiceFascicolo(c.env.DB, tenantId, anno);
 
   // AR-M15. Il professionista incaricato della prestazione e chi ha
   // materialmente identificato il cliente: l'art. 19 co. 1 lett. a) chiede
@@ -2681,6 +2662,8 @@ api.post('/fascicoli', puoScrivere, async (c) => {
   let esecutoreRegistratoStato: string | null = null;
   try {
     const cliente = await c.env.DB.prepare('SELECT * FROM clienti WHERE id = ? AND tenant_id = ?').bind(b.clienteId, tenantId).first<any>();
+    // AR-M23: cliente persona fisica senza fotografia dei titolari → coincide con il cliente.
+    if (cliente) await assicuraTitolaritaPersonaFisica(c.env, tenantId, u, c.get('ip'), cliente);
     if (cliente && !prestazione.esenteAdeguataVerifica) {
       const pf = await propostaFascicolo(c.env, tenantId, cliente, { id, esecutore: null });
       const punteggi = Object.fromEntries(Object.values(pf.tabellaA).map((f) => [f.codice, f.punteggio]));
@@ -2737,9 +2720,11 @@ api.get('/fascicoli/:id', async (c) => {
   const { results: valutazioni } = await c.env.DB.prepare(
     'SELECT * FROM valutazioni_rischio WHERE fascicolo_id = ? ORDER BY versione DESC',
   ).bind(id).all<any>();
-  const { results: documenti } = await c.env.DB.prepare(
-    'SELECT id, tipo, nome_file, dimensione, sha256, data_riferimento, data_acquisizione, conserva_fino_al FROM documenti WHERE fascicolo_id = ? AND tenant_id = ?',
-  ).bind(id, tenantId).all();
+  // AR-M23: archivio unico del cliente. Ogni documento dice se è di QUESTO
+  // fascicolo, del cliente o di un altro fascicolo dello stesso cliente.
+  const documenti = (await documentiDelCliente(c.env.DB, tenantId, f.cliente_id)).map((d) => ({
+    ...d, ambito: d.fascicolo_id === id ? 'FASCICOLO' : d.fascicolo_id ? 'ALTRO_FASCICOLO' : 'CLIENTE',
+  }));
   const { results: operazioni } = await c.env.DB.prepare(
     'SELECT * FROM operazioni WHERE fascicolo_id = ? AND tenant_id = ? ORDER BY data_operazione DESC',
   ).bind(id, tenantId).all();
@@ -2772,10 +2757,37 @@ api.get('/fascicoli/:id', async (c) => {
     fascicolo: f,
     valutazioni: valutazioni ?? [],
     titolari: titolari ?? [],
-    documenti: documenti ?? [],
+    documenti,
     operazioni: operazioni ?? [],
     scadenze: statoScadenze(scadenze, oggi()),
+    // AR-M23: si può eliminare? E se no, perché.
+    collegamenti: await collegamentiFascicolo(c.env.DB, tenantId, id, f),
   });
+});
+
+/**
+ * AR-M23 — correzione dei dati dell'incarico (date, modalità, rapporto,
+ * scopo). Prima/dopo nell'audit; motivazione obbligatoria se il fascicolo ha
+ * già una valutazione firmata.
+ */
+api.patch('/fascicoli/:id', puoScrivere, async (c) => {
+  const b = await c.req.json<any>().catch(() => null);
+  const r = await modificaFascicolo(c.env, c.get('tenantId'), c.get('utente'), c.get('ip'), c.req.param('id') as string, b);
+  if ('errore' in r) return c.json({ errore: r.errore }, r.stato);
+  return c.json(r);
+});
+
+/**
+ * AR-M23 — eliminazione di un fascicolo aperto per errore. Solo un
+ * professionista, solo se al fascicolo non è appeso nulla che documenti
+ * un'adeguata verifica (altrimenti 409 con i motivi); motivazione
+ * obbligatoria; audit scritto PRIMA della cancellazione.
+ */
+api.delete('/fascicoli/:id', soloTitolare, async (c) => {
+  const b = await c.req.json<any>().catch(() => ({}));
+  const r = await eliminaFascicolo(c.env, c.get('tenantId'), c.get('utente'), c.get('ip'), c.req.param('id') as string, b?.motivazione);
+  if ('errore' in r) return c.json({ errore: r.errore, codice: r.codice, collegamenti: r.collegamenti }, r.stato);
+  return c.json(r);
 });
 
 /**
@@ -3136,42 +3148,27 @@ api.post('/sos/:id/stato', puoVedereSos, async (c) => {
 
 api.post('/fascicoli/:id/documenti', puoScrivere, async (c) => {
   const tenantId = c.get('tenantId');
-  const u = c.get('utente');
   const fascicoloId = c.req.param('id');
-
+  const f = await c.env.DB.prepare('SELECT cliente_id FROM fascicoli WHERE id = ? AND tenant_id = ?').bind(fascicoloId, tenantId).first<any>();
+  if (!f) return c.json({ errore: 'Fascicolo non trovato' }, 404);
   const form = await c.req.formData();
   const campo = form.get('file');
   // form.get restituisce File | string: la stringa va scartata prima di
   // trattare il valore come file, altrimenti si scrive su R2 un nome di campo.
   if (typeof campo === 'string' || campo === null) return c.json({ errore: 'File mancante' }, 400);
-  const file = campo as File;
-
-  const buf = await file.arrayBuffer();
-  const sha = await sha256Hex(buf);
-  const id = nuovoId('doc');
-  const r2Key = `${tenantId}/${fascicoloId}/${id}-${file.name}`;
-  await c.env.DOCS.put(r2Key, buf, { httpMetadata: { contentType: file.type || 'application/octet-stream' } });
-
-  const f = await c.env.DB.prepare('SELECT data_cessazione FROM fascicoli WHERE id = ? AND tenant_id = ?').bind(fascicoloId, tenantId).first<any>();
-  // La conservazione decennale decorre dalla cessazione del rapporto: finché il
-  // rapporto è in essere il termine non è ancora determinabile.
-  const conservaFinoAl = f?.data_cessazione ? aggiungiAnni(f.data_cessazione, TERMINI.CONSERVAZIONE_ANNI.valore) : null;
-
-  await c.env.DB.prepare(
-    `INSERT INTO documenti (id, tenant_id, fascicolo_id, tipo, nome_file, mime, dimensione, r2_key, sha256,
-      data_riferimento, data_acquisizione, conserva_fino_al, creato_da)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-  )
-    .bind(
-      id, tenantId, fascicoloId, String(form.get('tipo') ?? 'ALTRO'), file.name, file.type || 'application/octet-stream',
-      buf.byteLength, r2Key, sha, String(form.get('dataRiferimento') ?? oggi()), oggi(), conservaFinoAl, u.id,
-    )
-    .run();
-
-  await scriviAudit(c.env.DB, { tenantId, utenteId: u.id, azione: 'ACQUISISCI_DOCUMENTO', entita: 'documenti', entitaId: id, dettaglio: { sha256: sha, fascicoloId }, ip: c.get('ip') });
-  return c.json({ id, sha256: sha, conservaFinoAl }, 201);
+  // AR-M23: il documento del fascicolo porta anche `cliente_id`: l'archivio del cliente lo vede.
+  const r = await acquisisciDocumento(c.env, tenantId, c.get('utente'), c.get('ip'), {
+    clienteId: f.cliente_id, fascicoloId, file: campo as File, tipo: String(form.get('tipo') ?? 'ALTRO'), dataRiferimento: String(form.get('dataRiferimento') ?? ''),
+  });
+  if ('errore' in r) return c.json({ errore: r.errore }, r.stato);
+  return c.json(r, r.giaPresente ? 200 : 201);
 });
 
+/**
+ * Contenuto del documento. `?scarica=1` forza il download (attachment);
+ * senza, il browser lo apre se sa farlo (PDF, immagini). AR-M23: header
+ * Content-Disposition robusto ai nomi con caratteri non Latin-1.
+ */
 api.get('/documenti/:id', async (c) => {
   const tenantId = c.get('tenantId');
   const d = await c.env.DB.prepare('SELECT * FROM documenti WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tenantId).first<any>();
@@ -3180,8 +3177,14 @@ api.get('/documenti/:id', async (c) => {
   if (!obj) return c.json({ errore: 'Contenuto non reperibile nello storage' }, 404);
 
   await scriviAudit(c.env.DB, { tenantId, utenteId: c.get('utente').id, azione: 'LEGGI_DOCUMENTO', entita: 'documenti', entitaId: d.id, ip: c.get('ip') });
+  const scarica = c.req.query('scarica') === '1';
   return new Response(obj.body, {
-    headers: { 'Content-Type': d.mime, 'Content-Disposition': `inline; filename="${d.nome_file}"` },
+    headers: {
+      'Content-Type': d.mime || 'application/octet-stream',
+      'Content-Disposition': contentDisposition(scarica ? 'attachment' : 'inline', d.nome_file),
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    },
   });
 });
 

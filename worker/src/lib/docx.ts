@@ -164,6 +164,11 @@ export function tabellaDati(coppie: Array<[string, string]>): string {
   );
 }
 
+/** Interruzione di pagina (AR-M23: allegato della dichiarazione AV.4). */
+export function interruzionePagina(): string {
+  return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+}
+
 /** Blocco firma: luogo/data a sinistra, firma a destra. */
 export function bloccoFirma(ruolo: string, nome: string): string {
   return (

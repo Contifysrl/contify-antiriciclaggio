@@ -121,7 +121,7 @@ await cliPage.goto(`${BASE}/${url.trim().slice(url.trim().indexOf('#'))}`);
 await cliPage.waitForSelector('[data-test=dichiarazione-te]', { timeout: 15000 });
 await cliPage.screenshot({ path: '/tmp/m18-8-cliente.png', fullPage: true }); scatti.push('/tmp/m18-8-cliente.png');
 const testoCliente = await cliPage.textContent('[data-test=dichiarazione-te]');
-verifica('il cliente vede la ripartizione e il titolare individuato', /capitale/.test(testoCliente) && /Titolare effettivo individuato/.test(testoCliente));
+verifica('il cliente vede la ripartizione e il titolare individuato', /capitale/.test(testoCliente) && /Titolar[ei] effettiv[oi] individuat[oi]/.test(testoCliente));
 // AR-M22: sezione «scopo e natura» (art. 18 co. 1 lett. c) — il fascicolo è nato senza scopo: lo indica il cliente.
 const testoScopo = await cliPage.textContent('[data-test=dichiarazione-scopo]');
 verifica('AV.4: il cliente vede la prestazione richiesta e il campo dello scopo', /Consulenza/i.test(testoScopo) && (await cliPage.isVisible('[data-test=scopo-testo]')));
@@ -132,7 +132,8 @@ verifica(`cinque domande sul controllo (${domande})`, domande === 5);
 for (let i = 0; i < domande; i++) await cliPage.locator(`[data-test=domanda-${i}] input[type=radio]`).nth(0).click();
 const pepSogg = await cliPage.locator('[data-test=pep-soggetto]').count();
 for (let i = 0; i < pepSogg; i++) await cliPage.locator('[data-test=pep-soggetto]').nth(i).locator('input[type=radio]').nth(0).click();
-await cliPage.fill('input.input >> nth=-1', 'Maria Esposito');
+// AR-M23: il nome di chi compila sta nella sezione «Chi rende la dichiarazione» (precompilato dall'esecutore).
+await cliPage.fill('[data-test=dichiarante-nome]', 'Maria Esposito');
 await cliPage.click('input[type=checkbox]');
 await cliPage.click('button:has-text("Invia allo studio")');
 await cliPage.waitForTimeout(2500);

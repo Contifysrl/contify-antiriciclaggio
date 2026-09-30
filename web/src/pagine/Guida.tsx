@@ -250,6 +250,24 @@ const SEZIONI: Sezione[] = [
           <K>rafforzata</K> <Norma>art. 24 co. 5</Norma>: nell'esito della valutazione il
           livello si alza da solo, qualunque sia il punteggio.
         </Attenzione>
+        <Nota>
+          <K>Cliente persona fisica</K> (professionista, imprenditore individuale, privato): non
+          esiste un titolare effettivo diverso dal cliente <Norma>art. 1 co. 2 lett. pp)</Norma>. Il
+          programma registra da solo la fotografia «coincide con il cliente» alla creazione del
+          cliente o all'apertura del fascicolo, e nel nuovo fascicolo l'<K>esecutore</K> è già
+          compilato con i suoi dati («in proprio»). Se il cliente agisce tramite un rappresentante,
+          correggi l'esecutore: la dichiarazione AV.4 passa all'opzione 2.
+        </Nota>
+        <H>Archivio documenti</H>
+        <P>
+          Nella scheda del cliente l'<K>Archivio documenti</K> raccoglie in un posto solo tutto
+          ciò che è stato conservato per quel cliente: documenti d'identità, visure, dichiarazioni
+          AV.4, incarichi, estratti del registro — sia quelli caricati qui sia quelli acquisiti nei
+          fascicoli (con il codice del fascicolo). Ogni riga ha <Btn>Apri</Btn> (in una nuova
+          scheda del browser) e <Btn>Scarica</Btn>; l'apertura è tracciata nel registro delle
+          attività. Lo stesso archivio si vede dal fascicolo, dove puoi anche allegare un documento
+          scegliendone il tipo. Lo stesso file caricato due volte non si duplica (impronta SHA-256).
+        </P>
         <H>Partire dalla visura camerale</H>
         <P>
           Con <Btn>Nuovo da visura</Btn> carichi il <K>PDF della visura camerale</K> (ordinaria o
@@ -344,6 +362,24 @@ const SEZIONI: Sezione[] = [
           esamini e acquisisci tu</K>: la titolarità dichiarata, in particolare, ti viene
           proposta nel modulo dei titolari effettivi dove scegli criterio e motivazione.
         </P>
+        <H>Correggere i dati dell'incarico, eliminare un fascicolo aperto per errore</H>
+        <P>
+          Con <Btn>Modifica i dati dell'incarico</Btn> correggi la data di conferimento, la data e la
+          modalità dell'identificazione, il tipo di rapporto, l'importo e lo scopo. Ogni correzione resta
+          nel registro delle attività con prima e dopo; se il fascicolo ha già una valutazione firmata
+          la motivazione è obbligatoria, perché le date reggono i termini dei trenta giorni{' '}
+          <Norma>art. 18 co. 3</Norma> e compaiono nella scheda di adeguata verifica.
+        </P>
+        <P>
+          Un fascicolo aperto per errore si <K>elimina</K> dal riquadro in fondo alla pagina (solo un
+          professionista), scrivendo il motivo: sparisce dagli elenchi e dallo scadenzario, il cliente e
+          i suoi documenti restano, la cancellazione resta tracciata. Si può fare solo finché al
+          fascicolo non è appeso nulla che documenti un'adeguata verifica — nessuna valutazione firmata,
+          documento, verifica a distanza completata, operazione, astensione o controllo costante: da lì
+          in avanti vale la conservazione decennale <Norma>art. 31</Norma> e la strada è la{' '}
+          <K>cessazione</K> del rapporto. I numeri dei fascicoli non producono doppioni: il numero di
+          un fascicolo eliminato torna disponibile solo se era l'ultimo della serie.
+        </P>
         <H>Il fascicolo proposto dai dati camerali</H>
         <P>
           Se il cliente ha una compagine in archivio (da una visura), il fascicolo nasce già{' '}
@@ -378,6 +414,18 @@ const SEZIONI: Sezione[] = [
           fascicolo come documento con la trascrizione integrale. Le risposte «Sì», le correzioni e i PEP
           dichiarati ti vengono segnalati: la dichiarazione <K>non scrive mai da sola</K> i titolari
           effettivi, che restano una tua valutazione <Norma>artt. 20-22</Norma>.
+        </P>
+        <P>
+          Il documento segue il <K>modello AV.4</K> e stampa <K>una sola</K> delle quattro opzioni, scelta
+          dai dati: <K>1</K> persona fisica che agisce in proprio (nessun titolare effettivo diverso dal
+          cliente), <K>2</K> persona fisica che agisce tramite un esecutore (tutore, procuratore: lo indichi
+          come esecutore nel fascicolo), <K>3</K> società o ente con titolari per proprietà o controllo,{' '}
+          <K>4</K> società o ente con titolare effettivo residuale <Norma>art. 20 co. 5</Norma>. Dichiarante
+          (il cliente o il legale rappresentante), società (sede, Registro Imprese, REA, codice fiscale),
+          titolari effettivi con relazione col cliente e status PEP, attività e ambito territoriale sono già
+          scritti; provenienza dei fondi e mezzi di pagamento restano da compilare in funzione del rischio{' '}
+          <Norma>art. 25</Norma>. In coda le <K>Note 1-4</K> del modello (definizioni di legge) con la firma
+          per presa visione e, per le società, i dati camerali usati per precompilare.
         </P>
         <H>Il registro dei titolari effettivi (art. 21-ter, D.Lgs. 122/2026)</H>
         <P>

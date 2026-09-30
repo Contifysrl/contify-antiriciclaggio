@@ -82,6 +82,7 @@ export interface InputFascicoloProposto {
     id: string;
     denominazione: string;
     tipo: string;
+    codiceFiscale?: string | null;
     ateco?: string | null;
     attivitaPrevalente?: string | null;
     paeseResidenza?: string | null;
@@ -430,18 +431,40 @@ export function proponiFascicolo(input: InputFascicoloProposto): FascicoloPropos
 
 // --------------------------------------------------------------- esecutore
 
+/** Esecutore «in proprio» del cliente persona fisica (AR-M23). */
+export function esecutoreInProprio(cliente: { denominazione: string; codiceFiscale?: string | null }): EsecutoreProposto {
+  return {
+    nominativo: cliente.denominazione,
+    codiceFiscale: cliente.codiceFiscale ?? null,
+    carica: 'IN_PROPRIO',
+    caricaTesto: etichettaCarica('IN_PROPRIO'),
+    rappresentanzaLegale: false,
+    dataNomina: null,
+    fonte: 'anagrafica del cliente',
+    motivazione:
+      `${cliente.denominazione} è una persona fisica: di regola conferisce l’incarico in proprio, e i dati dell’esecutore coincidono con i suoi. ` +
+      'Correggi solo se a presentarsi è un rappresentante (tutore, curatore, procuratore): in quel caso indica lui e conserva il titolo dei poteri.',
+    alternative: [],
+  };
+}
+
 const ORDINE_ESECUTORE: CodiceCarica[] = [
   'TITOLARE', 'AMMINISTRATORE_UNICO', 'PRESIDENTE_CDA', 'CONSIGLIERE_DELEGATO', 'SOCIO_AMMINISTRATORE',
   'VICE_PRESIDENTE_CDA', 'CONSIGLIERE', 'PROCURATORE', 'INSTITORE', 'CURATORE', 'LIQUIDATORE', 'ALTRO', 'SINDACO', 'REVISORE',
 ];
 
 export function proponiEsecutore(
-  cliente: { tipo: string; denominazione: string },
+  cliente: { tipo: string; denominazione: string; codiceFiscale?: string | null },
   cariche: CaricaProposta[],
   inLiquidazione: boolean,
   visuraDel: string | null,
 ): EsecutoreProposto | null {
-  if (cliente.tipo === 'PERSONA_FISICA' || !cariche.length) return null;
+  // AR-M23 (richiesta di Barbara): il cliente persona fisica conferisce
+  // l'incarico in proprio. L'esecutore si precompila con i suoi dati e la
+  // qualità «in proprio»; si corregge solo se agisce un rappresentante
+  // (tutore, procuratore) — allora la dichiarazione mod. AV.4 è l'opzione 2.
+  if (cliente.tipo === 'PERSONA_FISICA') return esecutoreInProprio(cliente);
+  if (!cariche.length) return null;
   const peso = (c: CaricaProposta) => {
     let p = ORDINE_ESECUTORE.indexOf(c.carica);
     if (p < 0) p = ORDINE_ESECUTORE.length;
@@ -493,6 +516,23 @@ function costruisciChecklist(input: InputFascicoloProposto, esecutore: Esecutore
       codice: 'ID_CLIENTE', etichetta: 'Documento d’identità del cliente', tipoDocumento: 'DOCUMENTO_IDENTITA', obbligatoria: true,
       perche: 'identificazione e verifica dell’identità della persona fisica', norma: 'art. 18 co. 1 lett. a); art. 19 co. 1 lett. a) DLgs. 231/2007',
       presente: nIdentita >= 1,
+    });
+    if (esecutore && esecutore.carica !== 'IN_PROPRIO') {
+      c({
+        codice: 'ID_ESECUTORE', etichetta: `Documento d’identità di chi agisce per il cliente (${esecutore.nominativo})`, tipoDocumento: 'DOCUMENTO_IDENTITA', obbligatoria: true,
+        soggetto: esecutore.nominativo,
+        perche: 'il cliente agisce tramite un rappresentante: va identificato come il cliente e va acquisito il titolo dei poteri',
+        norma: 'art. 18 co. 1 lett. a); art. 19 co. 1 lett. a) DLgs. 231/2007',
+        presente: nIdentita >= 2 ? true : nIdentita > 0 ? null : false,
+      });
+    }
+    // AR-M23: la dichiarazione mod. AV.4 spetta anche alla persona fisica
+    // (opzione 1 «agisce in proprio», scopo della prestazione, status PEP).
+    c({
+      codice: 'DICHIARAZIONE_ART22', etichetta: 'Dichiarazione del cliente (art. 22, mod. AV.4)', tipoDocumento: 'DICHIARAZIONE_ART22', obbligatoria: true,
+      perche: 'il cliente dichiara per iscritto di agire in proprio (nessun titolare effettivo diverso da sé), lo scopo della prestazione e lo status di PEP',
+      norma: 'artt. 18 co. 1 lett. c) e 22 co. 1 DLgs. 231/2007',
+      presente: conta((t) => TIPI_DICHIARAZIONE.has(t)) >= 1,
     });
   } else {
     c({

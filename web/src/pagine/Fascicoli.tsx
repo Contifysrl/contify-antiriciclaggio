@@ -9,7 +9,7 @@ import {
   type Ruleset,
 } from '../api';
 import { ElencoVincoli, GruppoFattori, PiedeLegale, PillolaRischio, Riquadro, Tessera } from '../componenti';
-import { HelpLink } from '../components/ui';
+import { ConfermaEliminazione, HelpLink } from '../components/ui';
 import { CampiCliente, etichettaTipo } from './Cliente';
 import { ImportClientiModal } from './ImportClienti';
 import { VisuraModal } from './Visura';
@@ -18,6 +18,15 @@ import { BozzaAi } from './BozzaAi';
 import { ControlloCostanteBox } from './ControlloCostante';
 import { FascicoloProposto, type ContestoProposta } from './FascicoloProposto';
 import { CampoProfessionista, FiltroProfessionista, useProfessionisti } from '../lib/professionisti';
+
+/** Modalità di identificazione (art. 19 co. 1 lett. a), etichette condivise fra apertura e correzione del fascicolo. */
+const ETICHETTA_MODALITA: Record<string, string> = {
+  PRESENZA: 'In presenza, con documento d’identità',
+  ATTO_PUBBLICO: 'Dati risultanti da atto pubblico o scrittura autenticata',
+  IDENTITA_DIGITALE: 'Identità digitale di livello almeno significativo (SPID, CIE, eIDAS)',
+  FIRMA_DIGITALE: 'Certificato qualificato per firma elettronica',
+  GIA_IDENTIFICATO: 'Cliente già identificato dallo studio, informazioni aggiornate',
+};
 
 // ===========================================================================
 export function Clienti({ vaiA }: { vaiA: (p: string) => void }) {
@@ -333,10 +342,15 @@ export function Fascicoli({ vaiA, cliente }: { vaiA: (p: string) => void; client
               <div className="aiuto">Art. 19 co. 1 lett. a).</div>
             </div>
           </div>
-          {f.clienteId && clienti.find((c) => c.id === f.clienteId)?.tipo !== 'PERSONA_FISICA' && (
+          {f.clienteId && (
             <div className="scheda" style={{ marginTop: 4 }} data-test="esecutore-form">
               <h3 className="!mt-0">Esecutore (chi conferisce l’incarico in nome del cliente)</h3>
-              {esecutoreProposto ? (
+              {esecutoreProposto?.carica === 'IN_PROPRIO' ? (
+                <div className="aiuto" data-test="esecutore-in-proprio">
+                  Cliente persona fisica: conferisce l’incarico <strong>in proprio</strong>, quindi i dati dell’esecutore sono i suoi e sono già compilati.
+                  Correggi solo se a presentarsi è un rappresentante (tutore, curatore, procuratore): in quel caso la dichiarazione mod. AV.4 userà l’opzione 2.
+                </div>
+              ) : esecutoreProposto ? (
                 <div className="aiuto">
                   Proposto dai dati camerali: <strong>{esecutoreProposto.nominativo}</strong> — {esecutoreProposto.caricaTesto}{esecutoreProposto.rappresentanzaLegale ? ', rappresentante dell’impresa' : ''} ({esecutoreProposto.fonte}).
                   Conferma o correggi: la visura non dice chi si presenta in studio (art. 1 co. 2 lett. p).
@@ -345,7 +359,7 @@ export function Fascicoli({ vaiA, cliente }: { vaiA: (p: string) => void; client
                 <div className="aiuto">Nessuna carica con poteri in archivio: indica chi conferisce l’incarico, oppure lascia vuoto e completa dal fascicolo.</div>
               )}
               <div className="griglia c3">
-                <div className="campo"><label>Nome e cognome</label><input value={f.esecutore?.nominativo ?? ''} onChange={(e) => setF({ ...f, esecutore: { ...(f.esecutore ?? {}), nominativo: e.target.value, daProposta: false } })} /></div>
+                <div className="campo"><label>Nome e cognome</label><input value={f.esecutore?.nominativo ?? ''} onChange={(e) => setF({ ...f, esecutore: { ...(f.esecutore ?? {}), nominativo: e.target.value, daProposta: false, ...(f.esecutore?.carica === 'IN_PROPRIO' ? { carica: 'ALTRO', caricaTesto: '' } : {}) } })} /></div>
                 <div className="campo"><label>Codice fiscale</label><input value={f.esecutore?.codiceFiscale ?? ''} onChange={(e) => setF({ ...f, esecutore: { ...(f.esecutore ?? {}), codiceFiscale: e.target.value.toUpperCase() } })} /></div>
                 <div className="campo"><label>In qualità di</label><input value={f.esecutore?.caricaTesto ?? ''} onChange={(e) => setF({ ...f, esecutore: { ...(f.esecutore ?? {}), caricaTesto: e.target.value } })} /></div>
               </div>
@@ -431,6 +445,13 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
   // AR-M18: contesto della proposta applicata alla Tabella A (id, punteggi proposti) e motivazione dello scostamento.
   const [proposta, setProposta] = useState<ContestoProposta | null>(null);
   const [motivazioneScostamento, setMotivazioneScostamento] = useState('');
+  // AR-M23 (Barbara): correzione dei dati dell'incarico, archivio documenti, eliminazione del fascicolo aperto per errore.
+  const [modificaIncarico, setModificaIncarico] = useState<any | null>(null);
+  const [caricaDoc, setCaricaDoc] = useState(false);
+  const [tipoDoc, setTipoDoc] = useState('DOCUMENTO_IDENTITA');
+  const [eliminaForm, setEliminaForm] = useState(false);
+  const [motivazioneElimina, setMotivazioneElimina] = useState('');
+  const [confermaElimina, setConfermaElimina] = useState(false);
 
   const [tick, setTick] = useState(0);
   const carica = () => {
@@ -517,7 +538,92 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
             <> · identificazione eseguita da <strong>{f.identificatore}</strong>
               {f.data_identificazione ? ` il ${formattaData(f.data_identificazione)}` : ''} (art. 19 co. 1 lett. a)</>
           )}
+          {f.modalita_identificazione && <> · modalità: {ETICHETTA_MODALITA[f.modalita_identificazione] ?? f.modalita_identificazione.toLowerCase()}</>}
         </p>
+      )}
+
+      {/* AR-M23: i dati dell'incarico si correggono (date, modalità, rapporto, scopo). */}
+      {f.stato !== 'CESSATO' && !modificaIncarico && (
+        <button
+          className="azione secondaria"
+          style={{ marginBottom: 10 }}
+          data-test="modifica-incarico"
+          onClick={() => setModificaIncarico({
+            dataConferimento: f.data_conferimento, dataIdentificazione: f.data_identificazione ?? f.data_conferimento,
+            modalitaIdentificazione: f.modalita_identificazione ?? '', tipoRapporto: f.tipo_rapporto, importoOperazione: f.importo_operazione ?? '',
+            scopoNatura: f.scopo_natura ?? '', motivazione: '',
+          })}
+        >
+          Modifica i dati dell’incarico
+        </button>
+      )}
+      {modificaIncarico && (
+        <div className="scheda" data-test="form-incarico">
+          <h3 className="!mt-0">Dati dell’incarico</h3>
+          <div className="aiuto" style={{ marginBottom: 8 }}>
+            Le date reggono i termini dei trenta giorni (art. 18 co. 3) e compaiono nella scheda di adeguata verifica: ogni correzione resta nel registro delle attività con prima e dopo.
+            {ultima?.firmata_il && <> Il fascicolo ha una valutazione firmata: <strong>la motivazione è obbligatoria</strong>.</>}
+          </div>
+          <div className="griglia c3">
+            <div className="campo">
+              <label>Data di conferimento dell’incarico</label>
+              <input type="date" data-test="incarico-conferimento" value={modificaIncarico.dataConferimento} onChange={(e) => setModificaIncarico({ ...modificaIncarico, dataConferimento: e.target.value })} />
+            </div>
+            <div className="campo">
+              <label>Data dell’identificazione</label>
+              <input type="date" data-test="incarico-identificazione" value={modificaIncarico.dataIdentificazione} onChange={(e) => setModificaIncarico({ ...modificaIncarico, dataIdentificazione: e.target.value })} />
+            </div>
+            <div className="campo">
+              <label>Modalità di identificazione</label>
+              <select value={modificaIncarico.modalitaIdentificazione} onChange={(e) => setModificaIncarico({ ...modificaIncarico, modalitaIdentificazione: e.target.value })}>
+                <option value="">—</option>
+                {Object.entries(ETICHETTA_MODALITA).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </div>
+            <div className="campo">
+              <label>Tipo di rapporto</label>
+              <select value={modificaIncarico.tipoRapporto} onChange={(e) => setModificaIncarico({ ...modificaIncarico, tipoRapporto: e.target.value })}>
+                <option value="CONTINUATIVO">Rapporto continuativo</option>
+                <option value="OCCASIONALE">Operazione occasionale</option>
+              </select>
+            </div>
+            {modificaIncarico.tipoRapporto === 'OCCASIONALE' && (
+              <div className="campo">
+                <label>Importo dell’operazione</label>
+                <input type="number" value={modificaIncarico.importoOperazione} onChange={(e) => setModificaIncarico({ ...modificaIncarico, importoOperazione: e.target.value })} />
+              </div>
+            )}
+          </div>
+          <div className="campo">
+            <label>Scopo e natura della prestazione (art. 19 co. 1 lett. c)</label>
+            <textarea value={modificaIncarico.scopoNatura} onChange={(e) => setModificaIncarico({ ...modificaIncarico, scopoNatura: e.target.value })} />
+          </div>
+          <div className="campo">
+            <label>Motivo della correzione{ultima?.firmata_il ? '' : ' (facoltativo)'}</label>
+            <input data-test="incarico-motivazione" value={modificaIncarico.motivazione} onChange={(e) => setModificaIncarico({ ...modificaIncarico, motivazione: e.target.value })} placeholder="es. data di conferimento errata: l’incarico è del 3, non del 13" />
+          </div>
+          <button
+            className="azione"
+            data-test="incarico-salva"
+            onClick={async () => {
+              setErrore('');
+              try {
+                await api.patch(`/fascicoli/${id}`, {
+                  dataConferimento: modificaIncarico.dataConferimento, dataIdentificazione: modificaIncarico.dataIdentificazione,
+                  modalitaIdentificazione: modificaIncarico.modalitaIdentificazione || null, tipoRapporto: modificaIncarico.tipoRapporto,
+                  importoOperazione: modificaIncarico.tipoRapporto === 'OCCASIONALE' && modificaIncarico.importoOperazione !== '' ? Number(modificaIncarico.importoOperazione) : null,
+                  scopoNatura: modificaIncarico.scopoNatura, motivazione: modificaIncarico.motivazione,
+                });
+                setModificaIncarico(null);
+                carica();
+              } catch (e) { setErrore((e as Error).message); }
+            }}
+          >
+            Salva le correzioni
+          </button>
+          <button className="azione secondaria" style={{ marginLeft: 8 }} onClick={() => { setModificaIncarico(null); setErrore(''); }}>Annulla</button>
+          {errore && <div className="errore">{errore}</div>}
+        </div>
       )}
 
       <div style={{ marginBottom: 14 }}>
@@ -834,28 +940,130 @@ export function DettaglioFascicolo({ id, vaiA }: { id: string; vaiA: (p: string)
         {d.scadenze.length === 0 && <p className="caricamento">Nessuna scadenza: prestazione fuori obbligo.</p>}
       </div>
 
-      <h2>Documenti conservati</h2>
-      <div className="scheda">
-        <table>
-          <thead><tr><th>Tipo</th><th>File</th><th>Impronta SHA-256</th><th>Acquisito</th><th>Conservare fino al</th></tr></thead>
-          <tbody>
-            {d.documenti.map((x: any) => (
-              <tr key={x.id}>
-                <td>{x.tipo}</td>
-                <td><a href={`/api/documenti/${x.id}`} target="_blank" rel="noreferrer">{x.nome_file}</a></td>
-                <td className="mono" style={{ fontSize: 11 }}>{x.sha256.slice(0, 24)}…</td>
-                <td className="mono">{formattaData(x.data_acquisizione)}</td>
-                <td className="mono">{formattaData(x.conserva_fino_al)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <h2>Archivio documenti del cliente</h2>
+      <div className="scheda" data-test="archivio-documenti">
+        <div className="aiuto" style={{ marginBottom: 8 }}>
+          Tutti i documenti riferibili a {f.cliente}: quelli di questo fascicolo, quelli caricati dalla scheda cliente e quelli degli altri fascicoli. Impronta SHA-256 e conservazione decennale (art. 31 co. 2).
+        </div>
+        {d.documenti.length > 0 && (
+          <table>
+            <thead><tr><th>Tipo</th><th>File</th><th>Dove</th><th>Acquisito</th><th>Conservare fino al</th><th /></tr></thead>
+            <tbody>
+              {d.documenti.map((x: any) => (
+                <tr key={x.id} data-test="documento">
+                  <td>{x.etichetta ?? String(x.tipo).replace(/_/g, ' ').toLowerCase()}</td>
+                  <td>
+                    <a href={`/api/documenti/${x.id}`} target="_blank" rel="noreferrer" title="Apri in una nuova scheda">{x.nome_file}</a>
+                    <div className="text-xs text-ink-400 mono">{Math.round(x.dimensione / 1024)} KB · {String(x.sha256).slice(0, 16)}…</div>
+                  </td>
+                  <td className="text-sm">
+                    {x.ambito === 'FASCICOLO' ? <span className="pillola r1">questo fascicolo</span>
+                      : x.ambito === 'ALTRO_FASCICOLO' ? <a href={`#fascicolo?id=${x.fascicolo_id}`} onClick={(e) => { e.preventDefault(); vaiA(`fascicolo?id=${x.fascicolo_id}`); }}>fascicolo {x.fascicolo_codice}</a>
+                      : <span className="text-ink-500">scheda cliente</span>}
+                  </td>
+                  <td className="mono">{formattaData(x.data_acquisizione)}{x.acquisito_da ? <div className="text-xs text-ink-400">{x.acquisito_da}</div> : null}</td>
+                  <td className="mono">{x.conserva_fino_al ? formattaData(x.conserva_fino_al) : <span className="text-ink-400">rapporto in essere</span>}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <a className="btn btn-secondary btn-sm" href={`/api/documenti/${x.id}`} target="_blank" rel="noreferrer" data-test="apri-documento">Apri</a>{' '}
+                    <a className="btn btn-ghost btn-sm" href={`/api/documenti/${x.id}?scarica=1`} data-test="scarica-documento">Scarica</a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
         {d.documenti.length === 0 && (
           <p className="caricamento">
             Nessun documento acquisito. L’art. 31 co. 2 richiede copia dei documenti acquisiti in sede di adeguata verifica.
           </p>
         )}
+        {f.stato !== 'CESSATO' && (
+          <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label className="btn btn-secondary btn-sm cursor-pointer" style={{ margin: 0 }}>
+              {caricaDoc ? 'Caricamento…' : 'Allega un documento a questo fascicolo…'}
+              <input type="file" className="hidden" disabled={caricaDoc} data-test="carica-documento" onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (!file) return;
+                setCaricaDoc(true); setErrore('');
+                try {
+                  const form = new FormData();
+                  form.append('file', file, file.name);
+                  form.append('tipo', tipoDoc);
+                  const r = await fetch(`/api/fascicoli/${id}/documenti`, { method: 'POST', body: form, credentials: 'same-origin' });
+                  if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.errore ?? `Errore ${r.status}`);
+                  carica();
+                } catch (err) { setErrore((err as Error).message); } finally { setCaricaDoc(false); }
+              }} />
+            </label>
+            <select className="input" style={{ width: 'auto' }} value={tipoDoc} onChange={(e) => setTipoDoc(e.target.value)} title="Tipo di documento: alimenta la checklist e «Da completare»">
+              <option value="DOCUMENTO_IDENTITA">Documento d’identità</option>
+              <option value="DICHIARAZIONE_ART22">Dichiarazione del cliente firmata (mod. AV.4)</option>
+              <option value="INCARICO">Lettera d’incarico</option>
+              <option value="PROCURA">Procura</option>
+              <option value="VISURA">Visura camerale</option>
+              <option value="ESTRATTO_REGISTRO_TE">Estratto del registro TE</option>
+              <option value="DOCUMENTAZIONE_ESTERA">Documentazione estera equivalente</option>
+              <option value="MANDATO_FIDUCIARIO">Mandato fiduciario</option>
+              <option value="ATTO_TRUST">Atto istitutivo del trust</option>
+              <option value="ALTRO">Altro</option>
+            </select>
+            <span className="text-xs text-ink-400">PDF, immagini o Word, fino a 20 MB. Lo stesso file non si duplica.</span>
+          </div>
+        )}
       </div>
+
+      {/* AR-M23: fascicolo aperto per errore. Solo un professionista; solo se non documenta nulla. */}
+      {d.collegamenti && f.stato !== 'CESSATO' && (
+        <div className="scheda" data-test="zona-eliminazione">
+          <h3>Fascicolo aperto per errore?</h3>
+          {d.collegamenti.eliminabile ? (
+            <>
+              <p>
+                A questo fascicolo non è ancora appeso nulla che documenti un’adeguata verifica (nessuna valutazione firmata, documento, verifica a distanza completata, operazione, astensione o controllo costante).
+                Può quindi essere <strong>eliminato</strong>{d.collegamenti.valutazioniNonFirmate > 0 ? `, insieme a ${d.collegamenti.valutazioniNonFirmate === 1 ? 'una valutazione non firmata' : `${d.collegamenti.valutazioniNonFirmate} valutazioni non firmate`}` : ''}. La cancellazione resta nel registro delle attività con il motivo.
+              </p>
+              {!eliminaForm ? (
+                <button className="azione secondaria" data-test="apri-elimina-fascicolo" onClick={() => setEliminaForm(true)}>Elimina il fascicolo…</button>
+              ) : (
+                <div className="campo">
+                  <label>Perché lo elimini</label>
+                  <input data-test="motivazione-elimina" value={motivazioneElimina} onChange={(e) => setMotivazioneElimina(e.target.value)} placeholder="es. aperto per errore sul cliente sbagliato" autoFocus />
+                  <button className="azione" style={{ background: '#dc2626' }} disabled={motivazioneElimina.trim().length < 5} data-test="elimina-fascicolo" onClick={() => setConfermaElimina(true)}>
+                    Elimina definitivamente
+                  </button>
+                  <button className="azione secondaria" style={{ marginLeft: 8 }} onClick={() => { setEliminaForm(false); setMotivazioneElimina(''); }}>Annulla</button>
+                </div>
+              )}
+            </>
+          ) : (
+            <Riquadro tipo="info">
+              Questo fascicolo <strong>non si può eliminare</strong>: ha {d.collegamenti.motivi.join(', ')}. L’art. 31 impone di conservare per dieci anni ciò che documenta l’adeguata verifica.
+              Se il rapporto è finito, registra la <strong>cessazione</strong> (in alto, «Controllo costante e cessazione»): il fascicolo esce dagli elenchi attivi e la conservazione decorre da lì.
+            </Riquadro>
+          )}
+        </div>
+      )}
+      {confermaElimina && (
+        <ConfermaEliminazione
+          titolo="il fascicolo"
+          elemento={`${f.codice} — ${f.cliente}, ${f.prestazione_descrizione}`}
+          conseguenze={
+            <>
+              <div>Il fascicolo sparisce dagli elenchi e dallo scadenzario; il cliente e i suoi documenti restano.</div>
+              <div>Nel registro delle attività resta traccia della cancellazione, con codice, cliente, prestazione e motivo.</div>
+            </>
+          }
+          onConferma={async () => {
+            try {
+              await api.elimina(`/fascicoli/${id}`, { motivazione: motivazioneElimina.trim() });
+              vaiA('fascicoli');
+            } catch (e) { setErrore((e as Error).message); setConfermaElimina(false); }
+          }}
+          onClose={() => setConfermaElimina(false)}
+        />
+      )}
+      {errore && !modificaIncarico && <div className="errore">{errore}</div>}
 
       <PiedeLegale />
     </>

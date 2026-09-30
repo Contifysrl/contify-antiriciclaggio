@@ -207,9 +207,9 @@ export const REGOLE_COMPLETEZZA: RegolaCompletezza[] = [
   },
   {
     codice: 'ART22_ASSENTE', etichetta: 'Dichiarazione del cliente (mod. AV.4) mancante', gravita: 'media',
-    norma: 'art. 22 co. 1 e 2 DLgs. 231/2007',
-    fonte: `${AV1}, sez. «Titolare effettivo»: dichiarazione scritta del cliente sotto la propria responsabilità`,
-    quando: 'Cliente società, ente o trust con fascicolo vivo soggetto a verifica e nessuna dichiarazione art. 22 (o autocertificazione) fra i documenti conservati.',
+    norma: 'artt. 18 co. 1 lett. c) e 22 co. 1 e 2 DLgs. 231/2007',
+    fonte: `${AV1}, sez. «Titolare effettivo»; modello AV.4 (dichiarazione del cliente): scritta, sotto la propria responsabilità`,
+    quando: 'Cliente con fascicolo vivo soggetto a verifica e nessuna dichiarazione mod. AV.4 (o autocertificazione) fra i documenti conservati. Vale anche per la persona fisica, che dichiara di agire in proprio, lo scopo della prestazione e lo status di PEP (opzione 1 del modello).',
     pagina: 'fascicolo', azione: 'Acquisisci la dichiarazione del cliente mod. AV.4 (art. 22), in presenza o a distanza',
   },
   {
@@ -388,8 +388,11 @@ function mancanzeGrezze(c: ClienteCompletezza, oggi: string): Mancanza[] {
           { giorniResidui: Math.round((Date.parse(`${anz.scadeIl}T00:00:00Z`) - Date.parse(`${oggi}T00:00:00Z`)) / 86400000) }));
       }
     }
-    if (conTitolare && docs((t) => TIPI_DICHIARAZIONE.has(t)) === 0) {
-      out.push(mancanzaDa('ART22_ASSENTE', 'Nessuna dichiarazione del cliente sul titolare effettivo conservata.', { fascicoloId: primo.id }));
+    // AR-M23: la dichiarazione mod. AV.4 spetta a ogni cliente, persona fisica compresa (opzione 1 «agisce in proprio»).
+    if (docs((t) => TIPI_DICHIARAZIONE.has(t)) === 0) {
+      out.push(mancanzaDa('ART22_ASSENTE', conTitolare
+        ? 'Nessuna dichiarazione del cliente sul titolare effettivo conservata.'
+        : 'Nessuna dichiarazione del cliente (mod. AV.4) conservata: la persona fisica dichiara di agire in proprio, lo scopo della prestazione e lo status di PEP.', { fascicoloId: primo.id }));
     }
     // AR-M20-03: registro dei titolari effettivi (art. 21-ter).
     // `registroTe` undefined = dato non fornito (chiamante che non lo legge): le regole tacciono.

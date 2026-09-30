@@ -148,7 +148,7 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
   const [compagine, setCompagine] = useState<(PropostaDto & { proposte: any[] }) | null>(null);
   const [aggiornaVisura, setAggiornaVisura] = useState(false);
   const [caricaDoc, setCaricaDoc] = useState(false);
-  const [tipoDoc, setTipoDoc] = useState('VISURA');
+  const [tipoDoc, setTipoDoc] = useState('DOCUMENTO_IDENTITA');
 
   const carica = () =>
     api.get<any>(`/clienti/${id}`)
@@ -357,12 +357,6 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
                 <TabellaCariche cariche={compagine.cariche.map((c: any) => ({ ...c, carica: c.carica, caricaTesto: c.caricaTesto ?? ETICHETTA_CARICA[c.carica] }))} />
               </div>
             )}
-            <div style={{ marginTop: 12 }}>
-              <button className="btn btn-secondary btn-sm" data-test="cliente-art22" onClick={() => api.scarica(`/clienti/${id}/dichiarazione-art22`).catch((e) => setErrore(e.message))}>
-                Dichiarazione del cliente mod. AV.4 (art. 22) precompilata — .docx
-              </button>
-              <span className="text-xs text-ink-400" style={{ marginLeft: 8 }}>Da far firmare al cliente in presenza; a distanza si invia dal fascicolo (AR-M18).</span>
-            </div>
             <RivalutazioneBox proposte={compagine.proposte ?? []} vaiA={vaiA} onCambiato={() => { carica(); caricaCompagine(); }} />
             <h4 style={{ marginTop: 18 }}>Titolari effettivi proposti dai dati camerali</h4>
             <div className="aiuto">La visura non è il registro dei titolari effettivi (art. 21-ter): questa è l'applicazione dell'art. 20 co. 2 ai soci. Confermi, correggi o scarti; il registro si consulta dal fascicolo.</div>
@@ -400,33 +394,59 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
         )}
       </div>
 
-      {/* ── Documenti del cliente (AR-M17) ───────────────────── */}
-      <div className="scheda">
-        <h3>Documenti del cliente</h3>
-        <div className="aiuto">Visure e documenti legati al cliente, non a un singolo fascicolo. Impronta SHA-256 e conservazione decennale (art. 31).</div>
+      {/* ── Dichiarazione del cliente mod. AV.4 (AR-M18 → AR-M23: per ogni cliente, anche persona fisica) ── */}
+      <div className="scheda" data-test="scheda-av4">
+        <h3>Dichiarazione del cliente — mod. AV.4 (art. 22)</h3>
+        <div className="aiuto">
+          {c.tipo === 'PERSONA_FISICA'
+            ? 'Persona fisica: il modello esce con l’opzione 1 («agisce in proprio»), i suoi dati anagrafici, lo scopo della prestazione e lo status di PEP. Se agisce tramite un rappresentante, indicalo come esecutore nel fascicolo: il modello passerà all’opzione 2.'
+            : 'Il modello esce con la sola opzione pertinente (3: titolari per proprietà o controllo; 4: criterio residuale), i dati della società, del legale rappresentante e dei titolari effettivi registrati — o, se non ancora registrati, proposti dai dati camerali.'}
+          {' '}Da far firmare in presenza; a distanza si invia dal fascicolo con la dichiarazione precompilata.
+        </div>
+        <button className="btn btn-secondary btn-sm" data-test="cliente-art22" onClick={() => api.scarica(`/clienti/${id}/dichiarazione-art22`).catch((e) => setErrore(e.message))}>
+          Dichiarazione del cliente mod. AV.4 precompilata — .docx
+        </button>
+        {d.fascicoli.length > 0 && (
+          <span className="text-xs text-ink-400" style={{ marginLeft: 8 }}>
+            Con lo scopo della prestazione già compilato: scaricala dal fascicolo ({d.fascicoli.slice(0, 3).map((x: any, i: number) => <span key={x.id}>{i > 0 ? ', ' : ''}<a href={`#fascicolo?id=${x.id}`} onClick={(e) => { e.preventDefault(); vaiA(`fascicolo?id=${x.id}`); }}>{x.codice}</a></span>)}).
+          </span>
+        )}
+      </div>
+
+      {/* ── Archivio documenti (AR-M17 → AR-M23: unico, con quelli dei fascicoli) ── */}
+      <div className="scheda" data-test="archivio-documenti">
+        <h3>Archivio documenti</h3>
+        <div className="aiuto">Tutti i documenti del cliente in un posto solo: quelli caricati qui e quelli acquisiti nei fascicoli (documento d’identità, visura, incarico, dichiarazioni). Impronta SHA-256 e conservazione decennale (art. 31).</div>
         {d.documenti?.length ? (
           <table>
-            <thead><tr><th>Tipo</th><th>File</th><th>Data documento</th><th>Acquisito il</th><th>Impronta</th></tr></thead>
+            <thead><tr><th>Tipo</th><th>File</th><th>Fascicolo</th><th>Data documento</th><th>Acquisito il</th><th /></tr></thead>
             <tbody>
               {d.documenti.map((x: any) => (
-                <tr key={x.id}>
-                  <td>{String(x.tipo).replace(/_/g, ' ').toLowerCase()}</td>
-                  <td><a href={`/api/documenti/${x.id}`} target="_blank" rel="noreferrer">{x.nome_file}</a> <span className="text-xs text-ink-400">({Math.round(x.dimensione / 1024)} KB)</span></td>
+                <tr key={x.id} data-test="documento">
+                  <td>{x.etichetta ?? String(x.tipo).replace(/_/g, ' ').toLowerCase()}</td>
+                  <td>
+                    <a href={`/api/documenti/${x.id}`} target="_blank" rel="noreferrer" title="Apri in una nuova scheda">{x.nome_file}</a>
+                    <div className="text-xs text-ink-400 mono">{Math.round(x.dimensione / 1024)} KB · {String(x.sha256).slice(0, 16)}…</div>
+                  </td>
+                  <td className="text-sm">{x.fascicolo_id ? <a href={`#fascicolo?id=${x.fascicolo_id}`} onClick={(e) => { e.preventDefault(); vaiA(`fascicolo?id=${x.fascicolo_id}`); }}>{x.fascicolo_codice ?? 'fascicolo'}</a> : <span className="text-ink-400">—</span>}</td>
                   <td className="mono">{formattaData(x.data_riferimento)}</td>
-                  <td className="mono">{formattaData(x.data_acquisizione)}</td>
-                  <td className="mono text-xs text-ink-400">{String(x.sha256).slice(0, 16)}…</td>
+                  <td className="mono">{formattaData(x.data_acquisizione)}{x.acquisito_da ? <div className="text-xs text-ink-400">{x.acquisito_da}</div> : null}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <a className="btn btn-secondary btn-sm" href={`/api/documenti/${x.id}`} target="_blank" rel="noreferrer" data-test="apri-documento">Apri</a>{' '}
+                    <a className="btn btn-ghost btn-sm" href={`/api/documenti/${x.id}?scarica=1`} data-test="scarica-documento">Scarica</a>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         ) : (
-          <p className="caricamento">Nessun documento agganciato al cliente.</p>
+          <p className="caricamento">Nessun documento conservato per questo cliente.</p>
         )}
         {!archiviato && (
-          <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <label className="btn btn-secondary btn-sm cursor-pointer" style={{ margin: 0 }}>
               {caricaDoc ? 'Caricamento…' : 'Allega un documento…'}
-              <input type="file" className="hidden" disabled={caricaDoc} onChange={async (e) => {
+              <input type="file" className="hidden" disabled={caricaDoc} data-test="carica-documento" onChange={async (e) => {
                 const file = e.target.files?.[0];
                 e.target.value = '';
                 if (!file) return;
@@ -442,10 +462,10 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
               }} />
             </label>
             <select className="input" style={{ width: 'auto' }} value={tipoDoc} onChange={(e) => setTipoDoc(e.target.value)} title="Tipo di documento: alimenta la checklist del fascicolo">
+              <option value="DOCUMENTO_IDENTITA">Documento d’identità</option>
               <option value="VISURA">Visura camerale</option>
               <option value="DICHIARAZIONE_ART22">Dichiarazione del cliente firmata (art. 22, mod. AV.4)</option>
               <option value="ESTRATTO_REGISTRO_TE">Estratto del registro TE (prova dell’iscrizione)</option>
-              <option value="DOCUMENTO_IDENTITA">Documento d’identità</option>
               <option value="DOCUMENTAZIONE_ESTERA">Documentazione estera equivalente</option>
               <option value="MANDATO_FIDUCIARIO">Mandato fiduciario</option>
               <option value="ATTO_TRUST">Atto istitutivo del trust</option>
@@ -453,7 +473,7 @@ export function DettaglioCliente({ id, ruolo, amministratore, vaiA }: {
               <option value="INCARICO">Lettera d’incarico</option>
               <option value="ALTRO">Altro</option>
             </select>
-            <span className="text-xs text-ink-400">Per leggere una visura e proporre i titolari effettivi usa «Aggiorna da visura» qui sopra.</span>
+            <span className="text-xs text-ink-400">PDF, immagini o Word, fino a 20 MB; lo stesso file non si duplica. Per leggere una visura e proporre i titolari effettivi usa «Aggiorna da visura».</span>
           </div>
         )}
       </div>

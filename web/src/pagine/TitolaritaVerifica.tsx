@@ -12,6 +12,8 @@ import { RegistroTeBox } from './RegistroTe';
 
 const CRITERI: Array<{ codice: string; etichetta: string; norma: string }> = [
   { codice: 'PROPRIETA_DIRETTA', etichetta: 'Proprietà diretta (>25%)', norma: 'art. 20 co. 2' },
+  // AR-M23: il cliente persona fisica che agisce in proprio coincide con il titolare effettivo.
+  { codice: 'CLIENTE_PERSONA_FISICA', etichetta: 'Cliente persona fisica che agisce in proprio (coincide con il cliente)', norma: 'art. 1 co. 2 lett. pp)' },
   { codice: 'PROPRIETA_INDIRETTA', etichetta: 'Proprietà indiretta (>25%)', norma: 'art. 20 co. 2' },
   { codice: 'CONTROLLO', etichetta: 'Controllo della società', norma: 'art. 20 co. 3' },
   { codice: 'RESIDUALE_POTERI', etichetta: 'Criterio residuale: poteri di rappresentanza/amministrazione', norma: 'art. 20 co. 5' },

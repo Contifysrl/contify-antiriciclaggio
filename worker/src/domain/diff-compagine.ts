@@ -109,7 +109,7 @@ function raggruppaCariche(cariche: CaricaFoto[]): Map<string, { nome: string; ca
 
 const PESO: Record<CodiceCarica, number> = {
   AMMINISTRATORE_UNICO: 10, LIQUIDATORE: 9, CURATORE: 9, PRESIDENTE_CDA: 8, CONSIGLIERE_DELEGATO: 7, VICE_PRESIDENTE_CDA: 6,
-  SOCIO_AMMINISTRATORE: 6, TITOLARE: 6, CONSIGLIERE: 5, INSTITORE: 4, PROCURATORE: 3, SINDACO: 2, REVISORE: 2, ALTRO: 0,
+  SOCIO_AMMINISTRATORE: 6, TITOLARE: 6, CONSIGLIERE: 5, INSTITORE: 4, PROCURATORE: 3, SINDACO: 2, REVISORE: 2, IN_PROPRIO: 0, ALTRO: 0,
 };
 
 const conPoteri = (c: { carica: CodiceCarica; rappresentanzaLegale: boolean }) => CARICHE_CON_POTERI.has(c.carica) || c.rappresentanzaLegale;

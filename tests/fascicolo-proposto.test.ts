@@ -166,8 +166,10 @@ describe('Fascicolo proposto — Tabella A', () => {
     expect(p.checklist.some((v) => v.tipoDocumento === 'DOCUMENTAZIONE_ESTERA')).toBe(true);
     const pf = proponiFascicolo(base({ cliente: { id: 'PF', denominazione: 'Mario Rossi', tipo: 'PERSONA_FISICA', paeseResidenza: 'IT', dettagli: { sede: 'ROMA (RM)' } }, soci: [], cariche: [], analisi: null, alertTitolarita: [] }));
     expect(pf.tabellaA.natura_giuridica.punteggio).toBe(1);
-    expect(pf.esecutore).toBeNull();
-    expect(pf.checklist.map((v) => v.codice)).toEqual(['ID_CLIENTE', 'INCARICO']);
+    // AR-M23: la persona fisica conferisce l'incarico in proprio (esecutore = il cliente) e firma la AV.4 (opzione 1).
+    expect(pf.esecutore?.carica).toBe('IN_PROPRIO');
+    expect(pf.esecutore?.nominativo).toBe('Mario Rossi');
+    expect(pf.checklist.map((v) => v.codice)).toEqual(['ID_CLIENTE', 'DICHIARAZIONE_ART22', 'INCARICO']);
   });
 
   it('senza compagine né cariche A.1 è CHIESTO (carica la visura)', () => {

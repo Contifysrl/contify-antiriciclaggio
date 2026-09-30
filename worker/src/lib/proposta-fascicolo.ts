@@ -89,7 +89,7 @@ export async function propostaFascicolo(
   const input: InputFascicoloProposto = {
     data,
     cliente: {
-      id: cliente.id, denominazione: cliente.denominazione, tipo: cliente.tipo, ateco: cliente.ateco, attivitaPrevalente: cliente.attivita_prevalente,
+      id: cliente.id, denominazione: cliente.denominazione, tipo: cliente.tipo, codiceFiscale: cliente.codice_fiscale ?? null, ateco: cliente.ateco, attivitaPrevalente: cliente.attivita_prevalente,
       paeseResidenza: cliente.paese_residenza, pep: cliente.pep === 1 || cliente.pep === true,
       dettagli: dettagli
         ? {

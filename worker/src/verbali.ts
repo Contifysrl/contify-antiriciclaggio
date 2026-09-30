@@ -78,6 +78,7 @@ const ETICHETTA_TIPO_CLIENTE: Record<string, string> = {
 };
 
 const ETICHETTA_CRITERIO_TE: Record<string, string> = {
+  CLIENTE_PERSONA_FISICA: 'Cliente persona fisica che agisce in proprio (art. 1 co. 2 lett. pp)',
   PROPRIETA_DIRETTA: 'Proprietà diretta',
   PROPRIETA_INDIRETTA: 'Proprietà indiretta',
   CONTROLLO: 'Controllo della società',

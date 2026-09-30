@@ -35,6 +35,7 @@ import { CNDCEC_2025 } from './rulesets/cndcec-2025';
 import { AMLR_2027 } from './rulesets/amlr-2027';
 
 export type CriterioTitolarita =
+  | 'CLIENTE_PERSONA_FISICA' // art. 1 co. 2 lett. pp): il cliente persona fisica che agisce in proprio (AR-M23)
   | 'PROPRIETA_DIRETTA' // art. 20 co. 2 lett. a)
   | 'PROPRIETA_INDIRETTA' // art. 20 co. 2 lett. b)
   | 'CONTROLLO' // art. 20 co. 3
@@ -97,6 +98,7 @@ export type CodiceCarica =
   | 'SINDACO'
   | 'REVISORE'
   | 'CURATORE'
+  | 'IN_PROPRIO' // AR-M23: il cliente persona fisica conferisce l'incarico per sé (nessun esecutore distinto)
   | 'ALTRO';
 
 /** Cariche con poteri di rappresentanza, amministrazione o direzione (co. 5). */
@@ -278,6 +280,26 @@ function percorriCatena(
   }
 }
 
+export const NORMA_CLIENTE_PERSONA_FISICA = 'art. 1 co. 2 lett. pp) e art. 20 co. 1 DLgs. 231/2007';
+export const MOTIVAZIONE_CLIENTE_PERSONA_FISICA =
+  'Il cliente è una persona fisica che agisce in proprio: non esiste un titolare effettivo diverso dal cliente (art. 1 co. 2 lett. pp). '
+  + 'Da riconsiderare se il cliente dichiara di agire per conto di terzi (mod. AV.4, opzione 2).';
+
+/**
+ * Titolare effettivo di un cliente persona fisica che agisce in proprio
+ * (AR-M23): coincide con il cliente. Usato dal motore e dalla registrazione
+ * automatica alla creazione del cliente / apertura del fascicolo.
+ */
+export function titolarePersonaFisica(cliente: { id: string; denominazione: string }): EsitoTitolareEffettivo {
+  return {
+    id: cliente.id,
+    denominazione: cliente.denominazione,
+    criterio: 'CLIENTE_PERSONA_FISICA',
+    norma: NORMA_CLIENTE_PERSONA_FISICA,
+    motivazione: MOTIVAZIONE_CLIENTE_PERSONA_FISICA,
+  };
+}
+
 export interface OpzioniAnalisi {
   personaGiuridicaPrivata?: boolean;
   fondatori?: string[];
@@ -317,21 +339,15 @@ export function analizzaTitolaritaEffettiva(
     };
   }
 
-  // Art. 20 co. 1: se il cliente è persona fisica il tema non si pone.
+  // Art. 1 co. 2 lett. pp) e art. 20 co. 1: se il cliente è persona fisica che
+  // agisce in proprio non esiste un titolare effettivo «diverso dal cliente»
+  // (AR-M23, richiesta di Barbara): il programma lo registra come tale, con
+  // un criterio dedicato che la dichiarazione mod. AV.4 traduce nell'opzione 1.
   if (cliente.tipo === 'PERSONA_FISICA') {
     return {
       ...base,
-      titolari: [
-        {
-          id: cliente.id,
-          denominazione: cliente.denominazione,
-          criterio: 'PROPRIETA_DIRETTA',
-          norma: 'art. 20 co. 1 DLgs. 231/2007',
-          quotaEffettiva: 1,
-          motivazione: 'Cliente persona fisica: coincide con il titolare effettivo salvo che agisca per conto di terzi.',
-        },
-      ],
-      criterioApplicato: 'PROPRIETA_DIRETTA',
+      titolari: [titolarePersonaFisica(cliente)],
+      criterioApplicato: 'CLIENTE_PERSONA_FISICA',
       richiedeMotivazioneResiduale: false,
       avvertenze: [
         'Verificare che il cliente non stia agendo per conto di un terzo: in tal caso il titolare effettivo è il terzo.',
@@ -692,6 +708,7 @@ export function etichettaCarica(c: CodiceCarica): string {
     SINDACO: 'sindaco',
     REVISORE: 'revisore',
     CURATORE: 'curatore',
+    IN_PROPRIO: 'in proprio (il cliente stesso)',
     ALTRO: 'altra carica',
   };
   return e[c] ?? c;

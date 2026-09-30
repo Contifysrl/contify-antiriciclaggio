@@ -75,10 +75,13 @@ describe('regole di completezza (AR-M19)', () => {
     expect(codici(cliente({ ...base, documenti: [...base.documenti, id, id, id] }))).toEqual([]);
   });
 
-  it('persona fisica: niente titolari, visura o dichiarazione; serve il suo documento e il PEP', () => {
+  it('persona fisica: niente titolari né visura; servono il suo documento, il PEP e la dichiarazione AV.4 (opzione 1, AR-M23)', () => {
     const c = cliente({ tipo: 'PERSONA_FISICA', fascicoli: [fascicolo({ conferimento: '2026-06-01', firmata: true })] });
-    expect(codici(c)).toEqual(['PEP_NON_CHIESTO', 'ID_ASSENTE']);
-    expect(codici(cliente({ tipo: 'PERSONA_FISICA', pep: true, fascicoli: [fascicolo({ conferimento: '2026-06-01', firmata: true })], documenti: [{ tipo: 'DOCUMENTO_IDENTITA', dataRiferimento: null, fascicoloId: null }] }))).toEqual([]);
+    expect(codici(c)).toEqual(['PEP_NON_CHIESTO', 'ID_ASSENTE', 'ART22_ASSENTE']);
+    expect(mancanzeCliente(c).find((m) => m.codice === 'ART22_ASSENTE')?.dettaglio).toMatch(/agire in proprio/);
+    expect(codici(cliente({ tipo: 'PERSONA_FISICA', pep: true, fascicoli: [fascicolo({ conferimento: '2026-06-01', firmata: true })], documenti: [
+      { tipo: 'DOCUMENTO_IDENTITA', dataRiferimento: null, fascicoloId: null }, { tipo: 'DICHIARAZIONE_ART22', dataRiferimento: null, fascicoloId: null },
+    ] }))).toEqual([]);
   });
 
   it('controllo costante scaduto (12 mesi, rischio molto significativo) e chiuso dall’ultimo controllo registrato', () => {

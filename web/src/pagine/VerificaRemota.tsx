@@ -16,6 +16,13 @@ interface DichiarazioneTePre {
   senzaCompagine: boolean;
   /** AR-M22: scopo e natura della prestazione (art. 18 co. 1 lett. c), dal fascicolo. */
   prestazione?: { codice: string; descrizione: string; tipoRapporto: 'CONTINUATIVO' | 'OCCASIONALE'; dataConferimento: string | null; scopoNatura: string | null } | null;
+  /** AR-M23: modello AV.4 per opzione (1 PF in proprio, 2 PF tramite esecutore, 3 società, 4 residuale). */
+  opzione?: 1 | 2 | 3 | 4 | null;
+  dichiarante?: { nominativo: string; codiceFiscale: string | null; natoA: string | null; natoIl: string | null; nazionalita: string | null; residenza: string | null; domicilio: string | null; qualita: string | null } | null;
+  societa?: { denominazione: string; sedeLegale: string | null; registroImpreseDi: string | null; rea: string | null; codiceFiscale: string | null } | null;
+  titolari?: Array<{ nominativo: string; codiceFiscale: string | null; natoA: string | null; natoIl: string | null; residenza: string | null; relazione: string; etichettaCriterio: string; quota: number | null }>;
+  attivita?: { descrizione: string | null; ateco: string | null; settore: string | null } | null;
+  ambito?: { provincia: string | null; paese: string | null; classe: 'ITALIA' | 'UE' | 'EXTRA_UE' | 'RISCHIO' | null } | null;
 }
 
 interface InfoRichiesta {
@@ -107,9 +114,23 @@ function ModuloVerifica({ token, info, onInviata }: { token: string; info: InfoR
     ...(pre.esecutore ? [{ nominativo: pre.esecutore.nominativo, ruolo: 'ESECUTORE' as const, etichetta: pre.esecutore.carica }] : []),
   ].filter((x, i, a) => a.findIndex((y) => y.nominativo === x.nominativo) === i) : [];
   const [dichiara, setDichiara] = useState(false);
-  const [nomeDichiarante, setNomeDichiarante] = useState('');
+  const [nomeDichiarante, setNomeDichiarante] = useState(pre?.dichiarante?.nominativo ?? '');
   const [errore, setErrore] = useState('');
   const [invio, setInvio] = useState(false);
+  // AR-M23: il modello AV.4 per opzione. Dati di chi firma, PEP del dichiarante, attività, ambito, fondi (facoltativi).
+  const opzione: 1 | 2 | 3 | 4 = pre?.opzione ?? 3;
+  const [dich, setDich] = useState<Record<string, string>>({
+    codiceFiscale: pre?.dichiarante?.codiceFiscale ?? '', natoA: pre?.dichiarante?.natoA ?? '', natoIl: pre?.dichiarante?.natoIl ?? '',
+    nazionalita: pre?.dichiarante?.nazionalita ?? '', residenza: pre?.dichiarante?.residenza ?? '', domicilio: pre?.dichiarante?.domicilio ?? '',
+  });
+  const [pepDich, setPepDich] = useState<{ pep: boolean | null; dettagli: string }>({ pep: null, dettagli: '' });
+  const [attivita, setAttivita] = useState([pre?.attivita?.descrizione, pre?.attivita?.ateco ? `ATECO ${pre.attivita.ateco}` : null].filter(Boolean).join(' — '));
+  const [ambito, setAmbito] = useState<Record<string, string>>({
+    italiaProvincia: pre?.ambito?.classe === 'ITALIA' ? (pre.ambito.provincia ?? '') : '', paeseUe: pre?.ambito?.classe === 'UE' ? (pre.ambito.paese ?? '') : '',
+    paeseExtraUe: pre?.ambito?.classe === 'EXTRA_UE' ? (pre.ambito.paese ?? '') : '', paeseRischio: pre?.ambito?.classe === 'RISCHIO' ? (pre.ambito.paese ?? '') : '', altro: '',
+  });
+  const [provenienzaFondi, setProvenienzaFondi] = useState('');
+  const [mezziPagamento, setMezziPagamento] = useState('');
 
   const campo = (chiave: string, etichetta: string, opz: { placeholder?: string; type?: string; obbligatorio?: boolean } = {}) => (
     <div>
@@ -135,10 +156,12 @@ function ModuloVerifica({ token, info, onInviata }: { token: string; info: InfoR
         if (!scopo) { setErrore('Indica se lo scopo della prestazione è quello descritto oppure precisalo'); return; }
         if (scopo === 'PRECISA' && !scopoTesto.trim()) { setErrore('Indica lo scopo per cui richiedi la prestazione allo studio'); return; }
       }
-      if (!conferma) { setErrore('Indica se confermi o correggi la ricostruzione del titolare effettivo'); return; }
-      if (conferma === 'CORREGGE' && !correzioni.trim() && !titolari.some((t) => t.nominativo.trim())) { setErrore('Descrivi cosa non corrisponde o indica i titolari effettivi'); return; }
+      if (!conferma) { setErrore(opzione === 1 ? 'Indica se agisci in proprio oppure per conto di altri' : 'Indica se confermi o correggi la ricostruzione del titolare effettivo'); return; }
+      if (conferma === 'CORREGGE' && !correzioni.trim() && !titolari.some((t) => t.nominativo.trim())) { setErrore(opzione === 1 ? 'Indica per conto di chi agisci (nome, cognome e codice fiscale) o descrivi la situazione' : 'Descrivi cosa non corrisponde o indica i titolari effettivi'); return; }
       if (pre.domande.some((d) => !risposte[d]?.risposta)) { setErrore('Rispondi a tutte le domande sul controllo della società'); return; }
       if (soggettiPep.some((s) => pepSoggetti[s.nominativo]?.pep == null)) { setErrore('Indica per ciascuna persona se è politicamente esposta'); return; }
+      if (opzione === 1 && pepDich.pep == null) { setErrore('Indica se sei una persona politicamente esposta'); return; }
+      if (pepDich.pep === true && !pepDich.dettagli.trim()) { setErrore('Indica la carica pubblica ricoperta (o il legame con chi la ricopre)'); return; }
     }
     if (!dichiara) { setErrore('Conferma la dichiarazione di veridicità per procedere'); return; }
     setInvio(true);
@@ -152,6 +175,10 @@ function ModuloVerifica({ token, info, onInviata }: { token: string; info: InfoR
           titolari: conferma === 'CORREGGE' ? titolari.filter((t) => t.nominativo.trim()).map((t) => ({ nominativo: t.nominativo.trim(), codiceFiscale: t.codiceFiscale.trim().toUpperCase(), quota: t.quota.trim() })) : [],
           risposte: pre.domande.map((d) => ({ domanda: d, risposta: risposte[d].risposta, dettagli: risposte[d].dettagli })),
           pep: soggettiPep.map((s) => ({ nominativo: s.nominativo, ruolo: s.ruolo, pep: pepSoggetti[s.nominativo].pep === true, dettagli: pepSoggetti[s.nominativo].dettagli })),
+          // AR-M23: modello AV.4 — chi firma, il suo status PEP, attività, ambito, fondi (facoltativi).
+          dichiarante: { nome: nomeDichiarante.trim(), qualita: pre.dichiarante?.qualita ?? pre.esecutore?.carica ?? null, ...dich },
+          pepDichiarante: opzione === 1 ? { pep: pepDich.pep === true, dettagli: pepDich.dettagli.trim() } : undefined,
+          attivita: attivita.trim(), ambito, provenienzaFondi: provenienzaFondi.trim(), mezziPagamento: mezziPagamento.trim(),
         };
       }
       if (info.richieste.datiIdentificativi) dati.datiIdentificativi = d;
@@ -261,13 +288,84 @@ function ModuloVerifica({ token, info, onInviata }: { token: string; info: InfoR
       )}
 
       {pre && info.richieste.dichiarazioneTe && (
+        <section className="space-y-3" data-test="dichiarante">
+          <h2 className="!text-base !m-0">Chi rende la dichiarazione</h2>
+          <p className="text-sm text-ink-500">
+            {opzione === 1
+              ? 'La dichiarazione è sua: controlli i dati e completi quelli mancanti.'
+              : <>Rende la dichiarazione <strong>{pre.dichiarante?.nominativo ?? 'chi rappresenta il cliente'}</strong>{pre.dichiarante?.qualita ? ` in qualità di ${pre.dichiarante.qualita}` : ''}: controlli i dati e completi quelli mancanti.</>}
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div><label className="label">Nome e cognome</label><input className="input" value={nomeDichiarante} onChange={(e) => setNomeDichiarante(e.target.value)} required data-test="dichiarante-nome" /></div>
+            <div><label className="label">Codice fiscale</label><input className="input" value={dich.codiceFiscale} onChange={(e) => setDich({ ...dich, codiceFiscale: e.target.value.toUpperCase() })} /></div>
+            <div><label className="label">Nato/a a</label><input className="input" value={dich.natoA} onChange={(e) => setDich({ ...dich, natoA: e.target.value })} /></div>
+            <div><label className="label">Data di nascita</label><input className="input" type="date" value={dich.natoIl} onChange={(e) => setDich({ ...dich, natoIl: e.target.value })} /></div>
+            <div><label className="label">Residenza (comune, via, n.)</label><input className="input" value={dich.residenza} onChange={(e) => setDich({ ...dich, residenza: e.target.value })} /></div>
+            <div><label className="label">Domicilio (se diverso)</label><input className="input" value={dich.domicilio} onChange={(e) => setDich({ ...dich, domicilio: e.target.value })} /></div>
+          </div>
+          {opzione === 1 && (
+            <div className="rounded-lg border border-ink-100 px-3 py-2 text-sm" data-test="pep-dichiarante">
+              <div className="mb-1">È una <strong>persona politicamente esposta</strong>? (ricopre o ha cessato da meno di un anno cariche pubbliche apicali, o è familiare o stretto collaboratore di chi le ricopre)</div>
+              <div className="flex gap-3">
+                <label className="flex items-center gap-1 cursor-pointer"><input type="radio" className="!w-auto" checked={pepDich.pep === false} onChange={() => setPepDich({ pep: false, dettagli: '' })} data-test="pep-dichiarante-no" /> No</label>
+                <label className="flex items-center gap-1 cursor-pointer"><input type="radio" className="!w-auto" checked={pepDich.pep === true} onChange={() => setPepDich({ pep: true, dettagli: pepDich.dettagli })} /> Sì</label>
+              </div>
+              {pepDich.pep === true && <input className="input mt-1" placeholder="Carica e da quando" value={pepDich.dettagli} onChange={(e) => setPepDich({ pep: true, dettagli: e.target.value })} required />}
+            </div>
+          )}
+        </section>
+      )}
+
+      {pre && info.richieste.dichiarazioneTe && opzione === 1 && (
+        <section className="space-y-3" data-test="dichiarazione-te">
+          <h2 className="!text-base !m-0">Titolare effettivo</h2>
+          <p className="text-sm text-ink-500">
+            La legge chiede al cliente di dichiarare per iscritto per conto di chi agisce (art. 22 DLgs. 231/2007). Per una persona fisica che richiede la prestazione per sé non esiste un titolare effettivo diverso da lei.
+          </p>
+          <div className="flex gap-2">
+            <label className={`flex-1 border rounded-lg px-3 py-2 cursor-pointer text-sm ${conferma === 'CONFERMA' ? 'border-teal-400 bg-teal-50' : 'border-ink-200'}`}>
+              <input type="radio" className="!w-auto mr-2" checked={conferma === 'CONFERMA'} onChange={() => setConferma('CONFERMA')} data-test="conferma-te" />
+              Agisco in proprio: richiedo la prestazione per me e non esiste un diverso titolare effettivo
+            </label>
+            <label className={`flex-1 border rounded-lg px-3 py-2 cursor-pointer text-sm ${conferma === 'CORREGGE' ? 'border-amber-400 bg-amber-50' : 'border-ink-200'}`}>
+              <input type="radio" className="!w-auto mr-2" checked={conferma === 'CORREGGE'} onChange={() => setConferma('CORREGGE')} />
+              Agisco per conto di un’altra persona
+            </label>
+          </div>
+          {conferma === 'CORREGGE' && (
+            <div className="space-y-2">
+              <div>
+                <label className="label">Per conto di chi, e in base a quale titolo (procura, tutela, mandato…)</label>
+                <textarea className="input" rows={2} value={correzioni} onChange={(e) => setCorrezioni(e.target.value)} placeholder="es. agisco per conto di mio padre, in forza di procura del …" />
+              </div>
+              <div className="text-sm text-ink-500">Le persone per conto delle quali agisce:</div>
+              {titolari.map((t, i) => (
+                <div key={i} className="grid gap-2 sm:grid-cols-[2fr_2fr_auto] items-end">
+                  <div><label className="label">Nome e cognome</label><input className="input" value={t.nominativo} onChange={(e) => setTitolari(titolari.map((x, j) => j === i ? { ...x, nominativo: e.target.value } : x))} /></div>
+                  <div><label className="label">Codice fiscale</label><input className="input" value={t.codiceFiscale} onChange={(e) => setTitolari(titolari.map((x, j) => j === i ? { ...x, codiceFiscale: e.target.value } : x))} /></div>
+                  <button type="button" className="btn btn-ghost btn-sm mb-0.5" onClick={() => setTitolari(titolari.filter((_, j) => j !== i))} disabled={titolari.length === 1}>✕</button>
+                </div>
+              ))}
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setTitolari([...titolari, { nominativo: '', codiceFiscale: '', quota: '' }])}>Aggiungi una persona</button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {pre && info.richieste.dichiarazioneTe && opzione !== 1 && (
         <section className="space-y-3" data-test="dichiarazione-te">
           <h2 className="!text-base !m-0">Titolare effettivo: conferma o correggi</h2>
           <p className="text-sm text-ink-500">
-            La legge chiede al cliente di dichiarare per iscritto chi possiede o controlla la società (art. 22 DLgs. 231/2007).
-            Lo studio ha già ricostruito la situazione dai dati del Registro Imprese: le chiediamo di verificarla.
+            {opzione === 2
+              ? <>La legge chiede di dichiarare per iscritto per conto di chi si agisce (art. 22 DLgs. 231/2007). Lo studio ha registrato che lei agisce per conto di <strong>{info.cliente}</strong>: le chiediamo di confermarlo.</>
+              : <>La legge chiede al cliente di dichiarare per iscritto chi possiede o controlla la società (art. 22 DLgs. 231/2007). Lo studio ha già ricostruito la situazione{pre.senzaCompagine ? '' : ' dai dati del Registro Imprese'}: le chiediamo di verificarla.</>}
           </p>
-          {!pre.senzaCompagine ? (
+          {opzione >= 3 && pre.societa && (
+            <div className="rounded-lg bg-ink-50 border border-ink-100 px-4 py-3 text-sm">
+              Società/ente: <strong>{pre.societa.denominazione}</strong>{pre.societa.sedeLegale ? `, sede legale in ${pre.societa.sedeLegale}` : ''}{pre.societa.registroImpreseDi ? `, Registro delle Imprese di ${pre.societa.registroImpreseDi}` : ''}{pre.societa.rea ? ` (REA ${pre.societa.rea})` : ''}{pre.societa.codiceFiscale ? `, codice fiscale ${pre.societa.codiceFiscale}` : ''}.
+            </div>
+          )}
+          {opzione >= 3 && !pre.senzaCompagine && (
             <div className="rounded-lg bg-ink-50 border border-ink-100 px-4 py-3 text-sm space-y-2">
               <div>
                 Dalla visura camerale{pre.fonte.visuraDel ? ` del ${dataIt(pre.fonte.visuraDel)}` : ''} il capitale
@@ -280,15 +378,20 @@ function ModuloVerifica({ token, info, onInviata }: { token: string; info: InfoR
                   ))}
                 </tbody>
               </table>
-              <div>
-                {pre.titolariProposti.length > 0
-                  ? <>Titolare effettivo individuato: {pre.titolariProposti.map((t, i) => <span key={i}><strong>{t.nominativo}</strong> ({t.etichettaCriterio}{t.quota != null ? `, ${pct(t.quota)}` : ''}){i < pre.titolariProposti.length - 1 ? '; ' : ''}</span>)}.</>
-                  : <>In base a questa ripartizione nessuna persona fisica supera la soglia di legge: contano le risposte alle domande qui sotto.</>}
-              </div>
             </div>
-          ) : (
-            <p className="text-sm">Lo studio non dispone ancora dei dati camerali: indichi qui sotto i titolari effettivi.</p>
           )}
+          {(pre.titolari?.length ?? 0) > 0 ? (
+            <div className="rounded-lg bg-ink-50 border border-ink-100 px-4 py-3 text-sm space-y-1" data-test="titolari-modello">
+              <div>{opzione === 2 ? 'Persona per conto della quale agisce:' : opzione === 4 ? 'Titolare effettivo individuato con il criterio residuale (poteri di rappresentanza, amministrazione o direzione — art. 20 co. 5):' : pre.titolari!.length > 1 ? 'Titolari effettivi individuati:' : 'Titolare effettivo individuato:'}</div>
+              {pre.titolari!.map((t, i) => (
+                <div key={i}><strong>{t.nominativo}</strong>{t.codiceFiscale ? ` (${t.codiceFiscale})` : ''} — {t.relazione}{t.natoA || t.natoIl ? `; nato/a ${t.natoA ? `a ${t.natoA}` : ''}${t.natoIl ? ` il ${dataIt(t.natoIl)}` : ''}` : ''}{t.residenza ? `; residente in ${t.residenza}` : ''}</div>
+              ))}
+            </div>
+          ) : opzione >= 3 && !pre.senzaCompagine ? (
+            <p className="text-sm">In base alla ripartizione nessuna persona fisica supera la soglia di legge: contano le risposte alle domande qui sotto.</p>
+          ) : opzione >= 3 ? (
+            <p className="text-sm">Lo studio non dispone ancora dei dati camerali: indichi qui sotto i titolari effettivi.</p>
+          ) : null}
           <div className="flex gap-2">
             <label className={`flex-1 border rounded-lg px-3 py-2 cursor-pointer text-sm ${conferma === 'CONFERMA' ? 'border-teal-400 bg-teal-50' : 'border-ink-200'}`}>
               <input type="radio" className="!w-auto mr-2" checked={conferma === 'CONFERMA'} onChange={() => setConferma('CONFERMA')} data-test="conferma-te" />
@@ -318,6 +421,7 @@ function ModuloVerifica({ token, info, onInviata }: { token: string; info: InfoR
             </div>
           )}
 
+          {pre.domande.length > 0 && <>
           <h3 className="!text-sm !mt-3 !mb-0">Informazioni che la visura non riporta</h3>
           <p className="text-sm text-ink-500">Risponda per ciascuna domanda. In caso di «Sì», precisi.</p>
           <div className="space-y-2">
@@ -334,6 +438,7 @@ function ModuloVerifica({ token, info, onInviata }: { token: string; info: InfoR
               </div>
             ))}
           </div>
+          </>}
 
           {soggettiPep.length > 0 && (
             <>
@@ -357,6 +462,35 @@ function ModuloVerifica({ token, info, onInviata }: { token: string; info: InfoR
               </div>
             </>
           )}
+        </section>
+      )}
+
+      {pre && info.richieste.dichiarazioneTe && (
+        <section className="space-y-3" data-test="attivita-ambito">
+          <h2 className="!text-base !m-0">Attività, ambito territoriale, fondi</h2>
+          <div>
+            <label className="label">Attività e settore merceologico principale</label>
+            <input className="input" value={attivita} onChange={(e) => setAttivita(e.target.value)} placeholder="es. commercio al dettaglio di abbigliamento" data-test="attivita" />
+          </div>
+          <div>
+            <div className="label">Dove si svolge prevalentemente l’attività (anche più risposte)</div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div><label className="text-xs text-ink-500">Italia — provincia</label><input className="input" value={ambito.italiaProvincia} onChange={(e) => setAmbito({ ...ambito, italiaProvincia: e.target.value })} placeholder="es. PD" /></div>
+              <div><label className="text-xs text-ink-500">Paese UE</label><input className="input" value={ambito.paeseUe} onChange={(e) => setAmbito({ ...ambito, paeseUe: e.target.value })} /></div>
+              <div><label className="text-xs text-ink-500">Paese extra UE</label><input className="input" value={ambito.paeseExtraUe} onChange={(e) => setAmbito({ ...ambito, paeseExtraUe: e.target.value })} /></div>
+              <div><label className="text-xs text-ink-500">Paese a rischio riciclaggio/finanziamento del terrorismo</label><input className="input" value={ambito.paeseRischio} onChange={(e) => setAmbito({ ...ambito, paeseRischio: e.target.value })} /></div>
+            </div>
+          </div>
+          <details className="text-sm">
+            <summary className="cursor-pointer text-ink-600">Provenienza dei fondi e mezzi di pagamento (compilare se lo studio lo ha chiesto o se la prestazione riguarda un’operazione)</summary>
+            <div className="space-y-2 mt-2">
+              <div><label className="label">Situazione economico-patrimoniale e/o provenienza dei fondi utilizzati nell’operazione</label><textarea className="input" rows={2} value={provenienzaFondi} onChange={(e) => setProvenienzaFondi(e.target.value)} /></div>
+              <div><label className="label">Mezzi di pagamento forniti allo studio per l’operazione</label><input className="input" value={mezziPagamento} onChange={(e) => setMezziPagamento(e.target.value)} placeholder="es. bonifico da conto intestato al cliente" /></div>
+            </div>
+          </details>
+          <p className="text-xs text-ink-400">
+            Con l’invio dichiara inoltre che i fondi e le risorse economiche eventualmente utilizzati non provengono né sono destinati ad attività criminose o al finanziamento del terrorismo, e di non essere destinatario di misure di congelamento (d.lgs. 109/2007).
+          </p>
         </section>
       )}
 
@@ -418,10 +552,12 @@ function ModuloVerifica({ token, info, onInviata }: { token: string; info: InfoR
       )}
 
       <section className="space-y-3 border-t border-ink-100 pt-4">
-        <div>
-          <label className="label">Nome e cognome di chi compila</label>
-          <input className="input" value={nomeDichiarante} onChange={(e) => setNomeDichiarante(e.target.value)} required />
-        </div>
+        {!(pre && info.richieste.dichiarazioneTe) && (
+          <div>
+            <label className="label">Nome e cognome di chi compila</label>
+            <input className="input" value={nomeDichiarante} onChange={(e) => setNomeDichiarante(e.target.value)} required />
+          </div>
+        )}
         <label className="flex items-start gap-2 cursor-pointer text-sm text-ink-700">
           <input type="checkbox" className="!w-4 mt-0.5" checked={dichiara} onChange={(e) => setDichiara(e.target.checked)} />
           <span>

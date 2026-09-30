@@ -15,6 +15,18 @@ export interface VoceNovita {
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-09-30-segnalazioni-barbara-av4-per-opzione',
+    data: '2026-09-30',
+    titolo: 'Dal collaudo dello studio: AV.4 sul modello CNDCEC con una sola opzione, persona fisica in proprio, archivio documenti unico, correzione delle date, fascicolo eliminabile',
+    punti: [
+      'Dichiarazione del cliente mod. AV.4 rifatta sul modello CNDCEC: il documento stampa la sola opzione pertinente fra le quattro — 1 persona fisica che agisce in proprio, 2 persona fisica tramite esecutore, 3 società con titolari per proprietà o controllo, 4 società con titolare residuale (art. 20 co. 5) — e riporta già i dati del dichiarante, della società (sede, Registro Imprese, REA, codice fiscale), dei titolari effettivi registrati (o proposti) con la relazione col cliente e lo status PEP, l’attività e l’ambito territoriale. Restano da compilare a mano provenienza dei fondi e mezzi di pagamento (in funzione del rischio). In coda le Note 1-4 del modello con la firma per presa visione. Anche il modulo a distanza segue l’opzione: la persona fisica dichiara di agire in proprio e il proprio status PEP, senza domande sulla compagine.',
+      'Cliente persona fisica: il titolare effettivo coincide con il cliente (art. 1 co. 2 lett. pp) e il programma lo registra da solo alla creazione del cliente o all’apertura del fascicolo; nel nuovo fascicolo l’esecutore è già compilato con i dati del cliente, «in proprio». La dichiarazione AV.4 è ora richiesta anche alle persone fisiche («Da completare» la segnala) e il pulsante per generarla compare nella scheda di ogni cliente.',
+      'Archivio documenti unico: nella scheda del cliente e nel fascicolo vedi tutti i documenti conservati per quel cliente — documento d’identità, visura, dichiarazioni, incarico — ovunque siano stati caricati, con il fascicolo di provenienza, «Apri» e «Scarica». Dal fascicolo puoi allegare documenti scegliendo il tipo; lo stesso file non si duplica.',
+      '«Modifica i dati dell’incarico» nel fascicolo: data di conferimento, data e modalità dell’identificazione, tipo di rapporto, importo e scopo si correggono; prima e dopo restano nel registro delle attività, con motivazione obbligatoria se la valutazione è già firmata.',
+      'Un fascicolo aperto per errore si può eliminare (solo un professionista, con il motivo) finché non documenta nulla: nessuna valutazione firmata, documento, verifica a distanza completata, operazione, astensione o controllo costante. Altrimenti resta la cessazione (art. 31). I numeri non producono doppioni: quello di un fascicolo eliminato torna disponibile solo se era l’ultimo della serie.',
+    ],
+  },
+  {
     id: '2026-09-11-dichiarazione-av4-scopo-prestazione',
     data: '2026-09-11',
     titolo: 'Dichiarazione del cliente mod. AV.4: scopo e natura della prestazione richiesta',

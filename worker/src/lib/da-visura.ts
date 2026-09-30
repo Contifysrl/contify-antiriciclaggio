@@ -11,6 +11,7 @@
 import type { Env, Utente } from './tipi';
 import { cifra, decifra, nuovoId } from './crypto';
 import { scriviAudit } from './audit';
+import { assicuraTitolaritaPersonaFisica } from './titolarita';
 import { normalizzaPiva } from './lookup/piva';
 import { proponiRivalutazioni, propostaTitolarita, registraProposta, salvaCompagine, screeningCompagine, type CaricaIn, type SocioIn } from './compagine';
 
@@ -152,6 +153,8 @@ export async function creaClienteDaVisura(env: Env, tenantId: string, u: Utente,
     tenantId, utenteId: u.id, azione: 'CREA_CLIENTE', entita: 'clienti', entitaId: id,
     dettaglio: { origine: 'VISURA', dataVisura, soci: soci.length, cariche: cariche.length, alert: proposta.alert.map((x) => x.codice) }, ip,
   });
+  // AR-M23: impresa individuale (persona fisica) → titolare effettivo = il cliente stesso.
+  await assicuraTitolaritaPersonaFisica(env, tenantId, u, ip, { id, tipo: a.tipo, denominazione: a.denominazione, codice_fiscale: a.codiceFiscale });
   return { id, diff, proposta: { ...proposta, id: propostaId }, screening };
 }
 
