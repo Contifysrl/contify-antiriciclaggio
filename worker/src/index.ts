@@ -109,7 +109,9 @@ app.use(
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-      imgSrc: ["'self'", 'data:'],
+      // blob: serve al ritaglio di foto profilo e logo (lib/avatar.ts carica
+      // il file scelto in un <img> via URL.createObjectURL prima del canvas).
+      imgSrc: ["'self'", 'data:', 'blob:'],
       connectSrc: ["'self'"],
       frameAncestors: ["'none'"],
     },

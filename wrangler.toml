@@ -7,6 +7,17 @@ compatibility_flags = ["nodejs_compat"]
 directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
+# Il Worker gira PRIMA del livello degli asset (AR-M23b). Senza questa riga,
+# in produzione una navigazione del browser (Sec-Fetch-Mode: navigate) verso
+# un percorso che non è un file — quindi anche /api/documenti/:id aperto con
+# un link o in una nuova scheda — riceveva index.html dal fallback SPA senza
+# mai arrivare al Worker: «i documenti non si aprono» (Barbara, 30.9.2026).
+# Le fetch/XHR verso /api non erano toccate, per questo le prove sulle API
+# passavano; wrangler dev in locale non replica il comportamento. Con il
+# Worker davanti a tutto, gli asset passano dal catch-all in fondo a
+# index.ts (env.ASSETS.fetch) e anche l'HTML esce con le intestazioni di
+# sicurezza (CSP, HSTS) che prima valevano solo per le risposte delle API.
+run_worker_first = true
 
 # D1: dati di dominio. Regione EU (WEUR) — i dati trattati sono dati personali
 # di clienti dello studio, inclusi dati relativi a condanne penali e reati

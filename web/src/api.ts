@@ -13,6 +13,19 @@ async function chiamata<T>(metodo: string, percorso: string, corpo?: unknown): P
   return dati as T;
 }
 
+/**
+ * Nome del file dall'header Content-Disposition: prima la forma RFC 5987
+ * (`filename*=UTF-8''…`, con gli accenti), poi il fallback ASCII `filename="…"`.
+ */
+export function nomeDaContentDisposition(header: string | null): string | null {
+  const h = header ?? '';
+  const esteso = /filename\*=(?:UTF-8|utf-8)''([^;]+)/.exec(h)?.[1];
+  if (esteso) {
+    try { return decodeURIComponent(esteso.trim()); } catch { /* percent-encoding rotto: si usa il fallback */ }
+  }
+  return /filename="([^"]+)"/.exec(h)?.[1] ?? null;
+}
+
 export const api = {
   get: <T,>(p: string) => chiamata<T>('GET', p),
   post: <T,>(p: string, corpo?: unknown) => chiamata<T>('POST', p, corpo),
@@ -28,7 +41,7 @@ export const api = {
       throw new Error(dati?.errore ?? `Errore ${r.status}`);
     }
     const blob = await r.blob();
-    const nome = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') ?? '')?.[1] ?? 'documento.docx';
+    const nome = nomeDaContentDisposition(r.headers.get('Content-Disposition')) ?? 'documento.docx';
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
