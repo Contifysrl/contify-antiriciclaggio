@@ -4,6 +4,7 @@ import { AvatarUtente, Badge, ErrorBanner, HelpLink, Modal } from '../components
 import { Icona } from '../components/icone';
 import { ridimensionaAvatar, ridimensionaLogo } from '../lib/avatar';
 import { MODI, TEMI, aspettoLocale, impostaAspetto, modoValido, temaValido } from '../lib/tema';
+import { ImpostazioniTimesheet } from '../ts/ImpostazioniTs';
 import { PiedeLegale } from '../componenti';
 import { accedeAdAr } from '../lib/moduli';
 import type { SessioneApp } from './Accessi';
@@ -125,6 +126,8 @@ export function Impostazioni({ sessione, onSessioneAggiornata }: {
       {amministratore && <GestioneUtenti ioId={sessione.utente.id} postiProfessionista={sessione.studio.professionistiInclusi ?? null} haAr={haAr} haTs={haTs} />}
       {amministratore && sezioniAr && <AssistenteAi />}
       {amministratore && sezioniAr && <ProvinceContante />}
+      {/* TS-M1: regole, persone e ore previste (titolare Timesheet); consenso ad AI e voce (chi amministra). */}
+      {haTs && <ImpostazioniTimesheet titolare={amministratore || sessione.utente.tsRuolo === 'TITOLARE'} amministratore={amministratore} />}
       <CambiaPassword />
       <AccessiDispositivi />
       <div className="grid gap-4 lg:grid-cols-3 my-4">

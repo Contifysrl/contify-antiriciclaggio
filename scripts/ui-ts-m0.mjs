@@ -8,7 +8,7 @@
  * Dimostra:
  *  1. studio con entrambi i moduli: il selettore «Antiriciclaggio | Timesheet» in cima alla barra laterale;
  *     con Timesheet il menu mostra la voce Timesheet più le voci comuni, nessuna voce di AR, il nome in
- *     alto è «Contify Timesheet», la pagina iniziale è «Timesheet è in preparazione»; con Antiriciclaggio
+ *     alto è «Contify Timesheet», la pagina iniziale è «Registra» (TS-M1; in TS-M0 era la pagina provvisoria); con Antiriciclaggio
  *     torna il Cruscotto e il menu di sempre; la scelta resta dopo il ricaricamento;
  *  2. Impostazioni → Utenti: colonne «Antiriciclaggio» e «Timesheet»; «Nuovo utente» con i campi dei moduli;
  *     creazione di un utente con solo Timesheet dal modulo;
@@ -65,16 +65,16 @@ verifica('menu AR: Cruscotto, Clienti, Fascicoli … e le voci comuni', voci.inc
 await p.screenshot({ path: '/tmp/ui-ts-m0-1-ar.png' });
 
 await p.click('[data-test="modulo-TS"]');
-await p.waitForSelector('h1:has-text("Timesheet")');
-verifica('con Timesheet: pagina «Timesheet è in preparazione»', (await p.locator('text=Contify Timesheet è in preparazione').count()) === 1);
+await p.waitForSelector('h1:has-text("Registra")');
+verifica('con Timesheet: pagina iniziale «Registra» (TS-M1)', (await p.locator('h1:has-text("Registra")').count()) === 1);
 voci = await vociMenu();
-verifica('menu TS: voce Timesheet più le comuni, nessuna voce di AR', voci.includes('Timesheet') && voci.includes('Impostazioni') && voci.includes('Guida') && !voci.includes('Clienti') && !voci.includes('Cruscotto'));
+verifica('menu TS: Registra (e le voci del titolare) più le comuni, nessuna voce di AR', voci.includes('Registra') && voci.includes('Impostazioni') && voci.includes('Guida') && !voci.includes('Fascicoli') && !voci.includes('Cruscotto'));
 verifica('il nome in alto segue il modulo: «Contify Timesheet»', /Timesheet/.test(await p.locator('aside').first().textContent()));
 await p.screenshot({ path: '/tmp/ui-ts-m0-2-ts.png' });
 
 await p.reload();
 await p.waitForSelector('aside nav');
-verifica('la scelta del modulo resta dopo il ricaricamento', (await p.getAttribute('[data-test="modulo-TS"]', 'aria-pressed')) === 'true' && (await p.locator('h1:has-text("Timesheet")').count()) === 1);
+verifica('la scelta del modulo resta dopo il ricaricamento', (await p.getAttribute('[data-test="modulo-TS"]', 'aria-pressed')) === 'true' && (await p.locator('h1:has-text("Registra")').count()) === 1);
 
 await p.click('[data-test="modulo-AR"]');
 await p.waitForSelector('h1:has-text("Cruscotto")');
@@ -120,13 +120,13 @@ await login(EMAIL_TS, pwdTs);
 await cambioPasswordSeChiesto(pwdTs, 'OreUi!2026xxx');
 await p.waitForTimeout(500);
 verifica('nessun selettore (un solo modulo)', (await p.locator('[data-test="selettore-moduli"]').count()) === 0);
-verifica('pagina iniziale: Timesheet', (await p.locator('h1:has-text("Timesheet")').count()) === 1);
+verifica('pagina iniziale: Registra', (await p.locator('h1:has-text("Registra")').count()) === 1);
 voci = await vociMenu();
-verifica('menu senza voci di AR e senza «Attività»', !voci.includes('Clienti') && !voci.includes('Cruscotto') && !voci.includes('Attività') && voci.includes('Timesheet') && voci.includes('Impostazioni'));
-verifica('la pagina dice che il ruolo è collaboratore', /collaboratore/.test(await p.textContent('main')));
+verifica('menu senza voci di AR e senza «Attività»', !voci.includes('Fascicoli') && !voci.includes('Cruscotto') && !voci.includes('Attività') && voci.includes('Registra') && voci.includes('Impostazioni'));
+verifica('la pagina Registra mostra la chat e non le voci del titolare', (await p.locator('[data-test="chat-registra"]').count()) === 1 && !voci.includes('Registrazioni') && !voci.includes('Servizi e tariffe'));
 await p.goto(`${BASE}/#clienti`);
 await p.waitForTimeout(400);
-verifica('#clienti (pagina di AR) riporta alla pagina Timesheet', (await p.locator('h1:has-text("Timesheet")').count()) === 1);
+verifica('#clienti (pagina di AR) riporta alla pagina iniziale di Timesheet', (await p.locator('h1:has-text("Registra")').count()) === 1);
 await p.screenshot({ path: '/tmp/ui-ts-m0-5-solo-ts.png' });
 
 // ── 4. Studio con solo AR ────────────────────────────────────

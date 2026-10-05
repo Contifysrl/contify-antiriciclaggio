@@ -748,6 +748,152 @@ const SEZIONI: Sezione[] = [
       </>
     ),
   },
+  // ── Contify Timesheet (TS-M1) ─────────────────────────────────
+  {
+    id: 'ts-registra',
+    modulo: 'TS',
+    titolo: 'Timesheet: registrare il lavoro',
+    icona: 'orologio',
+    corpo: (
+      <>
+        <P>
+          In <K>Registra</K> scrivi (o detti) per chi hai lavorato, cosa hai fatto e per quanto tempo, come lo
+          diresti a una persona: «2 ore di contabilità per Omega», «ieri un'ora e mezza di cedolini per la
+          Lanterna», «mezz'ora al telefono con Rossi e poi 2 ore di bilancio per Beta». Il programma capisce
+          cliente, servizio, durata e giorno e salva la registrazione, che compare come scheda nel flusso.
+        </P>
+        <Punti punti={[
+          <>Se qualcosa manca o è ambiguo, il programma <K>fa una domanda</K> con le scelte come pulsanti («Per quale cliente?», «Che tipo di lavoro?», «Quanto tempo?»). Puoi anche rispondere scrivendo. Non salva mai un dato di cui non è sicuro.</>,
+          <>Se nomini un cliente che non esiste, puoi cercarlo nell'elenco o, se lo studio lo permette, crearlo al volo: resta <K>«da verificare»</K> finché chi dirige lo studio non ne completa l'anagrafica.</>,
+          <>Quando scegli un cliente per un modo di dire che il programma non conosceva («il ponte»), ti propone di ricordarlo per la prossima volta.</>,
+          <>Il giorno è oggi se non lo dici; «ieri», «venerdì», «il 28» funzionano. Non si registra nel futuro.</>,
+          <>Più lavori in una frase diventano più registrazioni. Una sola durata per due clienti («2 ore per Omega e Beta») fa chiedere quanto a ciascuno, salvo «ciascuno».</>,
+          <>Ogni scheda ha <Btn>Modifica</Btn> e <Btn>Annulla</Btn>. <K>Aggiungi a mano</K> apre il modulo classico con cliente, servizio, durata, giorno e nota.</>,
+        ]} />
+        <H>Il riepilogo in alto</H>
+        <P>
+          La striscia mostra <K>solo il tuo lavoro</K>: le ore di oggi (e quelle previste, se chi dirige lo studio le ha indicate), la settimana
+          come barrette con l'iniziale del giorno, il totale del mese. Niente importi né confronti con i colleghi. Un giorno di lavoro passato
+          senza registrazioni ha il contorno tratteggiato; stare sotto il previsto non è un errore: il programma non conosce ferie e permessi.
+          Toccando un giorno, o <K>Tutte le mie ore</K>, apri l'elenco per settimana dove correggere o eliminare.
+        </P>
+        <H>Dettare a voce</H>
+        <P>
+          Se chi amministra lo studio ha attivato la dettatura, accanto alla casella c'è il microfono: un tocco avvia, un tocco ferma
+          (al massimo un minuto). L'audio viene trascritto e trattato come una frase scritta; <K>non viene conservato</K>. Se il
+          microfono non è disponibile, la dettatura della tastiera del telefono funziona comunque.
+        </P>
+        <Nota>
+          I collaboratori possono creare, correggere ed eliminare solo le registrazioni degli ultimi giorni (il numero lo decide lo
+          studio, di partenza 7); per quelle più vecchie provvede chi dirige lo studio. La conversazione in chat non viene conservata:
+          all'apertura la pagina mostra le registrazioni di oggi ricostruite dall'archivio.
+        </Nota>
+      </>
+    ),
+  },
+  {
+    id: 'ts-registrazioni',
+    modulo: 'TS',
+    titolo: 'Timesheet: registrazioni dello studio',
+    icona: 'tabella',
+    corpo: (
+      <>
+        <P>
+          Chi dirige lo studio in Timesheet vede in <K>Registrazioni</K> il lavoro di tutte le persone, con i filtri per persona,
+          cliente, servizio, periodo e «da verificare», i totali in testa (ore e valore a tariffa) e l'<K>export in Excel</K> delle
+          registrazioni filtrate. Una riga si apre per correggerla; si può anche registrare a nome di un'altra persona.
+        </P>
+        <P>
+          Una registrazione è <K>«da verificare»</K> quando il cliente è stato creato al volo dalla chat, quando il servizio è quello
+          generico («Altro») o quando la giornata della persona supera le 16 ore. Controllala e togli il segno con <Btn>Verificata</Btn>.
+          Nella scheda vedi anche la frase originale da cui è nata.
+        </P>
+        <P>
+          Il <K>valore a tariffa</K> usa la tariffa oraria del servizio al momento in cui la registrazione è stata salvata: cambiare una tariffa
+          dopo non riscrive il passato. Le registrazioni già in un proforma non si modificano (dalla prossima tappa).
+        </P>
+      </>
+    ),
+  },
+  {
+    id: 'ts-clienti',
+    modulo: 'TS',
+    titolo: 'Timesheet: clienti',
+    icona: 'edificio',
+    corpo: (
+      <>
+        <P>
+          Timesheet ha il suo elenco di clienti, collegato a quello di Antiriciclaggio: se lo studio ha entrambi i moduli, i clienti di
+          Antiriciclaggio compaiono da soli con lo stesso nome e la loro anagrafica si modifica lì. In più Timesheet può avere clienti
+          solo suoi (chi fa solo paghe o dichiarazioni può non essere nell'antiriciclaggio).
+        </P>
+        <P>Un cliente nuovo si carica in quattro modi, sempre con l'anagrafica in anteprima prima di salvare:</P>
+        <Punti punti={[
+          <><K>A mano</K>: denominazione (l'unico dato obbligatorio), codice fiscale, partita IVA, sede, PEC, codice destinatario, email, telefono.</>,
+          <><K>Da partita IVA</K>: l'archivio europeo VIES dà denominazione e indirizzo (non codice fiscale né PEC), con lo stesso limite orario di Antiriciclaggio.</>,
+          <><K>Da importazione</K>: un file con le colonne da abbinare, oppure un elenco di denominazioni incollato, una per riga (massimo 500). I doppioni vengono scartati con il motivo.</>,
+          <><K>Da visura camerale</K>: il PDF si legge nel browser e non lascia il computer; Timesheet tiene solo i dati della società — soci, cariche e titolari effettivi non si salvano e il PDF non si conserva.</>,
+        ]} />
+        <P>
+          <K>Doppioni</K>: stesso codice fiscale o stessa partita IVA nello studio, oppure denominazione identica se mancano entrambi; il confronto comprende i clienti di Antiriciclaggio.
+          Il programma non unisce mai da solo due clienti con nome simile: dalla scheda li colleghi tu («Collegamento ad Antiriciclaggio»).
+        </P>
+        <P>
+          Nella scheda stanno anche i <K>modi di dire</K> con cui in studio si chiama il cliente («il ponte»): il programma li riconosce come il nome; ogni modo di dire indica un solo cliente.
+          Un cliente <K>non attivo</K> resta nelle registrazioni passate ma non si usa per quelle nuove.
+        </P>
+      </>
+    ),
+  },
+  {
+    id: 'ts-servizi',
+    modulo: 'TS',
+    titolo: 'Timesheet: servizi e tariffe',
+    icona: 'etichetta',
+    corpo: (
+      <>
+        <P>
+          I <K>servizi</K> sono i tipi di lavoro dello studio (contabilità, liquidazione IVA, dichiarazioni, bilancio, paghe, consulenza,
+          pratiche…). Ognuno ha una <K>tariffa oraria</K> e le <K>parole chiave</K> che il programma cerca nelle frasi: una radice come
+          «contabil» riconosce contabilità e contabile; due parole insieme («prima nota») devono comparire una dopo l'altra. Il programma
+          assegna il servizio solo se ne riconosce uno soltanto; se ne riconosce due, chiede.
+        </P>
+        <Punti punti={[
+          <>All'attivazione lo studio riceve otto servizi di partenza con tariffa a zero: cambiali, rinominali, aggiungine. Le tariffe sono dati dello studio.</>,
+          <>Il servizio <K>generico</K> («Altro») non si assegna mai da solo e non si disattiva: serve alle registrazioni senza un servizio preciso, che restano «da verificare».</>,
+          <>Un servizio disattivato non si usa per le registrazioni nuove; quelle vecchie restano com'erano, con la tariffa che avevano.</>,
+          <>L'ordine dell'elenco (frecce) è quello con cui i servizi compaiono nelle domande e nei moduli.</>,
+        ]} />
+      </>
+    ),
+  },
+  {
+    id: 'ts-impostazioni',
+    modulo: 'TS',
+    titolo: 'Timesheet: regole, persone, AI e voce',
+    icona: 'ingranaggio',
+    corpo: (
+      <>
+        <P>In <K>Impostazioni</K>, sezione Timesheet, chi dirige lo studio decide:</P>
+        <Punti punti={[
+          <><K>Giorni indietro</K> per i collaboratori: entro quanti giorni possono registrare, correggere ed eliminare da soli (di partenza 7). Il titolare non ha limiti.</>,
+          <>Se i <K>collaboratori possono aggiungere clienti</K> dalla chat (di partenza sì; il cliente resta «da verificare»).</>,
+          <><K>Persone e ore previste</K>: le ore a settimana e i giorni di lavoro di ognuno (anche part-time). Il riepilogo di ciascuno mostra le ore registrate rispetto a quelle previste; se non le indichi, solo i totali.</>,
+        ]} />
+        <P>
+          Chi <K>amministra lo studio</K> decide anche il consenso all'<K>AI e alla dettatura vocale</K> di Timesheet, separato da quello
+          dell'assistente di Antiriciclaggio, dopo aver letto l'informativa: cosa viene inviato e a chi, che l'audio non è conservato,
+          che la voce non serve a riconoscere chi parla, che il registro delle operazioni non si cancella. Senza consenso il programma
+          funziona con il riconoscimento di base e l'inserimento a mano. L'uso dell'AI è limitato per persona e per giorno.
+        </P>
+        <Attenzione>
+          Il backup dello studio comprende anche le ore. <K>Ripristinare</K> un backup riporta a quella data anche le registrazioni
+          Timesheet (se il backup le conteneva); <K>Elimina archivio</K> cancella anche clienti, servizi e registrazioni Timesheet.
+          Le ore previste delle persone restano. Il registro «Attività» non si cancella mai.
+        </Attenzione>
+      </>
+    ),
+  },
   {
     id: 'impostazioni',
     titolo: 'Impostazioni e utenti',

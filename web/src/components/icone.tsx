@@ -67,6 +67,26 @@ const PERCORSI: Record<string, ReactNode> = {
       <path d="M12 6v6l4 2" />
     </>
   ),
+  // TS-M1: dettatura vocale.
+  microfono: (
+    <>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" />
+    </>
+  ),
+  // TS-M1: pagine di Timesheet.
+  tabella: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 10h18M9 4v16" />
+    </>
+  ),
+  etichetta: (
+    <>
+      <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V4a1 1 0 0 1 1-1h9l7.6 7.6a2 2 0 0 1 0 2.8Z" />
+      <path d="M7.5 7.5h.01" />
+    </>
+  ),
   utente: (
     <>
       <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />

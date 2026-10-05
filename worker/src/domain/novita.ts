@@ -20,6 +20,18 @@ export interface VoceNovita {
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-10-06-timesheet-registrare',
+    data: '2026-10-06',
+    titolo: 'Contify Timesheet: si comincia a registrare',
+    modulo: 'TS',
+    punti: [
+      'Nuova pagina «Registra»: scrivi per chi hai lavorato, cosa hai fatto e per quanto tempo («2 ore di contabilità per Omega», «ieri un’ora e mezza di cedolini per la Lanterna») e il programma registra. Se qualcosa manca o è ambiguo fa una domanda con le scelte come pulsanti; non salva mai un dato di cui non è sicuro. In alto il riepilogo del tuo lavoro: oggi, settimana, mese — solo il tuo, senza importi.',
+      '«Le mie ore»: il tuo lavoro per settimana, con correzione, eliminazione e «Aggiungi a mano». I collaboratori possono intervenire sugli ultimi giorni (di partenza 7); per quelli più vecchi provvede chi dirige lo studio.',
+      'Per chi dirige lo studio: «Registrazioni» con filtri, totali, «da verificare» ed export in Excel; «Clienti» con i quattro modi di caricamento (a mano, da partita IVA, da importazione, da visura camerale) e i modi di dire; «Servizi e tariffe» con le parole chiave riconosciute nelle frasi. In Impostazioni: regole dello studio, persone e ore previste, e — per chi amministra — il consenso all’AI e alla dettatura vocale di Timesheet, separato da quello di Antiriciclaggio.',
+      'I clienti di Antiriciclaggio compaiono da soli in Timesheet con lo stesso nome; i backup comprendono anche le ore. Nuovi capitoli della Guida: «Timesheet: registrare il lavoro», «registrazioni dello studio», «clienti», «servizi e tariffe», «regole, persone, AI e voce».',
+    ],
+  },
+  {
     id: '2026-10-05-moduli-e-accessi',
     data: '2026-10-05',
     titolo: 'Una piattaforma, due moduli: Contify AR e Contify Timesheet',

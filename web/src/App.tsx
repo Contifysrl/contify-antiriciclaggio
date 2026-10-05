@@ -22,7 +22,11 @@ import { Assistenza } from './pagine/Assistenza';
 import { Console } from './pagine/Console';
 import { VerificaRemota } from './pagine/VerificaRemota';
 import { ChatAssistente } from './pagine/ChatAssistente';
-import { TsInizio } from './ts/Inizio';
+import { TsRegistra } from './ts/Registra';
+import { TsMieOre } from './ts/MieOre';
+import { TsRegistrazioni } from './ts/Registrazioni';
+import { TsClienti } from './ts/Clienti';
+import { TsServizi } from './ts/Servizi';
 import { NOME_MODULO, type Modulo, accedeAdAr, moduliDisponibili, pubblicaModuloCorrente, statoModulo, useModulo } from './lib/moduli';
 
 type Sessione = SessioneApp;
@@ -42,8 +46,10 @@ function usaPercorso(): [string, (p: string) => void] {
 // dettaglio (cliente, fascicolo, registro) seguono la voce che le apre.
 type ClasseVoce = Modulo | 'COMUNE';
 const PAGINE_AR = new Set(['cruscotto', 'completezza', 'coda', 'autovalutazione', 'clienti', 'cliente', 'fascicoli', 'fascicolo', 'scadenzario', 'contante', 'controlli', 'sos', 'normativa']);
-const PAGINE_TS = new Set(['ts-inizio']);
-const PAGINA_INIZIALE: Record<Modulo, string> = { AR: 'cruscotto', TS: 'ts-inizio' };
+const PAGINE_TS = new Set(['ts-inizio', 'ts-registra', 'ts-mie-ore', 'ts-registrazioni', 'ts-clienti', 'ts-servizi']);
+const PAGINA_INIZIALE: Record<Modulo, string> = { AR: 'cruscotto', TS: 'ts-registra' };
+// TS-M1: le pagine del titolare Timesheet (chi amministra lo studio vi accede comunque).
+const PAGINE_TS_TITOLARE = new Set(['ts-registrazioni', 'ts-clienti', 'ts-servizi']);
 
 export default function App() {
   const [sessione, setSessione] = useState<Sessione | null>(null);
@@ -76,7 +82,10 @@ export default function App() {
   // accede) si torna alla pagina iniziale del modulo scelto: il server
   // rifiuterebbe comunque ogni chiamata.
   let pagina = paginaRichiesta || inizio;
+  if (pagina === 'ts-inizio') pagina = 'ts-registra'; // il vecchio hash di TS-M0 resta valido
   if ((PAGINE_AR.has(pagina) && !disponibili.includes('AR')) || (PAGINE_TS.has(pagina) && !disponibili.includes('TS'))) pagina = inizio;
+  const titolareTs = !!sessione && (sessione.utente.amministratore === true || sessione.utente.tsRuolo === 'TITOLARE');
+  if (PAGINE_TS_TITOLARE.has(pagina) && !titolareTs) pagina = inizio;
 
   // ── Rotte pubbliche (anche con sessione: il link del cliente vince) ──
   if (pagina === 'verifica') return <VerificaRemota token={parametri.get('token') ?? ''} />;
@@ -105,7 +114,7 @@ export default function App() {
   // dall'amministrazione dello studio (chi tiene la licenza e l'archivio).
   // TS-M0: ogni voce ha il suo modulo; si vede se lo studio ha il modulo,
   // l'utente vi accede ed è il modulo scelto; le voci comuni si vedono sempre.
-  const voci: Array<{ id: string; testo: string; icona: string; modulo: ClasseVoce; ruoli?: string[]; soloAmministratore?: boolean }> = [
+  const voci: Array<{ id: string; testo: string; icona: string; modulo: ClasseVoce; ruoli?: string[]; soloAmministratore?: boolean; soloTitolareTs?: boolean }> = [
     { id: 'cruscotto', testo: 'Cruscotto', icona: 'dashboard', modulo: 'AR' },
     // AR-M19: «oggi ti mancano N cose» e le proposte del programma da rivedere.
     { id: 'completezza', testo: 'Da completare', icona: 'spunta', modulo: 'AR' },
@@ -118,8 +127,11 @@ export default function App() {
     { id: 'controlli', testo: 'Controlli automatici', icona: 'cerca', modulo: 'AR' },
     { id: 'sos', testo: 'Segnalazioni', icona: 'avviso', modulo: 'AR', ruoli: ['TITOLARE'] },
     { id: 'normativa', testo: 'Normativa', icona: 'libro', modulo: 'AR' },
-    // Contify Timesheet (TS-M0: pagina provvisoria; TS-M1 porta «Registra»).
-    { id: 'ts-inizio', testo: 'Timesheet', icona: 'orologio', modulo: 'TS' },
+    // Contify Timesheet (TS-M1): il collaboratore ha una sola voce; le altre sono del titolare Timesheet.
+    { id: 'ts-registra', testo: 'Registra', icona: 'orologio', modulo: 'TS' },
+    { id: 'ts-registrazioni', testo: 'Registrazioni', icona: 'tabella', modulo: 'TS', soloTitolareTs: true },
+    { id: 'ts-clienti', testo: 'Clienti', icona: 'edificio', modulo: 'TS', soloTitolareTs: true },
+    { id: 'ts-servizi', testo: 'Servizi e tariffe', icona: 'etichetta', modulo: 'TS', soloTitolareTs: true },
     // Blocco di servizio, stesse voci e stesso ordine di Assist (AR-M11).
     { id: 'impostazioni', testo: 'Impostazioni', icona: 'ingranaggio', modulo: 'COMUNE' },
     { id: 'backup', testo: 'Backup', icona: 'database', modulo: 'COMUNE', soloAmministratore: true },
@@ -139,7 +151,8 @@ export default function App() {
         (v.modulo === 'COMUNE' || v.modulo === modulo) &&
         (v.id !== 'attivita' || vedeAttivita) &&
         (!v.ruoli || v.ruoli.includes(sessione.utente.ruolo)) &&
-        (!v.soloAmministratore || sessione.utente.amministratore === true))}
+        (!v.soloAmministratore || sessione.utente.amministratore === true) &&
+        (!v.soloTitolareTs || titolareTs))}
       pagina={pagina}
       vaiA={vaiA}
       modulo={modulo}
@@ -147,7 +160,11 @@ export default function App() {
       onCambiaModulo={(m) => { cambiaModulo(m); vaiA(PAGINA_INIZIALE[m]); }}
     >
       {pagina === 'cruscotto' && <Cruscotto vaiA={vaiA} />}
-      {pagina === 'ts-inizio' && <TsInizio tsRuolo={sessione.utente.tsRuolo ?? null} amministratore={sessione.utente.amministratore === true} />}
+      {pagina === 'ts-registra' && <TsRegistra sessioneUtenteId={sessione.utente.id} vaiA={vaiA} />}
+      {pagina === 'ts-mie-ore' && <TsMieOre giorno={parametri.get('giorno')} />}
+      {pagina === 'ts-registrazioni' && titolareTs && <TsRegistrazioni />}
+      {pagina === 'ts-clienti' && titolareTs && <TsClienti />}
+      {pagina === 'ts-servizi' && titolareTs && <TsServizi />}
       {pagina === 'completezza' && <Completezza vaiA={vaiA} />}
       {pagina === 'coda' && <Coda vaiA={vaiA} />}
       {pagina === 'autovalutazione' && <Autovalutazione amministratore={sessione.utente.amministratore === true} />}
@@ -259,7 +276,8 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, modulo, dis
     pagina === id
     || (id === 'clienti' && pagina === 'cliente')
     || (id === 'fascicoli' && pagina === 'fascicolo')
-    || (id === 'attivita' && pagina === 'registro');
+    || (id === 'attivita' && pagina === 'registro')
+    || (id === 'ts-registra' && pagina === 'ts-mie-ore');
 
   return (
     <div className="min-h-screen flex flex-col lg:flex-row">
