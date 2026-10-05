@@ -63,7 +63,37 @@ function chiamaCloudflare(): ChiamaModello {
   };
 }
 
+/** Trascrizione via REST (whisper presso Cloudflare) dei file audio di AUDIO_DIR (A001.m4a, A001.wav, …). */
+const AUDIO_DIR = process.env.AUDIO_DIR ?? path.join(qui, '..', '..', 'prova-motori', 'audio');
+const MODELLO_VOCE = process.env.MODELLO_VOCE ?? '@cf/openai/whisper-large-v3-turbo';
+const trascrizioni: Array<{ id: string; atteso: string; trascritto: string; ms: number }> = [];
+async function trascriviFile(f: Frase): Promise<string | null> {
+  const token = process.env.CF_TOKEN;
+  if (!token) throw new Error('TIPI=audio richiede CF_TOKEN (permesso Workers AI: Read).');
+  const base = f.file ?? f.id;
+  const file = ['.m4a', '.mp3', '.wav', '.webm', '.ogg', '.mp4'].map((e) => path.join(AUDIO_DIR, base + e)).find((x) => fs.existsSync(x));
+  if (!file) return null;
+  const audio = fs.readFileSync(file).toString('base64');
+  const prompt = process.env.SENZA_PROMPT === '1' ? undefined : `Rilevazione ore di uno studio di commercialisti. Servizi: ${insieme.servizi.map((s) => s.nome).join(', ')}.`;
+  const t0 = performance.now();
+  const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/ai/run/${MODELLO_VOCE}`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ audio, language: 'it', vad_filter: true, ...(prompt ? { initial_prompt: prompt } : {}) }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  const corpo: any = await r.json();
+  if (!r.ok || !corpo?.success) throw new Error(`whisper ${r.status}: ${JSON.stringify(corpo?.errors ?? corpo).slice(0, 300)}`);
+  const testo = String(corpo.result?.text ?? '').trim();
+  trascrizioni.push({ id: f.id, atteso: f.testo, trascritto: testo, ms: performance.now() - t0 });
+  return testo;
+}
+
 async function interpreta(f: Frase): Promise<{ proposte: Proposta[]; ms: number; aiChiamata: boolean }> {
+  if (f.tipo === 'audio') {
+    const testo = await trascriviFile(f);
+    if (testo === null) throw new Error('file audio assente');
+    f = { ...f, testo };
+  }
   const t0 = performance.now();
   if (MOTORE === 'L') {
     const proposte = interpretaLocale(f.testo, ctx);
@@ -84,6 +114,7 @@ for (const f of frasi) {
   try {
     esito = await interpreta(f);
   } catch (e) {
+    if (f.tipo === 'audio' && /assente/.test(String(e))) { console.log(`${f.id}: file audio assente, saltata`); continue; }
     console.error(`${f.id}: errore ${String(e)}`);
     esito = { proposte: interpretaLocale(f.testo, ctx), ms: 0, aiChiamata: false };
   }
@@ -105,6 +136,16 @@ const ordinati = [...tempi].sort((a, b) => a - b);
 const mediana = ordinati.length ? ordinati[Math.floor(ordinati.length / 2)] : 0;
 const p95 = ordinati.length ? ordinati[Math.min(ordinati.length - 1, Math.floor(ordinati.length * 0.95))] : 0;
 
+const righeAudio = trascrizioni.length ? [
+  '',
+  '## Trascrizioni (audio → testo)',
+  '',
+  '| Frase | Letto | Trascritto |',
+  '|---|---|---|',
+  ...trascrizioni.map((t) => `| ${t.id} | ${t.atteso} | ${t.trascritto} |`),
+  '',
+  `Tempo mediano di trascrizione: ${(([...trascrizioni].sort((a, b) => a.ms - b.ms)[Math.floor(trascrizioni.length / 2)]?.ms ?? 0) / 1000).toFixed(2)} s.`,
+] : [];
 const righe = [
   `# Prova dei motori — motore ${MOTORE} (${new Date().toISOString().slice(0, 10)})`,
   '',
@@ -127,6 +168,7 @@ const righe = [
   '## Frasi non esatte',
   '',
   ...valutazioni.filter((v) => v.esito !== 'esatta').map((v) => `- ${v.id} **${v.esito}**${v.erroriCliente ? ' (CLIENTE)' : ''}: ${v.dettagli.join('; ')}`),
+  ...righeAudio,
 ];
 console.log('\n' + righe.join('\n'));
 if (process.env.RAPPORTO) fs.writeFileSync(process.env.RAPPORTO, righe.join('\n') + '\n');
