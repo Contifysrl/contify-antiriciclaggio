@@ -68,6 +68,14 @@ export function chiaveDelTenant(tenantId: string, key: string): boolean {
 export const TABELLE_ARCHIVIO = [
   'autovalutazioni',
   'clienti',
+  // TS-M1: l'archivio dello studio è uno (scelta B11). ts_clienti si collega a
+  // clienti con cliente_ar_id (senza chiave esterna) → dopo di esso; le
+  // registrazioni referenziano ts_clienti, ts_servizi e utenti. ts_uso_ai
+  // (contatore) e ts_persone (configurazione delle persone, come utenti) NON
+  // entrano: sopravvivono a ripristino ed «Elimina archivio».
+  'ts_clienti',
+  'ts_servizi',
+  'ts_registrazioni',
   'titolari_effettivi',
   'fascicoli',
   // AR-M8: le richieste di verifica a distanza referenziano fascicoli e clienti.

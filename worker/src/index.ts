@@ -44,6 +44,7 @@ import { conteggiArchivioStudio, eliminaStudioVuoto, leggiEventiConsole, scriviE
 import { SOGLIE_AVVISO_CANONE, giorniAllaScadenza, statoValido } from './lib/licenza';
 import { MODULI, type Modulo, type ModuliStudio, accedeAdAr, assicuraRigheModuli, copiaRuoliTimesheet, moduliDettaglio, moduliDiTuttiGliStudi, moduliStudio, moduloValido, scriviModulo, sqlConModuloArAttivo, verdettoModulo } from './lib/moduli';
 import { tsApp } from './ts/index';
+import { assicuraServiziPredefiniti } from './ts/archivio';
 import { cercaAnagrafica, limiteSuperato } from './lib/lookup';
 import { aggiornaListeSanzioni, caricaListe, eseguiScreeningTenant, listeDaAggiornare, screeningSchedulato } from './lib/sanzioni';
 import { normalizzaPiva } from './lib/lookup/piva';
@@ -4193,16 +4194,19 @@ consoleApp.post('/studi/:id/moduli/:modulo', async (c) => {
 
   const esito = await scriviModulo(c.env.DB, t.id, modulo, dati);
   let ruoliCopiati = 0;
+  let serviziCreati = 0;
   if (modulo === 'TS' && esito.dopo.stato === 'attivo' && (esito.creato || esito.prima?.stato !== 'attivo')) {
     ruoliCopiati = await copiaRuoliTimesheet(c.env.DB, t.id);
+    // TS-M1: gli otto servizi di partenza, se lo studio non ne ha nessuno.
+    serviziCreati = await assicuraServiziPredefiniti(c.env.DB, t.id);
   }
   const azione = esito.creato ? 'MODULO_ATTIVATO' : 'MODULO_AGGIORNATO';
   await scriviAudit(c.env.DB, {
     tenantId: t.id, utenteId: null, azione, entita: 'moduli_tenant', entitaId: `${t.id}:${modulo}`,
-    dettaglio: { operatore: o.email, modulo, prima: esito.prima, dopo: esito.dopo, ruoliCopiati },
+    dettaglio: { operatore: o.email, modulo, prima: esito.prima, dopo: esito.dopo, ruoliCopiati, serviziCreati },
   });
-  await scriviEventoConsole(c.env.DB, { operatore: o.email, azione, tenantId: t.id, dettaglio: { modulo, prima: esito.prima, dopo: esito.dopo, ruoliCopiati } });
-  return c.json({ ok: true, creato: esito.creato, modulo: esito.dopo, ruoliCopiati });
+  await scriviEventoConsole(c.env.DB, { operatore: o.email, azione, tenantId: t.id, dettaglio: { modulo, prima: esito.prima, dopo: esito.dopo, ruoliCopiati, serviziCreati } });
+  return c.json({ ok: true, creato: esito.creato, modulo: esito.dopo, ruoliCopiati, serviziCreati });
 });
 
 consoleApp.post('/studi/:id/contratto', async (c) => {
@@ -4380,6 +4384,9 @@ consoleApp.post('/studi', async (c) => {
       `INSERT INTO moduli_tenant (tenant_id, modulo, stato, data_attivazione, data_scadenza_canone, posti_inclusi, note_contratto) VALUES (?, 'TS', 'attivo', ?, ?, ?, ?)`,
     ).bind(tenantId, attivazione, conAr ? null : scadenza, conAr ? null : posti, conAr ? null : note)] : []),
   ]);
+
+  // TS-M1: uno studio nato con Timesheet parte con gli otto servizi predefiniti.
+  if (conTs) await assicuraServiziPredefiniti(c.env.DB, tenantId);
 
   // Prima voce del registro dello studio: chi lo ha attivato e con quale contratto.
   await scriviAudit(c.env.DB, {

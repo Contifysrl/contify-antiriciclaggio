@@ -41,6 +41,15 @@ binding = "BACKUPS"
 bucket_name = "contify-antiriciclaggio-backups"
 jurisdiction = "eu"
 
+# Workers AI (TS-M1): modelli presso Cloudflare per Contify Timesheet —
+# interpretazione delle frasi (motore A) e trascrizione della voce. Il binding
+# da solo non invia nulla: il programma chiama i modelli SOLO per gli studi
+# che hanno dato il consenso in Impostazioni → Timesheet (tenants.parametri.ts.ai)
+# e sotto i limiti d'uso per persona. L'audio non si conserva. Vedi
+# DECISIONI-TS.md, punti C1 e C2 (dove Cloudflare elabora i dati dei modelli).
+[ai]
+binding = "AI"
+
 [vars]
 AMBIENTE = "produzione" # in locale e' scavalcato da .dev.vars
 MAIL_FROM = "Contify AR <no-reply@contify.it>"

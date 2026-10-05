@@ -22,6 +22,8 @@ export interface Env {
   AI_MODEL?: string;
   /** '1' in locale: risposte AI finte, ripetibili (mai in produzione). */
   AI_FIXTURES?: string;
+  /** TS-M1: Workers AI (modelli presso Cloudflare) per Contify Timesheet; assente in locale senza accesso a Cloudflare. */
+  AI?: Ai;
 }
 
 export interface Utente {

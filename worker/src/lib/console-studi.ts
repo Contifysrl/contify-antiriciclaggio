@@ -42,7 +42,7 @@ export async function leggiEventiConsole(db: D1Database, tenantId: string | null
   return (results ?? []).map((r) => ({ id: r.id, operatore: r.operatore, azione: r.azione, tenantId: r.tenant_id, creatoIl: r.creato_il, dettaglio: (() => { try { return r.dettaglio ? JSON.parse(r.dettaglio) : null; } catch { return null; } })() }));
 }
 
-export interface ConteggiArchivio { clienti: number; fascicoli: number; documenti: number; oggettiR2: number }
+export interface ConteggiArchivio { clienti: number; fascicoli: number; documenti: number; oggettiR2: number; tsClienti?: number; tsRegistrazioni?: number }
 
 /** Cosa c'è nell'archivio dello studio: se qualcosa è > 0 lo studio non è vuoto. */
 export async function conteggiArchivioStudio(env: Env, tenantId: string): Promise<ConteggiArchivio> {
@@ -50,6 +50,9 @@ export async function conteggiArchivioStudio(env: Env, tenantId: string): Promis
   const clienti = await n('SELECT COUNT(*) AS n FROM clienti WHERE tenant_id = ?');
   const fascicoli = await n('SELECT COUNT(*) AS n FROM fascicoli WHERE tenant_id = ?');
   const documenti = await n('SELECT COUNT(*) AS n FROM documenti WHERE tenant_id = ?');
+  // TS-M1: anche le ore e i clienti di Timesheet rendono lo studio «non vuoto».
+  const tsClienti = await n('SELECT COUNT(*) AS n FROM ts_clienti WHERE tenant_id = ?');
+  const tsRegistrazioni = await n('SELECT COUNT(*) AS n FROM ts_registrazioni WHERE tenant_id = ?');
   // Oggetti su R2 fuori dal transito della coda di revisione (`${tenant}/coda/…`).
   let oggettiR2 = 0;
   let cursor: string | undefined;
@@ -58,7 +61,7 @@ export async function conteggiArchivioStudio(env: Env, tenantId: string): Promis
     oggettiR2 += page.objects.filter((o) => !o.key.startsWith(`${tenantId}/coda/`)).length;
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
-  return { clienti, fascicoli, documenti, oggettiR2 };
+  return { clienti, fascicoli, documenti, oggettiR2, tsClienti, tsRegistrazioni };
 }
 
 async function svuotaPrefissoR2(bucket: R2Bucket, prefix: string): Promise<number> {
@@ -108,6 +111,9 @@ export async function eliminaStudioVuoto(env: Env, tenant: { id: string; denomin
     per('DELETE FROM manutenzione_flag WHERE tenant_id = ?1'),
     per('DELETE FROM sessioni WHERE tenant_id = ?1'),
     per('DELETE FROM password_reset_token WHERE utente_id IN (SELECT id FROM utenti WHERE tenant_id = ?1)'),
+    // TS-M1: contatori d'uso e ore previste (fuori dall'archivio) prima degli utenti.
+    per('DELETE FROM ts_uso_ai WHERE tenant_id = ?1'),
+    per('DELETE FROM ts_persone WHERE tenant_id = ?1'),
     per('DELETE FROM utenti WHERE tenant_id = ?1'),
     // TS-M0: le righe dei moduli (contratto, non archivio) vanno via con lo studio.
     per('DELETE FROM moduli_tenant WHERE tenant_id = ?1'),

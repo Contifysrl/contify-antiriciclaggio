@@ -83,10 +83,22 @@ async function contaRighe(db: D1Database, tenantId: string, tabelle: readonly st
 }
 
 /** Svuota le tabelle dell'archivio del tenant, figli prima dei padri, in un unico batch (transazione D1). */
-async function svuotaArchivio(db: D1Database, tenantId: string): Promise<void> {
+async function svuotaArchivio(db: D1Database, tenantId: string, tabelle: readonly string[] = TABELLE_ARCHIVIO_ELIMINAZIONE): Promise<void> {
   await db.batch(
-    TABELLE_ARCHIVIO_ELIMINAZIONE.map((t) => db.prepare(`DELETE FROM ${qIdent(t)} WHERE tenant_id = ?1`).bind(tenantId)),
+    tabelle.map((t) => db.prepare(`DELETE FROM ${qIdent(t)} WHERE tenant_id = ?1`).bind(tenantId)),
   );
+}
+
+/**
+ * TS-M1: un backup fatto PRIMA dell'attivazione di Timesheet non contiene le
+ * tabelle ts_*: ripristinarlo lascia le ore come sono (non le cancella). Un
+ * backup successivo le contiene e le riporta a quella data, come il resto.
+ * Le tabelle di AR si svuotano sempre, come prima.
+ */
+export function tabelleDaSvuotare(snap: { tabelle: Record<string, { righe?: unknown[] } | undefined> }): string[] {
+  // Decisione congiunta su tutte le ts_*: le registrazioni referenziano clienti e servizi.
+  const haDatiTs = TABELLE_ARCHIVIO_ELIMINAZIONE.some((t) => t.startsWith('ts_') && (snap.tabelle[t]?.righe?.length ?? 0) > 0);
+  return TABELLE_ARCHIVIO_ELIMINAZIONE.filter((t) => !t.startsWith('ts_') || haDatiTs);
 }
 
 // ── Ripristino ─────────────────────────────────────────────────
@@ -129,7 +141,7 @@ export async function eseguiRipristino(env: Env, tenantId: string, utenteId: str
   const colonneIgnorate: string[] = [];
 
   await conFlagManutenzione(env.DB, tenantId, async () => {
-    await svuotaArchivio(env.DB, tenantId);
+    await svuotaArchivio(env.DB, tenantId, tabelleDaSvuotare(snap));
 
     // Inserimento padri → figli. Colonne: intersezione tra la fotografia
     // e lo schema corrente; tutto ciò che il backup ha in più si ignora
