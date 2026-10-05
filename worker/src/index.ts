@@ -41,7 +41,9 @@ import { scriviAudit, verificaCatenaAudit } from './lib/audit';
 import { backupSchedulato, chiaveDelTenant, prefissoTenant, runBackupTenant, type TipoBackupTenant } from './lib/backup';
 import { eseguiEliminaArchivio, eseguiRipristino, RipristinoError } from './lib/ripristino';
 import { conteggiArchivioStudio, eliminaStudioVuoto, leggiEventiConsole, scriviEventoConsole } from './lib/console-studi';
-import { SOGLIE_AVVISO_CANONE, bloccoPerStato, giorniAllaScadenza, statoValido } from './lib/licenza';
+import { SOGLIE_AVVISO_CANONE, giorniAllaScadenza, statoValido } from './lib/licenza';
+import { MODULI, type Modulo, type ModuliStudio, accedeAdAr, assicuraRigheModuli, copiaRuoliTimesheet, moduliDettaglio, moduliDiTuttiGliStudi, moduliStudio, moduloValido, scriviModulo, sqlConModuloArAttivo, verdettoModulo } from './lib/moduli';
+import { tsApp } from './ts/index';
 import { cercaAnagrafica, limiteSuperato } from './lib/lookup';
 import { aggiornaListeSanzioni, caricaListe, eseguiScreeningTenant, listeDaAggiornare, screeningSchedulato } from './lib/sanzioni';
 import { normalizzaPiva } from './lib/lookup/piva';
@@ -153,11 +155,11 @@ api.post('/auth/login', async (c) => {
     ip: c.req.header('CF-Connecting-IP') ?? null,
   });
 
-  const tenant = await c.env.DB.prepare('SELECT id, denominazione, piano, ruleset_default, stato, logo_url FROM tenants WHERE id = ?')
+  const tenant = await c.env.DB.prepare('SELECT id, denominazione, piano, ruleset_default, stato, logo_url, professionisti_inclusi FROM tenants WHERE id = ?')
     .bind(u.tenant_id)
     .first<any>();
 
-  return c.json({ utente: utentePubblico(u), studio: vistaStudio(tenant) });
+  return c.json({ utente: utentePubblico(u), studio: vistaStudio(tenant, await moduliStudio(c.env.DB, u.tenant_id)) });
 });
 
 api.post('/auth/logout', async (c) => {
@@ -247,16 +249,33 @@ api.use('/*', async (c, next) => {
   return richiediAutenticazione(c, next);
 });
 
-// Blocco per stato commerciale (AR-M6): sospeso = sola lettura (con
-// assistenza e backup manuale ancora possibili), cessato = accesso chiuso.
-// Applicato DOPO l'autenticazione: lo stato viaggia nella query di sessione.
+// Controllo dei moduli (TS-M0), al posto del solo blocco per stato (AR-M6).
+// Applicato DOPO l'autenticazione: stato dello studio e moduli viaggiano
+// nella query di sessione. Le voci comuni seguono lo stato dello studio
+// (sospeso = sola lettura con assistenza e backup, cessato = chiuso); le
+// rotte di AR e di Timesheet pretendono che lo studio abbia il modulo
+// (403 modulo_non_attivo) e che l'utente vi acceda (403 modulo_non_consentito),
+// poi vale lo stato EFFETTIVO del modulo (il peggiore fra studio e modulo).
+// Regole e classificazione delle rotte in lib/moduli.ts.
 api.use('/*', async (c, next) => {
   const stato = c.get('tenantStato');
   if (!stato) return next(); // rotta pubblica: nessuna sessione
-  const blocco = bloccoPerStato(statoValido(stato), c.req.method, c.req.path);
+  const blocco = verdettoModulo({
+    path: c.req.path, metodo: c.req.method,
+    statoStudio: statoValido(stato), moduli: c.get('moduli'), utente: c.get('utente'),
+  });
   if (blocco) return c.json({ errore: blocco.errore, codice: blocco.codice }, blocco.status);
   return next();
 });
+
+// Il registro delle attività contiene eventi antiriciclaggio con nomi di
+// clienti: lo legge chi ha accesso ad AR oppure chi amministra lo studio.
+const accessoArOAmministratore = async (c: Context<{ Bindings: Env; Variables: Variabili }>, next: () => Promise<void>) => {
+  if (!accedeAdAr(c.get('utente'))) {
+    return c.json({ errore: 'Il registro delle attività è riservato a chi accede a Contify AR o amministra lo studio.', codice: 'modulo_non_consentito' }, 403);
+  }
+  await next();
+};
 
 /** Logo dello studio custodito in tenants.logo_url come JSON {dataUrl, larghezza, altezza}. */
 function logoStudio(logoUrl: string | null | undefined): { dataUrl: string; larghezza: number; altezza: number } | null {
@@ -270,8 +289,8 @@ function logoStudio(logoUrl: string | null | undefined): { dataUrl: string; larg
   return null;
 }
 
-/** Vista dello studio restituita al client: stato commerciale e logo inclusi. */
-function vistaStudio(t: any) {
+/** Vista dello studio restituita al client: stato commerciale, logo e moduli inclusi. */
+function vistaStudio(t: any, moduli: ModuliStudio) {
   if (!t) return t;
   return {
     id: t.id,
@@ -283,6 +302,9 @@ function vistaStudio(t: any) {
     logo: logoStudio(t.logo_url)?.dataUrl ?? null,
     // AR-M16: posti professionista a contratto. null = nessun limite pattuito.
     professionistiInclusi: t.professionisti_inclusi ?? null,
+    // TS-M0: stato per modulo (null = non acquistato). Lo stato effettivo di
+    // un modulo è il peggiore fra questo e `stato`; lo calcola il client.
+    moduli,
   };
 }
 
@@ -300,6 +322,9 @@ function utentePubblico(u: any) {
     // AR-M15: il ruolo dice se firma, il flag dice se amministra.
     amministratore: u.amministratore === 1,
     professionista: u.ruolo === 'TITOLARE',
+    // TS-M0: accessi per modulo. Chi amministra accede comunque a tutti.
+    accessoAr: u.accesso_ar !== 0,
+    tsRuolo: u.ts_ruolo ?? null,
     codiceFiscale: u.codice_fiscale ?? null,
     ordine: u.ordine ?? null,
     numeroIscrizione: u.numero_iscrizione ?? null,
@@ -312,7 +337,7 @@ api.get('/auth/io', async (c) => {
   const tenant = await c.env.DB.prepare('SELECT id, denominazione, piano, ruleset_default, parametri, stato, logo_url, professionisti_inclusi FROM tenants WHERE id = ?')
     .bind(u.tenant_id)
     .first<any>();
-  return c.json({ utente: utentePubblico(u), studio: vistaStudio(tenant) });
+  return c.json({ utente: utentePubblico(u), studio: vistaStudio(tenant, c.get('moduli')) });
 });
 
 // ---------------------------------------------------------------------------
@@ -506,6 +531,53 @@ async function altriAmministratoriAttivi(db: D1Database, tenantId: string, esclu
   return r?.n ?? 0;
 }
 
+/**
+ * TS-M0: accessi per modulo di un utente, dal corpo della richiesta e dalla
+ * riga attuale (`base`, vuota alla creazione), con le regole di piattaforma:
+ *  - `tsRuolo` (TITOLARE | COLLABORATORE | null) solo se lo studio ha Timesheet;
+ *  - chi amministra lo studio accede sempre ad AR (e a tutto il resto);
+ *  - `accesso_ar = 0` implica ruolo AR COLLABORATORE: le interrogazioni di AR
+ *    su ruolo = 'TITOLARE' non cambiano e chi usa solo Timesheet non occupa
+ *    un posto professionista;
+ *  - un utente nuovo in uno studio senza AR nasce senza AR (salvo chi amministra);
+ *  - ogni utente accede ad almeno un modulo che lo studio ha.
+ */
+const TS_RUOLI_VALIDI = ['TITOLARE', 'COLLABORATORE'];
+
+function accessiModuli(
+  b: any, base: any | null, moduli: ModuliStudio, amministratore: boolean, ruoloRichiesto: string,
+): { accessoAr: boolean; tsRuolo: 'TITOLARE' | 'COLLABORATORE' | null; ruolo: string } | { errore: string } {
+  let tsRuolo: 'TITOLARE' | 'COLLABORATORE' | null;
+  if (b.tsRuolo !== undefined) {
+    if (b.tsRuolo !== null && !TS_RUOLI_VALIDI.includes(String(b.tsRuolo))) return { errore: 'Ruolo Timesheet non valido' };
+    tsRuolo = b.tsRuolo === null ? null : (String(b.tsRuolo) as 'TITOLARE' | 'COLLABORATORE');
+    if (tsRuolo && !moduli.TS) return { errore: 'Lo studio non ha Contify Timesheet: il ruolo Timesheet non si può assegnare' };
+  } else {
+    tsRuolo = base?.ts_ruolo ?? null;
+  }
+  let accessoAr: boolean;
+  if (b.accessoAr !== undefined) accessoAr = Boolean(b.accessoAr);
+  else if (base) accessoAr = base.accesso_ar !== 0;
+  else accessoAr = Boolean(moduli.AR);
+  if (amministratore) accessoAr = true;
+  const accedeAQualcosa = amministratore || (accessoAr && Boolean(moduli.AR)) || (tsRuolo !== null && Boolean(moduli.TS));
+  if (!accedeAQualcosa) {
+    return { errore: moduli.TS && moduli.AR
+      ? 'L’utente deve accedere ad almeno un modulo: Antiriciclaggio o Timesheet'
+      : moduli.TS ? 'Indica il ruolo Timesheet dell’utente' : 'L’utente deve accedere ad Antiriciclaggio' };
+  }
+  return { accessoAr, tsRuolo, ruolo: accessoAr ? ruoloRichiesto : 'COLLABORATORE' };
+}
+
+/** Clienti e fascicoli assegnati a un professionista: con questi non si può togliergli AR. */
+async function assegnazioniProfessionista(db: D1Database, tenantId: string, utenteId: string): Promise<number> {
+  const r = await db.prepare(
+    `SELECT (SELECT COUNT(*) FROM clienti WHERE tenant_id = ?1 AND professionista_id = ?2)
+          + (SELECT COUNT(*) FROM fascicoli WHERE tenant_id = ?1 AND professionista_id = ?2) AS n`,
+  ).bind(tenantId, utenteId).first<{ n: number }>();
+  return r?.n ?? 0;
+}
+
 /** Dati d'albo: compaiono nell'intestazione dei verbali del professionista. */
 function datiAlbo(b: any, base: any = {}) {
   const testo = (v: unknown, attuale: unknown) =>
@@ -527,7 +599,7 @@ function datiAlbo(b: any, base: any = {}) {
 api.get('/studio/professionisti', async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT id, nome, email, amministratore, codice_fiscale, ordine, numero_iscrizione, qualifica, attivo
-     FROM utenti WHERE tenant_id = ? AND ruolo = 'TITOLARE'
+     FROM utenti WHERE tenant_id = ? AND ruolo = 'TITOLARE' AND accesso_ar = 1
      ORDER BY attivo DESC, nome COLLATE NOCASE`,
   ).bind(c.get('tenantId')).all<any>();
   return c.json((results ?? []).map((u) => ({
@@ -546,13 +618,15 @@ api.get('/studio/professionisti', async (c) => {
 api.get('/utenti', soloAmministratore, async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT id, email, nome, ruolo, attivo, amministratore, cambio_password_richiesto, ultimo_accesso, creato_il,
-            codice_fiscale, ordine, numero_iscrizione, qualifica
+            codice_fiscale, ordine, numero_iscrizione, qualifica, accesso_ar, ts_ruolo
      FROM utenti WHERE tenant_id = ?
      ORDER BY attivo DESC, ruolo = 'TITOLARE' DESC, nome COLLATE NOCASE`,
   ).bind(c.get('tenantId')).all<any>();
   return c.json((results ?? []).map((u) => ({
     id: u.id, email: u.email, nome: u.nome, ruolo: u.ruolo,
     attivo: Boolean(u.attivo), amministratore: u.amministratore === 1,
+    // TS-M0: accessi per modulo.
+    accessoAr: u.accesso_ar !== 0, tsRuolo: u.ts_ruolo ?? null,
     cambioPasswordRichiesto: Boolean(u.cambio_password_richiesto),
     ultimoAccesso: u.ultimo_accesso, creatoIl: u.creato_il,
     codiceFiscale: u.codice_fiscale, ordine: u.ordine,
@@ -566,10 +640,18 @@ api.post('/utenti', soloAmministratore, async (c) => {
   const b = await c.req.json<any>().catch(() => ({}));
   const email = String(b.email ?? '').toLowerCase().trim();
   const nome = String(b.nome ?? '').trim();
-  const ruolo = String(b.ruolo ?? '');
+  const ruoloRichiesto = String(b.ruolo ?? '');
   if (!email.includes('@')) return c.json({ errore: 'Email non valida' }, 400);
   if (!nome) return c.json({ errore: 'Il nome è obbligatorio' }, 400);
-  if (!RUOLI_VALIDI.includes(ruolo)) return c.json({ errore: 'Ruolo non valido' }, 400);
+  if (!RUOLI_VALIDI.includes(ruoloRichiesto)) return c.json({ errore: 'Ruolo non valido' }, 400);
+
+  // Solo un professionista può amministrare: chi gestisce utenti e archivio
+  // deve poter rispondere di ciò che nell'archivio c'è.
+  const amministratore = Boolean(b.amministratore) && ruoloRichiesto === 'TITOLARE';
+  // TS-M0: accessi per modulo (senza AR il ruolo AR diventa COLLABORATORE).
+  const accessi = accessiModuli(b, null, c.get('moduli'), amministratore, ruoloRichiesto);
+  if ('errore' in accessi) return c.json({ errore: accessi.errore }, 400);
+  const ruolo = accessi.ruolo;
 
   const esiste = await c.env.DB.prepare('SELECT id FROM utenti WHERE email = ?').bind(email).first();
   if (esiste) return c.json({ errore: 'Esiste già un utente con questa email' }, 409);
@@ -580,23 +662,24 @@ api.post('/utenti', soloAmministratore, async (c) => {
     if (esauriti) return c.json({ errore: esauriti, postiEsauriti: true }, 409);
   }
 
-  // Solo un professionista può amministrare: chi gestisce utenti e archivio
-  // deve poter rispondere di ciò che nell'archivio c'è.
-  const amministratore = Boolean(b.amministratore) && ruolo === 'TITOLARE';
   const albo = datiAlbo(b);
 
   const passwordTemporanea = generaPasswordTemporanea();
   const id = nuovoId('usr');
   await c.env.DB.prepare(
     `INSERT INTO utenti (id, tenant_id, email, nome, password_hash, ruolo, cambio_password_richiesto,
-      amministratore, codice_fiscale, ordine, numero_iscrizione, qualifica)
-     VALUES (?,?,?,?,?,?,1,?,?,?,?,?)`,
+      amministratore, codice_fiscale, ordine, numero_iscrizione, qualifica, accesso_ar, ts_ruolo)
+     VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,?)`,
   ).bind(
     id, tenantId, email, nome, await hashPassword(passwordTemporanea), ruolo,
     amministratore ? 1 : 0, albo.codiceFiscale, albo.ordine, albo.numeroIscrizione, albo.qualifica,
+    accessi.accessoAr ? 1 : 0, accessi.tsRuolo,
   ).run();
 
-  await scriviAudit(c.env.DB, { tenantId, utenteId: autore.id, azione: 'CREA_UTENTE', entita: 'utenti', entitaId: id, dettaglio: { email, nome, ruolo, amministratore }, ip: c.get('ip') });
+  await scriviAudit(c.env.DB, {
+    tenantId, utenteId: autore.id, azione: 'CREA_UTENTE', entita: 'utenti', entitaId: id,
+    dettaglio: { email, nome, ruolo, amministratore, accessoAr: accessi.accessoAr, tsRuolo: accessi.tsRuolo }, ip: c.get('ip'),
+  });
 
   const studio = await c.env.DB.prepare('SELECT denominazione FROM tenants WHERE id = ?').bind(tenantId).first<any>();
   // Attesa inline: la risposta dice al titolare se la mail è partita davvero;
@@ -620,16 +703,33 @@ api.post('/utenti/:id', soloAmministratore, async (c) => {
   if (!target) return c.json({ errore: 'Utente non trovato' }, 404);
 
   const nuovoNome = b.nome !== undefined ? String(b.nome).trim() : target.nome;
-  const nuovoRuolo = b.ruolo !== undefined ? String(b.ruolo) : target.ruolo;
+  const ruoloRichiesto = b.ruolo !== undefined ? String(b.ruolo) : target.ruolo;
   const nuovoAttivo = b.attivo !== undefined ? Boolean(b.attivo) : Boolean(target.attivo);
   if (!nuovoNome) return c.json({ errore: 'Il nome è obbligatorio' }, 400);
-  if (!RUOLI_VALIDI.includes(nuovoRuolo)) return c.json({ errore: 'Ruolo non valido' }, 400);
+  if (!RUOLI_VALIDI.includes(ruoloRichiesto)) return c.json({ errore: 'Ruolo non valido' }, 400);
+
+  // TS-M0: accessi per modulo. Chi amministra tiene sempre AR; senza AR il
+  // ruolo AR diventa COLLABORATORE (e il controllo sull'ultimo professionista
+  // qui sotto vale anche per questo caso).
+  const eraAmministratore = target.amministratore === 1;
+  let nuovoAmministratore = b.amministratore !== undefined ? Boolean(b.amministratore) : eraAmministratore;
+  if (ruoloRichiesto !== 'TITOLARE' || !nuovoAttivo) nuovoAmministratore = false;
+  const accessi = accessiModuli(b, target, c.get('moduli'), nuovoAmministratore, ruoloRichiesto);
+  if ('errore' in accessi) return c.json({ errore: accessi.errore }, 400);
+  const nuovoRuolo = accessi.ruolo;
 
   // Lo studio non può restare senza un professionista attivo: le SOS
   // (art. 38) sarebbero inaccessibili a chiunque.
   const perdeTitolare = target.ruolo === 'TITOLARE' && (nuovoRuolo !== 'TITOLARE' || !nuovoAttivo);
   if (perdeTitolare && (await altriTitolariAttivi(c.env.DB, tenantId, target.id)) === 0) {
     return c.json({ errore: 'Lo studio deve avere sempre almeno un professionista attivo' }, 409);
+  }
+  // Un professionista con clienti o fascicoli assegnati non perde AR: prima vanno riassegnati.
+  if (target.accesso_ar !== 0 && !accessi.accessoAr && target.ruolo === 'TITOLARE') {
+    const n = await assegnazioniProfessionista(c.env.DB, tenantId, target.id);
+    if (n > 0) {
+      return c.json({ errore: `Non puoi togliere l’accesso ad Antiriciclaggio a un professionista con ${n} client${n === 1 ? 'e o fascicolo assegnato' : 'i o fascicoli assegnati'}: prima riassegnali a un altro professionista.`, codice: 'assegnazioni_presenti' }, 409);
+    }
   }
 
   // AR-M16: promuovere o riattivare un professionista occupa un posto del
@@ -643,8 +743,6 @@ api.post('/utenti/:id', soloAmministratore, async (c) => {
 
   // …né senza amministratore: nessuno potrebbe più gestire utenti, backup
   // e licenza, e non esiste un modo di rimediare da dentro il programma.
-  const eraAmministratore = target.amministratore === 1;
-  let nuovoAmministratore = b.amministratore !== undefined ? Boolean(b.amministratore) : eraAmministratore;
   if (nuovoRuolo !== 'TITOLARE' || !nuovoAttivo) nuovoAmministratore = false;
   if (eraAmministratore && !nuovoAmministratore && (await altriAmministratoriAttivi(c.env.DB, tenantId, target.id)) === 0) {
     return c.json({ errore: 'Lo studio deve avere sempre almeno un amministratore attivo' }, 409);
@@ -653,11 +751,12 @@ api.post('/utenti/:id', soloAmministratore, async (c) => {
   const albo = datiAlbo(b, target);
   await c.env.DB.prepare(
     `UPDATE utenti SET nome = ?, ruolo = ?, attivo = ?, amministratore = ?,
-       codice_fiscale = ?, ordine = ?, numero_iscrizione = ?, qualifica = ? WHERE id = ?`,
+       codice_fiscale = ?, ordine = ?, numero_iscrizione = ?, qualifica = ?, accesso_ar = ?, ts_ruolo = ? WHERE id = ?`,
   )
     .bind(
       nuovoNome, nuovoRuolo, nuovoAttivo ? 1 : 0, nuovoAmministratore ? 1 : 0,
-      albo.codiceFiscale, albo.ordine, albo.numeroIscrizione, albo.qualifica, id,
+      albo.codiceFiscale, albo.ordine, albo.numeroIscrizione, albo.qualifica,
+      accessi.accessoAr ? 1 : 0, accessi.tsRuolo, id,
     )
     .run();
   if (!nuovoAttivo) {
@@ -665,7 +764,7 @@ api.post('/utenti/:id', soloAmministratore, async (c) => {
   }
   await scriviAudit(c.env.DB, {
     tenantId, utenteId: autore.id, azione: 'MODIFICA_UTENTE', entita: 'utenti', entitaId: id,
-    dettaglio: { ruolo: nuovoRuolo, attivo: nuovoAttivo, amministratore: nuovoAmministratore }, ip: c.get('ip'),
+    dettaglio: { ruolo: nuovoRuolo, attivo: nuovoAttivo, amministratore: nuovoAmministratore, accessoAr: accessi.accessoAr, tsRuolo: accessi.tsRuolo }, ip: c.get('ip'),
   });
   return c.json({ ok: true });
 });
@@ -3512,7 +3611,8 @@ api.post('/fascicoli/:id/cessazione', puoScrivere, async (c) => {
 
 /** Persone dello studio (solo id e nome): servono al registro della formazione. */
 api.get('/studio/persone', async (c) => {
-  const { results } = await c.env.DB.prepare('SELECT id, nome, ruolo FROM utenti WHERE tenant_id = ? AND attivo = 1 ORDER BY nome COLLATE NOCASE').bind(c.get('tenantId')).all();
+  // TS-M0: chi usa solo Timesheet non è una persona di AR.
+  const { results } = await c.env.DB.prepare('SELECT id, nome, ruolo FROM utenti WHERE tenant_id = ? AND attivo = 1 AND accesso_ar = 1 ORDER BY nome COLLATE NOCASE').bind(c.get('tenantId')).all();
   return c.json(results ?? []);
 });
 
@@ -3622,14 +3722,14 @@ api.post('/coda/applica-tutto', puoScrivere, async (c) => c.json(await applicaTu
 // INTEGRITÀ DEL REGISTRO
 // ===========================================================================
 
-api.get('/audit', async (c) => {
+api.get('/audit', accessoArOAmministratore, async (c) => {
   const { results } = await c.env.DB.prepare(
     'SELECT a.id, a.azione, a.entita, a.entita_id, a.dettaglio, a.creato_il, u.nome AS utente FROM audit_log a LEFT JOIN utenti u ON u.id = a.utente_id WHERE a.tenant_id = ? ORDER BY a.id DESC LIMIT 300',
   ).bind(c.get('tenantId')).all();
   return c.json(results ?? []);
 });
 
-api.get('/audit/verifica', async (c) => c.json(await verificaCatenaAudit(c.env.DB, c.get('tenantId'))));
+api.get('/audit/verifica', accessoArOAmministratore, async (c) => c.json(await verificaCatenaAudit(c.env.DB, c.get('tenantId'))));
 
 /**
  * Export CSV del registro (AR-M5): l'intero registro del tenant, con le
@@ -3637,7 +3737,7 @@ api.get('/audit/verifica', async (c) => c.json(await verificaCatenaAudit(c.env.D
  * Separatore ';' e BOM UTF-8: si apre con doppio clic in Excel italiano.
  * Anche l'esportazione lascia traccia nel registro stesso.
  */
-api.get('/audit/export', async (c) => {
+api.get('/audit/export', accessoArOAmministratore, async (c) => {
   const tenantId = c.get('tenantId');
   const { results } = await c.env.DB.prepare(
     `SELECT a.id, a.creato_il, u.nome AS utente, u.email, a.azione, a.entita, a.entita_id,
@@ -3859,7 +3959,10 @@ api.post('/assistenza/:id/chiudi', async (c) => {
 api.get('/novita', async (c) => {
   const u = c.get('utente');
   const r = await c.env.DB.prepare('SELECT novita_vista AS vista FROM utenti WHERE id = ?').bind(u.id).first<any>();
-  return c.json({ novita: NOVITA, vista: r?.vista ?? null });
+  // TS-M0: le novità di un modulo si mostrano solo agli studi che lo hanno.
+  const moduli = c.get('moduli');
+  const novita = NOVITA.filter((n) => !n.modulo || moduli[n.modulo] !== null);
+  return c.json({ novita, vista: r?.vista ?? null });
 });
 
 api.post('/auth/novita', async (c) => {
@@ -4069,7 +4172,37 @@ consoleApp.get('/studi', async (c) => {
      FROM tenants t
      ORDER BY t.denominazione`,
   ).all<any>();
-  return c.json({ studi: results });
+  // TS-M0: i moduli di ogni studio (nessuna riga = AR per rete di sicurezza, la console lo vede come tale).
+  const moduli = await moduliDiTuttiGliStudi(c.env.DB);
+  return c.json({ studi: (results ?? []).map((s: any) => ({ ...s, moduli: moduli[s.id] ?? { AR: null, TS: null }, senzaRigheModuli: !moduli[s.id] })) });
+});
+
+// ── TS-M0: moduli dello studio (attiva, sospende, cessa un modulo) ──
+// Il comando sullo stato dello studio continua ad agire su tenants.stato,
+// cioè su tutto; qui si agisce sul SOLO modulo. Quando Timesheet diventa
+// attivo per la prima volta, i ruoli Timesheet si copiano dal ruolo AR.
+consoleApp.post('/studi/:id/moduli/:modulo', async (c) => {
+  const o = c.get('operatore');
+  const t = await c.env.DB.prepare('SELECT id, denominazione FROM tenants WHERE id = ?').bind(c.req.param('id')).first<any>();
+  if (!t) return c.json({ errore: 'Studio non trovato' }, 404);
+  const modulo = c.req.param('modulo');
+  if (!moduloValido(modulo)) return c.json({ errore: `Modulo sconosciuto: i moduli sono ${MODULI.join(' e ')}` }, 400);
+  const b = await c.req.json<any>().catch(() => ({}));
+  const dati = datiModuloDaCorpo(b);
+  if ('errore' in dati) return c.json({ errore: dati.errore }, 400);
+
+  const esito = await scriviModulo(c.env.DB, t.id, modulo, dati);
+  let ruoliCopiati = 0;
+  if (modulo === 'TS' && esito.dopo.stato === 'attivo' && (esito.creato || esito.prima?.stato !== 'attivo')) {
+    ruoliCopiati = await copiaRuoliTimesheet(c.env.DB, t.id);
+  }
+  const azione = esito.creato ? 'MODULO_ATTIVATO' : 'MODULO_AGGIORNATO';
+  await scriviAudit(c.env.DB, {
+    tenantId: t.id, utenteId: null, azione, entita: 'moduli_tenant', entitaId: `${t.id}:${modulo}`,
+    dettaglio: { operatore: o.email, modulo, prima: esito.prima, dopo: esito.dopo, ruoliCopiati },
+  });
+  await scriviEventoConsole(c.env.DB, { operatore: o.email, azione, tenantId: t.id, dettaglio: { modulo, prima: esito.prima, dopo: esito.dopo, ruoliCopiati } });
+  return c.json({ ok: true, creato: esito.creato, modulo: esito.dopo, ruoliCopiati });
 });
 
 consoleApp.post('/studi/:id/contratto', async (c) => {
@@ -4199,6 +4332,15 @@ consoleApp.post('/studi', async (c) => {
     }
     posti = n;
   }
+  // TS-M0: i moduli acquistati. Predefinito ['AR'], così le chiamate esistenti
+  // non cambiano. Il contratto su `tenants` è quello di AR: per uno studio con
+  // solo Timesheet quei campi restano vuoti e le date stanno sulla riga TS.
+  const moduli = b.moduli === undefined ? ['AR'] : (Array.isArray(b.moduli) ? b.moduli.map(String) : null);
+  if (!moduli || moduli.length === 0 || moduli.some((m: string) => !moduloValido(m)) || new Set(moduli).size !== moduli.length) {
+    return c.json({ errore: `Indica i moduli dello studio: uno o più fra ${MODULI.join(' e ')}` }, 400);
+  }
+  const conAr = moduli.includes('AR');
+  const conTs = moduli.includes('TS');
 
   // L'email è unica in tutta la piattaforma (idx_utenti_email): un
   // professionista non può stare in due studi con lo stesso indirizzo.
@@ -4222,19 +4364,27 @@ consoleApp.post('/studi', async (c) => {
        VALUES (?, ?, ?, ?, ?, 'BASE', ?, ?, 'attivo', ?, ?, ?, ?)`,
     ).bind(
       tenantId, anagrafica.denominazione, anagrafica.codiceFiscale, anagrafica.partitaIva, anagrafica.ordineIscrizione,
-      CNDCEC_2025.id, JSON.stringify(parametri), attivazione, scadenza, note, posti,
+      CNDCEC_2025.id, JSON.stringify(parametri), attivazione, conAr ? scadenza : null, conAr ? note : null, conAr ? posti : null,
     ),
     c.env.DB.prepare(
       `INSERT INTO utenti (id, tenant_id, email, nome, password_hash, ruolo, cambio_password_richiesto,
-         amministratore, codice_fiscale, ordine, numero_iscrizione, qualifica)
-       VALUES (?, ?, ?, ?, ?, 'TITOLARE', 1, 1, ?, ?, ?, ?)`,
-    ).bind(utenteId, tenantId, email, nome, await hashPassword(passwordTemporanea), albo.codiceFiscale, albo.ordine, albo.numeroIscrizione, albo.qualifica),
+         amministratore, codice_fiscale, ordine, numero_iscrizione, qualifica, accesso_ar, ts_ruolo)
+       VALUES (?, ?, ?, ?, ?, 'TITOLARE', 1, 1, ?, ?, ?, ?, 1, ?)`,
+    ).bind(utenteId, tenantId, email, nome, await hashPassword(passwordTemporanea), albo.codiceFiscale, albo.ordine, albo.numeroIscrizione, albo.qualifica, conTs ? 'TITOLARE' : null),
+    // TS-M0: una riga per modulo acquistato. Con AR il contratto sta su tenants
+    // (e la riga AR porta solo la data); senza AR le date vanno sulla riga TS.
+    ...(conAr ? [c.env.DB.prepare(
+      `INSERT INTO moduli_tenant (tenant_id, modulo, stato, data_attivazione) VALUES (?, 'AR', 'attivo', ?)`,
+    ).bind(tenantId, attivazione)] : []),
+    ...(conTs ? [c.env.DB.prepare(
+      `INSERT INTO moduli_tenant (tenant_id, modulo, stato, data_attivazione, data_scadenza_canone, posti_inclusi, note_contratto) VALUES (?, 'TS', 'attivo', ?, ?, ?, ?)`,
+    ).bind(tenantId, attivazione, conAr ? null : scadenza, conAr ? null : posti, conAr ? null : note)] : []),
   ]);
 
   // Prima voce del registro dello studio: chi lo ha attivato e con quale contratto.
   await scriviAudit(c.env.DB, {
     tenantId, utenteId: null, azione: 'STUDIO_ATTIVATO', entita: 'tenants', entitaId: tenantId,
-    dettaglio: { operatore: o.email, denominazione: anagrafica.denominazione, dataAttivazione: attivazione, dataScadenzaCanone: scadenza, professionistiInclusi: posti },
+    dettaglio: { operatore: o.email, denominazione: anagrafica.denominazione, dataAttivazione: attivazione, dataScadenzaCanone: scadenza, professionistiInclusi: posti, moduli },
   });
   await scriviAudit(c.env.DB, {
     tenantId, utenteId: null, azione: 'CREA_UTENTE', entita: 'utenti', entitaId: utenteId,
@@ -4245,21 +4395,64 @@ consoleApp.post('/studi', async (c) => {
     destinatario: email, nome, passwordTemporanea, studio: denominazione,
   }).catch(() => false);
 
-  return c.json({ id: tenantId, utenteId, passwordTemporanea, emailInviata }, 201);
+  return c.json({ id: tenantId, utenteId, passwordTemporanea, emailInviata, moduli }, 201);
 });
+
+/** Corpo di POST /studi/:id/moduli/:modulo → dati della riga, con gli stessi controlli del contratto. */
+function datiModuloDaCorpo(b: any): { stato?: 'attivo' | 'sospeso' | 'cessato'; dataAttivazione?: string | null; dataScadenzaCanone?: string | null; postiInclusi?: number | null; noteContratto?: string | null } | { errore: string } {
+  const out: any = {};
+  if (b.stato !== undefined) {
+    if (!['attivo', 'sospeso', 'cessato'].includes(String(b.stato))) return { errore: 'Stato non valido' };
+    out.stato = String(b.stato);
+  }
+  const data = (v: unknown) => {
+    if (v === null || v === '') return null;
+    const s = String(v).slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : undefined;
+  };
+  for (const k of ['dataAttivazione', 'dataScadenzaCanone'] as const) {
+    if (b[k] === undefined) continue;
+    const d = data(b[k]);
+    if (d === undefined) return { errore: 'Le date vanno indicate come AAAA-MM-GG' };
+    out[k] = d;
+  }
+  if (b.postiInclusi !== undefined) {
+    if (b.postiInclusi === null || b.postiInclusi === '') out.postiInclusi = null;
+    else {
+      const n = Number(b.postiInclusi);
+      if (!Number.isInteger(n) || n < 1 || n > 999) return { errore: 'I posti inclusi vanno indicati come numero intero da 1 a 999, o lasciati vuoti' };
+      out.postiInclusi = n;
+    }
+  }
+  if (b.noteContratto !== undefined) out.noteContratto = b.noteContratto === null ? null : (String(b.noteContratto).trim().slice(0, 2000) || null);
+  return out;
+}
 
 consoleApp.get('/studi/:id', async (c) => {
   const t = await c.env.DB.prepare(
     `SELECT id, denominazione, codice_fiscale AS codiceFiscale, partita_iva AS partitaIva,
-            ordine_iscrizione AS ordineIscrizione, stato, creato_il AS creatoIl
+            ordine_iscrizione AS ordineIscrizione, stato, creato_il AS creatoIl,
+            data_attivazione AS dataAttivazione, data_scadenza_canone AS dataScadenzaCanone,
+            note_contratto AS noteContratto, professionisti_inclusi AS professionistiInclusi
      FROM tenants WHERE id = ?`,
   ).bind(c.req.param('id')).first<any>();
   if (!t) return c.json({ errore: 'Studio non trovato' }, 404);
   const { results: utenti } = await c.env.DB.prepare(
-    `SELECT id, email, nome, ruolo, amministratore, attivo, ultimo_accesso AS ultimoAccesso
+    `SELECT id, email, nome, ruolo, amministratore, attivo, ultimo_accesso AS ultimoAccesso, accesso_ar, ts_ruolo
      FROM utenti WHERE tenant_id = ? ORDER BY ruolo = 'TITOLARE' DESC, nome`,
   ).bind(t.id).all<any>();
-  return c.json({ studio: t, utenti: utenti.map((u: any) => ({ ...u, amministratore: !!u.amministratore, attivo: !!u.attivo })) });
+  const moduli = await moduliDettaglio(c.env.DB, t.id);
+  return c.json({
+    studio: t,
+    // TS-M0: righe dei moduli così come sono in archivio (nessuna riga = AR attivo per il programma).
+    moduli,
+    senzaRigheModuli: !moduli.AR && !moduli.TS,
+    utenti: utenti.map((u: any) => ({
+      id: u.id, email: u.email, nome: u.nome, ruolo: u.ruolo, ultimoAccesso: u.ultimoAccesso,
+      amministratore: !!u.amministratore, attivo: !!u.attivo,
+      accessoAr: u.accesso_ar !== 0, tsRuolo: u.ts_ruolo ?? null,
+    })),
+  });
 });
 
 // ── AR-M21 CON-01: cancellazione di uno studio creato per errore ─────
@@ -4383,6 +4576,10 @@ consoleApp.post('/studi/:id/anagrafica', async (c) => {
 });
 
 api.route('/console', consoleApp);
+
+// TS-M0: Contify Timesheet, dentro la stessa catena di autenticazione e di
+// controllo dei moduli (le rotte /api/ts/* sono di classe TS in lib/moduli.ts).
+api.route('/ts', tsApp);
 
 // ===========================================================================
 // VERBALI STAMPABILI (.docx) — ciò che lo studio esibisce all'ispezione.
@@ -4563,6 +4760,15 @@ api.get('/fascicoli/:id/fascicolo-ispezione', async (c) => {
 
 app.route('/api', api);
 
+/**
+ * TS-M0: le rotte registrate, per la prova di copertura in
+ * `tests/moduli.test.ts` (ogni rotta autenticata deve stare in esattamente
+ * uno dei tre elenchi di `lib/moduli.ts`). Non si usa a tempo di esecuzione.
+ */
+export function rotteRegistrate(): Array<{ method: string; path: string }> {
+  return app.routes.map((r) => ({ method: r.method, path: r.path }));
+}
+
 // SPA: tutto il resto va agli asset statici.
 //
 // La Response restituita dal binding ASSETS ha headers immutabili: passandola
@@ -4608,6 +4814,13 @@ async function lavoroNotturno(env: Env): Promise<void> {
     console.error('pulizia sessioni fallita:', e);
   }
   try {
+    // TS-M0: rete di sicurezza resa permanente — uno studio senza righe in
+    // moduli_tenant riceve la riga AR (vedi lib/moduli.ts).
+    await assicuraRigheModuli(env.DB);
+  } catch (e) {
+    console.error('righe dei moduli non sistemate:', e);
+  }
+  try {
     await avvisiCanone(env);
   } catch (e) {
     console.error('avvisi canone falliti:', e);
@@ -4628,8 +4841,10 @@ async function lavoroNotturno(env: Env): Promise<void> {
 
 /** Email del lunedì ai titolari: solo quando c'è davvero qualcosa da fare. */
 async function riepiloghiSettimanali(env: Env): Promise<void> {
+  // TS-M0: il riepilogo è di AR — solo gli studi con il modulo AR attivo,
+  // e solo agli utenti che vi accedono.
   const tenants = (
-    await env.DB.prepare("SELECT id, denominazione, stato FROM tenants WHERE stato IS NULL OR stato = 'attivo'").all<any>()
+    await env.DB.prepare(`SELECT t.id, t.denominazione, t.stato FROM tenants t WHERE (t.stato IS NULL OR t.stato = 'attivo') AND ${sqlConModuloArAttivo('t')}`).all<any>()
   ).results ?? [];
 
   for (const t of tenants) {
@@ -4650,7 +4865,7 @@ async function riepiloghiSettimanali(env: Env): Promise<void> {
       if (!daFare) continue;   // niente da fare, niente rumore
 
       const titolari = (
-        await env.DB.prepare("SELECT nome, email FROM utenti WHERE tenant_id = ? AND ruolo = 'TITOLARE' AND attivo = 1").bind(t.id).all<any>()
+        await env.DB.prepare("SELECT nome, email FROM utenti WHERE tenant_id = ? AND ruolo = 'TITOLARE' AND attivo = 1 AND accesso_ar = 1").bind(t.id).all<any>()
       ).results ?? [];
       for (const dest of titolari) {
         const inviata = await inviaEmailScadenzario(env, {

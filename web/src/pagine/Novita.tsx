@@ -14,6 +14,8 @@ interface VoceNovita {
   data: string;
   titolo: string;
   punti: string[];
+  /** TS-M0: modulo a cui parla la voce (il server manda solo quelle dei moduli dello studio). */
+  modulo?: 'AR' | 'TS';
 }
 
 function dataEstesa(iso: string): string {
@@ -62,6 +64,7 @@ export function Novita() {
                 <div className="flex flex-wrap items-center gap-2 mb-1.5">
                   <span className="text-xs font-semibold text-ink-400 uppercase tracking-wide">{dataEstesa(n.data)}</span>
                   {nuova && <Badge tone="teal">Nuovo</Badge>}
+                  {n.modulo && <Badge tone="gray">{n.modulo === 'TS' ? 'Timesheet' : 'Antiriciclaggio'}</Badge>}
                 </div>
                 <div className="font-bold text-ink-900 mb-2">{n.titolo}</div>
                 <ul className="list-disc pl-5 space-y-1.5">

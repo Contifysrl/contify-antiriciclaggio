@@ -1,6 +1,7 @@
 import { ReactNode, useEffect, useMemo, useState } from 'react';
 import { Icona, type NomeIcona } from '../components/icone';
 import { PiedeLegale } from '../componenti';
+import { accedeAdAr, accedeATs } from '../lib/moduli';
 import type { SessioneApp } from './Accessi';
 
 // ── Guida in-app (AR-M5) ───────────────────────────────────────
@@ -55,11 +56,12 @@ function H({ children }: { children: ReactNode }) {
   return <h4 className="font-bold text-ink-800 mt-5 mb-1">{children}</h4>;
 }
 
-type Sezione = { id: string; titolo: string; icona: NomeIcona; soloTitolare?: boolean; soloAmministratore?: boolean; corpo: ReactNode };
+type Sezione = { id: string; titolo: string; icona: NomeIcona; soloTitolare?: boolean; soloAmministratore?: boolean; modulo?: 'AR' | 'TS'; corpo: ReactNode };
 
 const SEZIONI: Sezione[] = [
   {
     id: 'introduzione',
+    modulo: 'AR',
     titolo: 'Introduzione',
     icona: 'utente',
     corpo: (
@@ -94,6 +96,7 @@ const SEZIONI: Sezione[] = [
   },
   {
     id: 'cruscotto',
+    modulo: 'AR',
     titolo: 'Cruscotto',
     icona: 'dashboard',
     corpo: (
@@ -113,6 +116,7 @@ const SEZIONI: Sezione[] = [
   },
   {
     id: 'completezza',
+    modulo: 'AR',
     titolo: 'Da completare',
     icona: 'spunta',
     corpo: (
@@ -157,6 +161,7 @@ const SEZIONI: Sezione[] = [
   },
   {
     id: 'coda',
+    modulo: 'AR',
     titolo: 'Coda di revisione',
     icona: 'carica',
     corpo: (
@@ -194,6 +199,7 @@ const SEZIONI: Sezione[] = [
   },
   {
     id: 'autovalutazione',
+    modulo: 'AR',
     titolo: 'Autovalutazione studio',
     icona: 'grafico',
     corpo: (
@@ -226,6 +232,7 @@ const SEZIONI: Sezione[] = [
   },
   {
     id: 'clienti',
+    modulo: 'AR',
     titolo: 'Clienti',
     icona: 'edificio',
     corpo: (
@@ -312,6 +319,7 @@ const SEZIONI: Sezione[] = [
   },
   {
     id: 'fascicoli',
+    modulo: 'AR',
     titolo: 'Fascicoli e adeguata verifica',
     icona: 'elenco',
     corpo: (
@@ -449,6 +457,7 @@ const SEZIONI: Sezione[] = [
   },
   {
     id: 'scadenzario',
+    modulo: 'AR',
     titolo: 'Scadenzario',
     icona: 'orologio',
     corpo: (
@@ -492,6 +501,7 @@ const SEZIONI: Sezione[] = [
   },
   {
     id: 'contante',
+    modulo: 'AR',
     titolo: 'Limiti al contante',
     icona: 'mano',
     corpo: (
@@ -519,6 +529,7 @@ const SEZIONI: Sezione[] = [
   },
   {
     id: 'controlli',
+    modulo: 'AR',
     titolo: 'Controlli automatici',
     icona: 'cerca',
     corpo: (
@@ -551,6 +562,7 @@ const SEZIONI: Sezione[] = [
   },
   {
     id: 'sos',
+    modulo: 'AR',
     titolo: 'Segnalazioni (SOS)',
     icona: 'avviso',
     soloTitolare: true,
@@ -578,6 +590,7 @@ const SEZIONI: Sezione[] = [
   },
   {
     id: 'normativa',
+    modulo: 'AR',
     titolo: 'Normativa',
     icona: 'libro',
     corpo: (
@@ -598,6 +611,7 @@ const SEZIONI: Sezione[] = [
   },
   {
     id: 'ai',
+    modulo: 'AR',
     titolo: 'Assistente AI',
     icona: 'chat',
     corpo: (
@@ -647,6 +661,7 @@ const SEZIONI: Sezione[] = [
   },
   {
     id: 'verbali',
+    modulo: 'AR',
     titolo: 'Verbali stampabili',
     icona: 'scarica',
     corpo: (
@@ -689,6 +704,47 @@ const SEZIONI: Sezione[] = [
           Il registro è <K>append-only</K> a livello di database: nemmeno un ripristino da
           backup lo riscrive — vi aggiunge la voce che racconta il ripristino.
         </Nota>
+      </>
+    ),
+  },
+  {
+    id: 'moduli',
+    titolo: 'Moduli e accessi',
+    icona: 'ingranaggio',
+    corpo: (
+      <>
+        <P>
+          Contify AR e <K>Contify Timesheet</K> sono due moduli dello stesso programma: stesso archivio, stesso
+          accesso. Uno studio può avere solo Antiriciclaggio, solo Timesheet o entrambi, anche in momenti
+          diversi; i moduli li attiva Contify. Se lo studio ha un solo modulo, l'interfaccia è quella di sempre.
+        </P>
+        <P>
+          Chi ha <K>entrambi i moduli</K> trova in cima alla barra laterale il selettore{' '}
+          <Btn>Antiriciclaggio</Btn> <Btn>Timesheet</Btn>: il menu mostra le voci del modulo scelto più le
+          voci comuni — Impostazioni, Backup, Attività, Novità, Guida, Assistenza. La scelta viene ricordata
+          sul dispositivo e il nome in alto a sinistra segue il modulo.
+        </P>
+        <H>Chi accede a cosa</H>
+        <Punti punti={[
+          <><K>Antiriciclaggio</K>: ogni utente ha il suo ruolo AR (professionista, collaboratore, lettore, revisore) e, negli studi con entrambi i moduli, un interruttore «Accede ad Antiriciclaggio». Senza quell'accesso il ruolo AR non conta e la persona non occupa un posto professionista.</>,
+          <><K>Timesheet</K>: ogni utente ha un ruolo Timesheet — <K>titolare</K> (vede e corregge il lavoro di tutto lo studio, cruscotti, configurazioni, proforma) o <K>collaboratore</K> (registra il proprio lavoro e vede solo il proprio riepilogo) — oppure nessuno. È separato dal ruolo AR: chi guarda le ore può non essere un professionista.</>,
+          <>Chi <K>amministra lo studio</K> accede sempre a tutti i moduli dello studio.</>,
+          <>Ogni utente deve accedere ad almeno un modulo. A un professionista con clienti o fascicoli assegnati non si può togliere Antiriciclaggio prima di riassegnarli.</>,
+        ]} />
+        <P>
+          Gli accessi si decidono in <K>Impostazioni → Utenti dello studio</K>, da chi amministra: le colonne
+          «Antiriciclaggio» e «Timesheet» compaiono solo quando servono. Quando Contify attiva Timesheet in uno
+          studio che ha già Antiriciclaggio, i ruoli Timesheet vengono assegnati una volta dal ruolo AR
+          (professionista → titolare, collaboratore → collaboratore); poi lo studio li cambia quando vuole.
+        </P>
+        <Nota>
+          Il registro <K>Attività</K> contiene gli eventi antiriciclaggio con i nomi dei clienti: lo vede chi
+          accede ad Antiriciclaggio o chi amministra lo studio.
+        </Nota>
+        <P>
+          Se un modulo è <K>sospeso</K> è in sola lettura; se è <K>cessato</K> è chiuso, ma l'altro modulo e
+          le voci comuni continuano a funzionare. Lo stato dello studio intero, invece, vale su tutto.
+        </P>
       </>
     ),
   },
@@ -824,11 +880,16 @@ function testoSezione(node: ReactNode): string {
 export function Guida({ sessione, sezione }: { sessione: SessioneApp; sezione: string | null }) {
   const [ricerca, setRicerca] = useState('');
 
+  // TS-M0: le sezioni di un modulo si vedono solo se lo studio lo ha e l'utente vi accede.
+  const moduli = sessione.studio.moduli ?? { AR: 'attivo', TS: null };
+  const vedeAr = !!moduli.AR && accedeAdAr(sessione);
+  const vedeTs = !!moduli.TS && accedeATs(sessione);
   const sezioni = useMemo(
     () => SEZIONI.filter((s) =>
+      (!s.modulo || (s.modulo === 'AR' ? vedeAr : vedeTs)) &&
       (!s.soloTitolare || sessione.utente.ruolo === 'TITOLARE') &&
       (!s.soloAmministratore || sessione.utente.amministratore === true)),
-    [sessione.utente.ruolo],
+    [sessione.utente.ruolo, sessione.utente.amministratore, vedeAr, vedeTs],
   );
 
   const visibili = useMemo(() => {
@@ -853,7 +914,7 @@ export function Guida({ sessione, sezione }: { sessione: SessioneApp; sezione: s
     <>
       <h1>Guida</h1>
       <p className="occhiello">
-        Come usare Contify AR, sezione per sezione, con i riferimenti normativi. Per parlare
+        Come usare {vedeAr && vedeTs ? 'Contify AR e Contify Timesheet' : vedeTs ? 'Contify Timesheet' : 'Contify AR'}, sezione per sezione{vedeAr ? ', con i riferimenti normativi' : ''}. Per parlare
         con Contify c'è la pagina <a href="#assistenza">Assistenza</a>.
       </p>
 

@@ -5,6 +5,7 @@ import { Icona } from '../components/icone';
 import { ridimensionaAvatar, ridimensionaLogo } from '../lib/avatar';
 import { MODI, TEMI, aspettoLocale, impostaAspetto, modoValido, temaValido } from '../lib/tema';
 import { PiedeLegale } from '../componenti';
+import { accedeAdAr } from '../lib/moduli';
 import type { SessioneApp } from './Accessi';
 
 // ── Impostazioni (AR-M3) ───────────────────────────────────────
@@ -28,6 +29,24 @@ const DESCRIZIONE_RUOLO: Record<string, string> = {
   REVISORE: 'Funzione di revisione indipendente ex art. 16 co. 2 lett. b).',
 };
 
+// TS-M0: ruolo nel modulo Timesheet, separato dal ruolo AR.
+const ETICHETTA_TS: Record<string, string> = {
+  '': 'Nessuno',
+  COLLABORATORE: 'Collaboratore',
+  TITOLARE: 'Titolare',
+};
+const DESCRIZIONE_TS: Record<string, string> = {
+  '': 'Non accede a Timesheet.',
+  COLLABORATORE: 'Registra il proprio lavoro e vede il proprio riepilogo: niente importi, tariffe o confronti.',
+  TITOLARE: 'Vede e corregge il lavoro di tutto lo studio, i cruscotti, le configurazioni e i proforma.',
+};
+
+/** I moduli dello studio, dalla sessione (senza il campo vale «solo AR», come prima di TS-M0). */
+function moduliDelloStudio(s: SessioneApp): { haAr: boolean; haTs: boolean } {
+  const m = s.studio.moduli ?? { AR: 'attivo', TS: null };
+  return { haAr: !!m.AR, haTs: !!m.TS };
+}
+
 interface UtenteRiga {
   id: string;
   email: string;
@@ -35,6 +54,9 @@ interface UtenteRiga {
   ruolo: string;
   attivo: boolean;
   amministratore: boolean;
+  /** TS-M0: accessi per modulo. */
+  accessoAr?: boolean;
+  tsRuolo?: 'TITOLARE' | 'COLLABORATORE' | null;
   cambioPasswordRichiesto: boolean;
   ultimoAccesso: string | null;
   codiceFiscale?: string | null;
@@ -88,17 +110,21 @@ export function Impostazioni({ sessione, onSessioneAggiornata }: {
 }) {
   // AR-M15: amministrare lo studio non è più un attributo del ruolo.
   const amministratore = sessione.utente.amministratore === true;
+  // TS-M0: le sezioni antiriciclaggio (assistente AI di AR, province) solo a
+  // chi accede ad AR in uno studio che lo ha; le loro rotte sono di AR.
+  const { haAr, haTs } = moduliDelloStudio(sessione);
+  const sezioniAr = haAr && accedeAdAr(sessione);
   return (
     <>
       <h1>Impostazioni <HelpLink sezione="impostazioni" /></h1>
       <p className="occhiello">
         Aspetto, password e dispositivi collegati; per chi amministra lo studio anche utenti, logo,
-        assistente AI e zona di sicurezza.
+        {sezioniAr ? ' assistente AI' : ''} e zona di sicurezza.
       </p>
       {amministratore && <LogoStudio sessione={sessione} onSessioneAggiornata={onSessioneAggiornata} />}
-      {amministratore && <GestioneUtenti ioId={sessione.utente.id} postiProfessionista={sessione.studio.professionistiInclusi ?? null} />}
-      {amministratore && <AssistenteAi />}
-      {amministratore && <ProvinceContante />}
+      {amministratore && <GestioneUtenti ioId={sessione.utente.id} postiProfessionista={sessione.studio.professionistiInclusi ?? null} haAr={haAr} haTs={haTs} />}
+      {amministratore && sezioniAr && <AssistenteAi />}
+      {amministratore && sezioniAr && <ProvinceContante />}
       <CambiaPassword />
       <AccessiDispositivi />
       <div className="grid gap-4 lg:grid-cols-3 my-4">
@@ -509,7 +535,7 @@ function ZonaSicurezza() {
 }
 
 // ── Gestione utenti (solo titolare) ────────────────────────────
-function GestioneUtenti({ ioId, postiProfessionista }: { ioId: string; postiProfessionista: number | null }) {
+function GestioneUtenti({ ioId, postiProfessionista, haAr, haTs }: { ioId: string; postiProfessionista: number | null; haAr: boolean; haTs: boolean }) {
   const [utenti, setUtenti] = useState<UtenteRiga[]>([]);
   const [errore, setErrore] = useState('');
   const [nuovo, setNuovo] = useState(false);
@@ -528,10 +554,13 @@ function GestioneUtenti({ ioId, postiProfessionista }: { ioId: string; postiProf
         </button>
       </div>
       <div className="aiuto">
-        Il professionista identifica i clienti, firma e accede alle segnalazioni; collaboratore, lettore e
+        {haAr && <>Il professionista identifica i clienti, firma e accede alle segnalazioni; collaboratore, lettore e
         revisore hanno accessi ridotti. In uno studio associato i professionisti sono più d’uno: ciascuno
-        segue i propri clienti. L’amministratore è chi gestisce utenti, licenza, backup e archivio — non
-        serve che lo siano tutti. Lo studio deve avere sempre almeno un professionista e un amministratore attivi.
+        segue i propri clienti. </>}
+        L’amministratore è chi gestisce utenti, licenza, backup e archivio — non
+        serve che lo siano tutti, e accede sempre a tutti i moduli dello studio. Lo studio deve avere sempre almeno un professionista e un amministratore attivi.
+        {haTs && <> Il ruolo <strong>Timesheet</strong> (titolare o collaboratore) decide chi registra le ore e chi vede i cruscotti
+        {haAr ? '; «Antiriciclaggio» dice chi accede al modulo antiriciclaggio' : ''}.</>}
       </div>
       {/* AR-M16: i posti professionista sono quelli del contratto. Il numero
           va detto PRIMA che l'amministratore compili il modulo e riceva un
@@ -549,14 +578,27 @@ function GestioneUtenti({ ioId, postiProfessionista }: { ioId: string; postiProf
       {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
       <table>
         <thead>
-          <tr><th>Nome</th><th>Email</th><th>Ruolo</th><th>Studio</th><th>Stato</th><th>Ultimo accesso</th><th /></tr>
+          <tr>
+            <th>Nome</th><th>Email</th>
+            {haAr && <th>Ruolo</th>}
+            {/* TS-M0: colonne visibili solo se servono. */}
+            {haAr && haTs && <th>Antiriciclaggio</th>}
+            {haTs && <th>Timesheet</th>}
+            <th>Studio</th><th>Stato</th><th>Ultimo accesso</th><th />
+          </tr>
         </thead>
         <tbody>
           {utenti.map((u) => (
-            <tr key={u.id}>
+            <tr key={u.id} data-test={`utente-${u.email}`}>
               <td className="font-semibold">{u.nome}{u.id === ioId && <span className="text-ink-400 font-normal"> (tu)</span>}</td>
               <td>{u.email}</td>
-              <td><Badge tone={u.ruolo === 'TITOLARE' ? 'teal' : 'gray'}>{ETICHETTA_RUOLO[u.ruolo] ?? u.ruolo}</Badge></td>
+              {haAr && <td><Badge tone={u.ruolo === 'TITOLARE' ? 'teal' : 'gray'}>{ETICHETTA_RUOLO[u.ruolo] ?? u.ruolo}</Badge></td>}
+              {haAr && haTs && (
+                <td data-test="accesso-ar">{u.amministratore || u.accessoAr !== false ? <Badge tone="teal">sì</Badge> : <span className="text-ink-400">no</span>}</td>
+              )}
+              {haTs && (
+                <td data-test="ruolo-ts">{u.tsRuolo ? <Badge tone={u.tsRuolo === 'TITOLARE' ? 'teal' : 'gray'}>{ETICHETTA_TS[u.tsRuolo]}</Badge> : u.amministratore ? <Badge tone="teal">Titolare</Badge> : <span className="text-ink-400">—</span>}</td>
+              )}
               <td>{u.amministratore ? <Badge tone="amber">amministratore</Badge> : <span className="text-ink-400">—</span>}</td>
               <td>
                 {u.attivo
@@ -576,12 +618,16 @@ function GestioneUtenti({ ioId, postiProfessionista }: { ioId: string; postiProf
 
       {nuovo && (
         <NuovoUtente
+          haAr={haAr}
+          haTs={haTs}
           onChiudi={() => setNuovo(false)}
           onCreato={(cred) => { setNuovo(false); setCredenziali(cred); carica(); }}
         />
       )}
       {modifica && (
         <ModificaUtente
+          haAr={haAr}
+          haTs={haTs}
           utente={modifica}
           io={modifica.id === ioId}
           onChiudi={() => setModifica(null)}
@@ -849,7 +895,41 @@ function ProvinceContante() {
   );
 }
 
-function NuovoUtente({ onChiudi, onCreato }: {
+/**
+ * TS-M0: accessi per modulo nel modulo di creazione/modifica. «Accede ad
+ * Antiriciclaggio» compare solo con entrambi i moduli (altrimenti è implicito);
+ * il ruolo Timesheet solo se lo studio ha Timesheet. Chi amministra accede a
+ * tutto. Senza AR il ruolo AR è di comodo (il server lo mette a Collaboratore).
+ */
+function CampiModuli({ haAr, haTs, amministratore, accessoAr, tsRuolo, onAccessoAr, onTsRuolo }: {
+  haAr: boolean; haTs: boolean; amministratore: boolean;
+  accessoAr: boolean; tsRuolo: string;
+  onAccessoAr: (v: boolean) => void; onTsRuolo: (v: string) => void;
+}) {
+  if (!haTs) return null;
+  return (
+    <div className="rounded-lg border border-ink-100 bg-ink-50 px-3 py-2.5 space-y-2">
+      <div className="text-xs font-semibold text-ink-500 uppercase tracking-wide">Moduli</div>
+      {haAr && (
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input type="checkbox" className="!w-4" checked={amministratore || accessoAr} disabled={amministratore} onChange={(e) => onAccessoAr(e.target.checked)} data-test="campo-accesso-ar" />
+          <span className="text-sm">Accede ad Antiriciclaggio{amministratore && <span className="text-ink-400"> (chi amministra accede sempre)</span>}</span>
+        </label>
+      )}
+      <div>
+        <label className="label">Ruolo Timesheet</label>
+        <select className="input" value={tsRuolo} onChange={(e) => onTsRuolo(e.target.value)} data-test="campo-ruolo-ts">
+          {Object.entries(ETICHETTA_TS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        <div className="aiuto mt-1">{amministratore && !tsRuolo ? 'Chi amministra lo studio accede comunque a Timesheet come titolare.' : DESCRIZIONE_TS[tsRuolo]}</div>
+      </div>
+    </div>
+  );
+}
+
+function NuovoUtente({ haAr, haTs, onChiudi, onCreato }: {
+  haAr: boolean;
+  haTs: boolean;
   onChiudi: () => void;
   onCreato: (cred: { email: string; password: string; emailInviata: boolean }) => void;
 }) {
@@ -857,17 +937,23 @@ function NuovoUtente({ onChiudi, onCreato }: {
   const [email, setEmail] = useState('');
   const [ruolo, setRuolo] = useState('COLLABORATORE');
   const [amministratore, setAmministratore] = useState(false);
+  const [accessoAr, setAccessoAr] = useState(true);
+  const [tsRuolo, setTsRuolo] = useState(haAr ? '' : 'COLLABORATORE');
   const [albo, setAlbo] = useState({ qualifica: '', ordine: '', numeroIscrizione: '', codiceFiscale: '' });
   const [errore, setErrore] = useState('');
   const [invio, setInvio] = useState(false);
+  const conAr = haAr && (amministratore || accessoAr);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setErrore('');
     setInvio(true);
     try {
+      // Senza AR il ruolo AR è di comodo: TITOLARE solo per chi amministra (regola del server).
+      const ruoloInviato = haAr ? ruolo : (amministratore ? 'TITOLARE' : 'COLLABORATORE');
       const r = await api.post<{ passwordTemporanea: string; emailInviata: boolean }>('/utenti', {
-        nome, email, ruolo, amministratore: ruolo === 'TITOLARE' && amministratore, ...albo,
+        nome, email, ruolo: ruoloInviato, amministratore: ruoloInviato === 'TITOLARE' && amministratore, ...albo,
+        ...(haTs ? { accessoAr: conAr, tsRuolo: tsRuolo || null } : {}),
       });
       onCreato({ email: email.toLowerCase().trim(), password: r.passwordTemporanea, emailInviata: r.emailInviata });
     } catch (err) {
@@ -887,22 +973,25 @@ function NuovoUtente({ onChiudi, onCreato }: {
           <label className="label">Email (sarà il nome utente)</label>
           <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
         </div>
-        <div>
-          <label className="label">Ruolo</label>
-          <select className="input" value={ruolo} onChange={(e) => setRuolo(e.target.value)}>
-            {Object.entries(ETICHETTA_RUOLO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-          <div className="aiuto mt-1">{DESCRIZIONE_RUOLO[ruolo]}</div>
-        </div>
-        {ruolo === 'TITOLARE' && (
+        {haAr && (
+          <div>
+            <label className="label">Ruolo{haTs ? ' Antiriciclaggio' : ''}</label>
+            <select className="input" value={conAr ? ruolo : 'COLLABORATORE'} disabled={!conAr} onChange={(e) => setRuolo(e.target.value)}>
+              {Object.entries(ETICHETTA_RUOLO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+            <div className="aiuto mt-1">{conAr ? DESCRIZIONE_RUOLO[ruolo] : 'Senza accesso ad Antiriciclaggio il ruolo non conta.'}</div>
+          </div>
+        )}
+        {((haAr && conAr && ruolo === 'TITOLARE') || !haAr) && (
           <>
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input type="checkbox" className="!w-4" checked={amministratore} onChange={(e) => setAmministratore(e.target.checked)} />
               <span className="text-sm">Amministra lo studio (utenti, licenza, backup, archivio)</span>
             </label>
-            <CampiAlbo valori={albo} onChange={setAlbo} />
+            {haAr && <CampiAlbo valori={albo} onChange={setAlbo} />}
           </>
         )}
+        <CampiModuli haAr={haAr} haTs={haTs} amministratore={(haAr ? ruolo === 'TITOLARE' : true) && amministratore} accessoAr={accessoAr} tsRuolo={tsRuolo} onAccessoAr={setAccessoAr} onTsRuolo={setTsRuolo} />
         {errore && <div className="errore">{errore}</div>}
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" className="btn btn-secondary" onClick={onChiudi}>Annulla</button>
@@ -913,7 +1002,9 @@ function NuovoUtente({ onChiudi, onCreato }: {
   );
 }
 
-function ModificaUtente({ utente, io, onChiudi, onSalvato, onReset }: {
+function ModificaUtente({ haAr, haTs, utente, io, onChiudi, onSalvato, onReset }: {
+  haAr: boolean;
+  haTs: boolean;
   utente: UtenteRiga;
   io: boolean;
   onChiudi: () => void;
@@ -924,6 +1015,9 @@ function ModificaUtente({ utente, io, onChiudi, onSalvato, onReset }: {
   const [ruolo, setRuolo] = useState(utente.ruolo);
   const [attivo, setAttivo] = useState(utente.attivo);
   const [amministratore, setAmministratore] = useState(utente.amministratore);
+  const [accessoAr, setAccessoAr] = useState(utente.accessoAr !== false);
+  const [tsRuolo, setTsRuolo] = useState(utente.tsRuolo ?? '');
+  const conAr = haAr && ((ruolo === 'TITOLARE' && attivo && amministratore) || accessoAr);
   const [albo, setAlbo] = useState({
     qualifica: utente.qualifica ?? '',
     ordine: utente.ordine ?? '',
@@ -938,8 +1032,10 @@ function ModificaUtente({ utente, io, onChiudi, onSalvato, onReset }: {
     setErrore('');
     setInvio(true);
     try {
+      const ruoloInviato = haAr ? ruolo : (amministratore ? 'TITOLARE' : 'COLLABORATORE');
       await api.post(`/utenti/${utente.id}`, {
-        nome, ruolo, attivo, amministratore: ruolo === 'TITOLARE' && attivo && amministratore, ...albo,
+        nome, ruolo: ruoloInviato, attivo, amministratore: ruoloInviato === 'TITOLARE' && attivo && amministratore, ...albo,
+        ...(haTs ? { accessoAr: conAr, tsRuolo: tsRuolo || null } : {}),
       });
       onSalvato();
     } catch (err) {
@@ -968,26 +1064,29 @@ function ModificaUtente({ utente, io, onChiudi, onSalvato, onReset }: {
           <label className="label">Nome e cognome</label>
           <input className="input" value={nome} onChange={(e) => setNome(e.target.value)} required />
         </div>
-        <div>
-          <label className="label">Ruolo</label>
-          <select className="input" value={ruolo} onChange={(e) => setRuolo(e.target.value)}>
-            {Object.entries(ETICHETTA_RUOLO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-          <div className="aiuto mt-1">{DESCRIZIONE_RUOLO[ruolo]}</div>
-        </div>
+        {haAr && (
+          <div>
+            <label className="label">Ruolo{haTs ? ' Antiriciclaggio' : ''}</label>
+            <select className="input" value={conAr ? ruolo : 'COLLABORATORE'} disabled={!conAr} onChange={(e) => setRuolo(e.target.value)}>
+              {Object.entries(ETICHETTA_RUOLO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+            <div className="aiuto mt-1">{conAr ? DESCRIZIONE_RUOLO[ruolo] : 'Senza accesso ad Antiriciclaggio il ruolo non conta.'}</div>
+          </div>
+        )}
         <label className="flex items-center gap-2 cursor-pointer select-none">
           <input type="checkbox" className="!w-4" checked={attivo} onChange={(e) => setAttivo(e.target.checked)} />
           <span className="text-sm">Account attivo</span>
         </label>
-        {ruolo === 'TITOLARE' && attivo && (
+        {((haAr && conAr && ruolo === 'TITOLARE') || !haAr) && attivo && (
           <>
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input type="checkbox" className="!w-4" checked={amministratore} onChange={(e) => setAmministratore(e.target.checked)} />
               <span className="text-sm">Amministra lo studio (utenti, licenza, backup, archivio)</span>
             </label>
-            <CampiAlbo valori={albo} onChange={setAlbo} />
+            {haAr && <CampiAlbo valori={albo} onChange={setAlbo} />}
           </>
         )}
+        <CampiModuli haAr={haAr} haTs={haTs} amministratore={(haAr ? ruolo === 'TITOLARE' : true) && attivo && amministratore} accessoAr={accessoAr} tsRuolo={tsRuolo} onAccessoAr={setAccessoAr} onTsRuolo={setTsRuolo} />
         {io && <div className="aiuto">Stai modificando il tuo stesso account: non puoi lasciare lo studio senza un professionista né senza un amministratore attivo.</div>}
         {errore && <div className="errore">{errore}</div>}
         <div className="flex items-center justify-between gap-2 pt-1">

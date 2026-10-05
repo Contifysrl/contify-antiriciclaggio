@@ -23,6 +23,16 @@ Stesso impianto di Contify Assist, così che la toolchain di rilascio sia una so
 | Segnalazioni sospette | artt. 35-39 | Contenuto cifrato, accesso riservato al titolare, indicatori di anomalia UIF 12.5.2023 |
 | Registro accessi | art. 32 co. 2 | Append-only concatenato via hash, con verifica di integrità dimostrabile |
 
+## Una piattaforma, due moduli (TS-M0)
+
+Dal 10/2026 Contify AR è un **modulo** di una piattaforma che ne ha due: **AR** (antiriciclaggio) e
+**TS** (Contify Timesheet, rilevazione ore dello studio, in costruzione). Stesso Worker, stesso D1,
+stesso login: uno studio può avere un modulo o entrambi (`moduli_tenant`, migrazione 0015), ogni
+utente accede ad AR (`utenti.accesso_ar`) e/o a Timesheet (`utenti.ts_ruolo`); chi amministra lo
+studio accede a tutto. Le regole e la classificazione delle rotte (AR / TS / comuni) stanno in
+`worker/src/lib/moduli.ts`; il codice di Timesheet in `worker/src/ts/` e `web/src/ts/`; i documenti
+di prodotto in OneDrive `CONTIFY/Contify_Timesheet/`.
+
 ## L'idea portante
 
 Il motore tiene separati due livelli che nella pratica si confondono spesso.
@@ -93,13 +103,14 @@ npm run build              # SPA in dist/
 npx wrangler dev --local   # porta 8787
 
 npm test                   # test di dominio (parser visura incluso: tests/visura.test.ts)
-node scripts/smoke-api.mjs # verifiche end-to-end; poi le suite per milestone smoke-api-m11…m20.mjs
+node scripts/smoke-api.mjs # verifiche end-to-end; poi le suite per milestone smoke-api-m11…m23.mjs
 node scripts/ui-m17.mjs    # giri Playwright: ui-m17 (visura), ui-m18 (fascicolo proposto), ui-m19 (coda e «Da completare»), ui-m20 (rinnovo visura, registro TE)
+node scripts/smoke-api-ts-m0.mjs && node scripts/ui-ts-m0.mjs   # TS-M0: moduli e accessi (per ultimo: attiva Timesheet sullo studio demo)
 node scripts/smoke-api-console-studi.mjs && node scripts/ui-console-studi.mjs   # console: «Nuovo studio»
 npm run typecheck
 ```
 
-Le migrazioni D1 sono additive e vanno applicate in ordine (`migrations/0001…0012`), in
+Le migrazioni D1 sono additive e vanno applicate in ordine (`migrations/0001…0015`), in
 produzione PRIMA del push del codice che le usa. Le fixture del parser delle visure
 (`tests/fixtures/visure/*.txt`) si generano da un PDF con `node scripts/visura-testo.mjs`
 e si anonimizzano a mano; i PDF sintetici per Playwright con `scripts/visura-pdf-fixture.py`.

@@ -27,6 +27,7 @@
 //    finisce nel registro.
 
 import type { Env } from './tipi';
+import { sqlConModuloAr } from './moduli';
 import { scriviAudit } from './audit';
 import { decifra } from './crypto';
 import { gunzipToText, gzipText } from './backup';
@@ -527,7 +528,8 @@ export async function screeningSchedulato(env: Env): Promise<void> {
     return;
   }
   const idx = indiceInverso(liste.voci);
-  const tenants = (await env.DB.prepare('SELECT id FROM tenants').all<{ id: string }>()).results ?? [];
+  // TS-M0: lo screening è di AR; uno studio con solo Timesheet non ha clienti da controllare.
+  const tenants = (await env.DB.prepare(`SELECT t.id FROM tenants t WHERE ${sqlConModuloAr('t')}`).all<{ id: string }>()).results ?? [];
   for (const t of tenants) {
     try {
       const r = await eseguiScreeningTenant(env, t.id, liste, idx);

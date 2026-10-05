@@ -11,13 +11,40 @@ export interface VoceNovita {
   data: string; // ISO, giorno di rilascio
   titolo: string;
   punti: string[];
+  /**
+   * TS-M0: a quale modulo parla la voce. 'AR' si mostra agli studi con
+   * Antiriciclaggio, 'TS' a quelli con Timesheet; senza modulo a tutti.
+   */
+  modulo?: 'AR' | 'TS';
 }
 
 export const NOVITA: VoceNovita[] = [
   {
+    id: '2026-10-05-moduli-e-accessi',
+    data: '2026-10-05',
+    titolo: 'Una piattaforma, due moduli: Contify AR e Contify Timesheet',
+    punti: [
+      'Contify AR diventa un modulo di una piattaforma che ne avrà due: Antiriciclaggio e Timesheet (la rilevazione delle ore dello studio, in arrivo). Uno studio può avere un solo modulo o entrambi, anche in momenti diversi; chi ha solo Antiriciclaggio non vede alcuna differenza.',
+      'In Impostazioni → Utenti chi amministra lo studio decide, persona per persona, a quali moduli accede ciascuno: la colonna «Antiriciclaggio» e il ruolo «Timesheet» compaiono solo negli studi che hanno Timesheet. Chi amministra lo studio accede sempre a tutti i moduli.',
+      'Chi ha entrambi i moduli trova in cima alla barra laterale il selettore «Antiriciclaggio | Timesheet»: il menu mostra le voci del modulo scelto più quelle comuni (Impostazioni, Backup, Attività, Novità, Guida, Assistenza). La scelta viene ricordata sul dispositivo.',
+      'Nuovo capitolo della Guida: «Moduli e accessi».',
+    ],
+  },
+  {
+    id: '2026-10-05-timesheet-in-preparazione',
+    data: '2026-10-05',
+    titolo: 'Contify Timesheet è in preparazione',
+    modulo: 'TS',
+    punti: [
+      'Il modulo Timesheet è attivo per il tuo studio, ma la registrazione delle ore arriva con la prossima tappa: chi lavora scriverà o dirà per chi ha lavorato e cosa ha fatto, il programma capirà cliente, servizio e durata. Fino ad allora la pagina Timesheet mostra solo questo avviso.',
+      'Già da ora chi amministra lo studio può assegnare i ruoli Timesheet (titolare o collaboratore) in Impostazioni → Utenti.',
+    ],
+  },
+  {
     id: '2026-09-30-segnalazioni-barbara-av4-per-opzione',
     data: '2026-09-30',
     titolo: 'Dal collaudo dello studio: AV.4 sul modello CNDCEC con una sola opzione, persona fisica in proprio, archivio documenti unico, correzione delle date, fascicolo eliminabile',
+    modulo: 'AR',
     punti: [
       'Dichiarazione del cliente mod. AV.4 rifatta sul modello CNDCEC: il documento stampa la sola opzione pertinente fra le quattro — 1 persona fisica che agisce in proprio, 2 persona fisica tramite esecutore, 3 società con titolari per proprietà o controllo, 4 società con titolare residuale (art. 20 co. 5) — e riporta già i dati del dichiarante, della società (sede, Registro Imprese, REA, codice fiscale), dei titolari effettivi registrati (o proposti) con la relazione col cliente e lo status PEP, l’attività e l’ambito territoriale. Restano da compilare a mano provenienza dei fondi e mezzi di pagamento (in funzione del rischio). In coda le Note 1-4 del modello con la firma per presa visione. Anche il modulo a distanza segue l’opzione: la persona fisica dichiara di agire in proprio e il proprio status PEP, senza domande sulla compagine; nell’esame della richiesta compilata lo studio legge chi ha reso la dichiarazione, il suo status PEP, attività e ambito, e la dichiarazione mod. AV.4 è già selezionata quando prepari una nuova richiesta.',
       'Cliente persona fisica: il titolare effettivo coincide con il cliente (art. 1 co. 2 lett. pp) e il programma lo registra da solo alla creazione del cliente o all’apertura del fascicolo; nel nuovo fascicolo l’esecutore è già compilato con i dati del cliente, «in proprio». La dichiarazione AV.4 è ora richiesta anche alle persone fisiche («Da completare» la segnala) e il pulsante per generarla compare nella scheda di ogni cliente.',
@@ -31,6 +58,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-09-11-dichiarazione-av4-scopo-prestazione',
     data: '2026-09-11',
     titolo: 'Dichiarazione del cliente mod. AV.4: scopo e natura della prestazione richiesta',
+    modulo: 'AR',
     punti: [
       'La dichiarazione art. 22 si chiama ora con il nome della modulistica CNDCEC, «Dichiarazione del cliente (mod. AV.4)», nei pulsanti, nei tipi di documento, nella checklist e in «Da completare»: è lo stesso documento di prima.',
       'Nuova prima sezione «Scopo e natura della prestazione richiesta» (art. 18 co. 1 lett. c): il modulo riporta la prestazione del fascicolo (descrizione, rapporto continuativo o occasionale, data di conferimento) e, se l’hai già scritto, lo scopo e la natura registrati nel fascicolo. Il cliente conferma o precisa; se non hai ancora scritto nulla, lo indica lui.',
@@ -41,6 +69,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-09-10-ai-con-pseudonimizzazione',
     data: '2026-09-10',
     titolo: 'Assistente AI: nomi e dati identificativi sostituiti da segnaposto prima dell’invio, motivazione co. 6 leggibile, classificazione dell’oggetto sociale',
+    modulo: 'AR',
     punti: [
       'Pseudonimizzazione automatica: prima di ogni richiesta all’AI il programma sostituisce con segnaposto i nomi di persone ed enti presenti nell’archivio dello studio (clienti, soci e cariche, titolari effettivi, esecutori, professionisti) e i dati con formato riconoscibile ovunque compaiano (codici fiscali, partite IVA, IBAN, email e PEC, telefoni, indirizzi con civico). Se dopo la sostituzione resta un identificativo, la richiesta non parte. I nomi tornano al loro posto nella risposta, nel server di Contify AR. Vale per tutte le funzioni, anche la chat e il suggeritore di indicatori.',
       '«Rendi leggibile (AI)» nella sequenza guidata della titolarità effettiva: la motivazione ex art. 20 co. 6, che il programma scrive dai fatti della compagine, può essere riscritta in italiano piano. Il testo riscritto è verificato sui numeri (quote, capitale, date): se un numero manca o ne compare uno nuovo, resta la bozza del programma. Il professionista la corregge e la firma; la proposta registra la provenienza «AI + professionista».',
@@ -52,6 +81,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-09-07-controllo-costante-dai-dati',
     data: '2026-09-07',
     titolo: 'Controllo costante alimentato dai dati: visura da rinnovare, differenze al rinnovo, registro dei titolari effettivi',
+    modulo: 'AR',
     punti: [
       'Alert A12 «Visura da rinnovare»: quando l’ultima visura conservata è più vecchia della cadenza del controllo costante del fascicolo più esigente (36/36/24/12 mesi), lo vedi nella scheda del cliente, nello scadenzario («Rinnovo della visura», scadenza organizzativa) e in «Da completare». Nessuna soglia inventata: è lo stesso numero del controllo costante.',
       '«Aggiorna da visura» ora elenca le differenze rispetto alla compagine registrata — soci entrati e usciti, quote e diritti variati, cariche cessate, nuove o cambiate — e, se la struttura è cambiata (soci, quote, cariche con poteri), propone il controllo costante «da rivalutare» sui fascicoli vivi valutati. Lo registri con le variazioni già scritte nelle note, oppure motivi perché la valutazione resta valida: in entrambi i casi la proposta chiude con il tuo esito. Un sindaco che cambia non è struttura.',
@@ -63,6 +93,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-09-06-coda-e-completezza',
     data: '2026-09-06',
     titolo: 'Coda di revisione e «Da completare»: si parte dai documenti, non dalla pagina bianca',
+    modulo: 'AR',
     punti: [
       '«Da completare» (nuova voce di menu, riepilogo anche nel Cruscotto): per ogni cliente attivo il programma calcola cosa manca perché il fascicolo antiriciclaggio sia a posto — fascicolo, valutazione firmata, titolari effettivi, PEP chiesto, documento d’identità, visura, dichiarazione art. 22, controllo costante — e lo presenta come una lista finita ordinata per urgenza, rischio e scadenza, con la norma e la sezione della modulistica CNDCEC per ogni voce e un pulsante che porta dove si risolve. Sono cose da completare, non violazioni.',
       'Coda di revisione: carica fino a sessanta visure in un colpo. Ognuna viene letta nel browser e diventa una proposta cifrata, abbinata al cliente esistente per codice fiscale o partita IVA o marcata «nuovo cliente»; nessuna produce effetti finché non la rivedi. Revisione una alla volta ma veloce (Invio applica, M modifica, frecce scorrono), «Applica tutto» solo per le proposte senza alert di gravità alta; i titolari effettivi individuati per proprietà si registrano in blocco, gli altri restano per la sequenza guidata.',
@@ -75,6 +106,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-09-05-visure-vere-catena',
     data: '2026-09-05',
     titolo: 'Visure: cariche al femminile e catene su più livelli',
+    modulo: 'AR',
     punti: [
       'Il lettore delle visure riconosce le cariche scritte al femminile («amministratrice unica», «consigliera», «liquidatrice»), le intestazioni spezzate su due righe («Presidente Consiglio» / «Amministrazione»), la nascita indicata sulla riga del nome e chi cumula più cariche: la principale (presidente del CdA prima di consigliere) diventa la carica, le altre restano nei poteri. Calibrato su tre visure vere di un gruppo a tre livelli.',
       'Catena partecipativa: se la holding è già cliente ma la sua socia no, il programma non salta più al criterio residuale dell’art. 20 co. 5 — «nessuno supera il 25%» non si può dire senza aver risalito tutta la catena. Si ferma, lo scrive fra le avvertenze e apre un alert A4 «Catena da risalire oltre la controllante» con l’invito a caricare la visura mancante.',
@@ -84,6 +116,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-09-05-scadenzario-termini-chiusi',
     data: '2026-09-05',
     titolo: 'Scadenzario: i termini dei trenta giorni si chiudono con la firma',
+    modulo: 'AR',
     punti: [
       'I termini di trenta giorni per il completamento della verifica (art. 18 co. 3) e per l’acquisizione dei dati in conservazione (art. 32 co. 2 lett. b) non restano più «scaduti» per sempre: spariscono dallo scadenzario quando la valutazione del fascicolo è firmata o quando ti sei astenuto. Una valutazione solo salvata continua a tenerli aperti, perché non fa prova. Il controllo costante resta.',
     ],
@@ -92,6 +125,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-09-04-fascicolo-proposto',
     data: '2026-09-04',
     titolo: 'Il fascicolo proposto: Tabella A, esecutore, documenti e dichiarazione art. 22 dai dati camerali',
+    modulo: 'AR',
     punti: [
       'Quando apri un fascicolo per un cliente con la compagine in archivio, il programma propone la Tabella A: natura giuridica dalla struttura (soci, catene, esteri, fiduciarie), attività prevalente dalla tabella dei settori esposti — ogni voce cita l’Analisi nazionale dei rischi 2024 o gli indicatori UIF — e area geografica dai Paesi terzi ad alto rischio e dalle province a rischio contante. Il comportamento al conferimento resta sempre da valutare a te. Ogni punteggio ha motivazione e fonte; se ti scosti, scrivi il perché e resta nel verbale.',
       'L’esecutore viene proposto dalle cariche già nel form del nuovo fascicolo (amministratore unico, presidente del CdA, liquidatore se la società è in liquidazione): confermalo o indica chi si è presentato.',
@@ -105,6 +139,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-09-03-anagrafiche-da-visura',
     data: '2026-09-03',
     titolo: 'Partire dalla visura camerale: anagrafica, compagine e titolari effettivi proposti',
+    modulo: 'AR',
     punti: [
       'In Clienti trovi «Nuovo da visura»: trascini il PDF della visura camerale e il programma lo legge nel tuo browser — niente intelligenza artificiale, niente servizi esterni, il file non lascia lo studio. Anagrafica, sede, PEC, REA, capitale, ATECO, soci con quote e diritti, cariche con poteri: tutto precompilato, tutto da rivedere. Ciò che la visura non dice resta vuoto e viene elencato, mai inventato.',
       'Soci e cariche restano registrati, cifrati, con la data della visura: al prossimo rinnovo vedrai cosa è cambiato. Se un socio è una società già cliente dello studio, la catena partecipativa si ricostruisce da sola con i dati in archivio.',
@@ -118,6 +153,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-08-19b-posti-professionista',
     data: '2026-08-19',
     titolo: 'Posti professionista a contratto',
+    modulo: 'AR',
     punti: [
       'Il contratto dello studio può ora prevedere un numero di posti professionista. In Impostazioni → Utenti dello studio vedi quanti ne stai usando; se sono tutti occupati e vuoi aggiungere un associato, basta una richiesta dalla pagina Assistenza e adeguiamo il contratto.',
       'Collaboratori, lettori e revisori non contano: il posto riguarda solo chi identifica e firma.',
@@ -127,6 +163,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-08-19-studio-associato',
     data: '2026-08-19',
     titolo: 'Studio associato e autovalutazione che si nutre dei clienti',
+    modulo: 'AR',
     punti: [
       'Più professionisti nello stesso studio: ciascuno identifica i propri clienti, firma le proprie valutazioni e compare col proprio nome — qualifica, ODCEC e numero di iscrizione — sulla scheda di adeguata verifica. Il ruolo «Titolare» si chiama ora «Professionista».',
       'Amministrare lo studio è diventato un permesso a parte: utenti, licenza, backup ed Elimina Archivio restano a chi amministra, non arrivano in dote a ogni associato.',
@@ -141,6 +178,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-08-19-scheda-cliente',
     data: '2026-08-19',
     titolo: 'La scheda del cliente: si apre, si modifica, si cancella',
+    modulo: 'AR',
     punti: [
       'Cliccando un cliente nell’elenco si apre la sua scheda, con anagrafica, titolari effettivi e fascicoli. Prima il click portava alla pagina Fascicoli.',
       'L’anagrafica si modifica: utile soprattutto dopo un import dal gestionale, quando la natura giuridica dedotta dalla denominazione va corretta.',
@@ -152,6 +190,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-08-04-normativa',
     data: '2026-08-04',
     titolo: 'La Normativa a portata di clic',
+    modulo: 'AR',
     punti: [
       'Nuova voce «Normativa» nel menu: i testi ufficiali delle regole antiriciclaggio — DLgs. 231/2007, regole tecniche CNDCEC, indicatori e istruzioni UIF, paesi ad alto rischio, liste sanzioni, registro dei titolari effettivi — con i collegamenti alle fonti, sempre nella versione corrente.',
       'C’è anche il quadro che arriva: il pacchetto antiriciclaggio europeo (regolamento unico, sesta direttiva, autorità AMLA) con le date da segnare in agenda.',
@@ -161,6 +200,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-08-04-impostazioni',
     data: '2026-08-04',
     titolo: 'Colori, modalità notturna e controllo degli accessi',
+    modulo: 'AR',
     punti: [
       'In Impostazioni puoi scegliere il colore dell’interfaccia fra dodici tinte e la modalità Chiaro, Notturna o «Come il computer»: la scelta è personale e ti segue su ogni dispositivo.',
       'Nel login c’è la casella «Resta collegato su questo computer»: senza, l’accesso si chiude da solo dopo 8 ore di inattività; con la spunta dura fino a 7 giorni.',
@@ -172,6 +212,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-08-04-menu-assistenza',
     data: '2026-08-04',
     titolo: 'Nuovo menu, pagina Novità e assistenza con risposte in app',
+    modulo: 'AR',
     punti: [
       'Il menu di sinistra ora distingue Impostazioni, Backup, Attività, Novità, Guida e Assistenza: le stesse voci degli altri prodotti Contify.',
       'L’assistenza diventa una conversazione: apri una richiesta, Contify risponde direttamente nell’app e un pallino sul menu ti avvisa quando c’è una risposta da leggere.',
@@ -182,6 +223,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-08-03-percorso-e-chat',
     data: '2026-08-03',
     titolo: 'Percorso «Per iniziare» e chat di assistenza',
+    modulo: 'AR',
     punti: [
       'Nel Cruscotto trovi il percorso «Per iniziare»: la sequenza consigliata dei primi passi, che si spunta da sola man mano che lo studio carica i propri dati.',
       'Con l’AI abilitata compare il pulsante di chat in basso a destra: risponde su come si usa Contify AR e dà orientamento normativo.',
@@ -191,6 +233,7 @@ export const NOVITA: VoceNovita[] = [
     id: '2026-08-02-controlli-automatici',
     data: '2026-08-02',
     titolo: 'Controlli automatici e verifica a distanza',
+    modulo: 'AR',
     punti: [
       'Ogni notte clienti e titolari effettivi vengono confrontati con le liste sanzioni UE, ONU e OFAC e con l’elenco europeo dei paesi terzi ad alto rischio.',
       'Dal fascicolo puoi far compilare l’adeguata verifica direttamente al cliente, con un collegamento sicuro e monouso.',

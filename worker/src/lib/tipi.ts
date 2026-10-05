@@ -38,6 +38,13 @@ export interface Utente {
    * due insiemi non coincidono: gli associati firmano, uno solo amministra.
    */
   amministratore?: number;
+  /**
+   * TS-M0. Accesso al modulo AR (1 = sì; 0 implica ruolo COLLABORATORE) e
+   * ruolo nel modulo Timesheet (null = non vi accede). Chi amministra lo
+   * studio accede sempre a tutti i moduli, qualunque siano questi valori.
+   */
+  accesso_ar?: number;
+  ts_ruolo?: 'TITOLARE' | 'COLLABORATORE' | null;
   /** Dati d'albo, per l'intestazione dei verbali. */
   codice_fiscale?: string | null;
   ordine?: string | null;
@@ -64,5 +71,10 @@ export interface Variabili {
   tenantId: string;
   /** Stato commerciale del tenant (attivo | sospeso | cessato), dalla sessione. */
   tenantStato: string;
+  /** TS-M0: moduli dello studio (stato per modulo, null = non acquistato), dalla sessione. */
+  moduli: ModuliStudio;
   ip: string | null;
 }
+
+/** Stato per modulo della piattaforma; la logica sta in lib/moduli.ts. */
+export type ModuliStudio = { AR: 'attivo' | 'sospeso' | 'cessato' | null; TS: 'attivo' | 'sospeso' | 'cessato' | null };

@@ -24,7 +24,7 @@ import { nuovoId } from './crypto';
 
 const qIdent = (name: string) => `"${name.replace(/"/g, '""')}"`;
 
-export type AzioneConsole = 'STUDIO_ELIMINATO' | 'RESET_PASSWORD_UTENTE' | 'STATO_UTENTE';
+export type AzioneConsole = 'STUDIO_ELIMINATO' | 'RESET_PASSWORD_UTENTE' | 'STATO_UTENTE' | 'MODULO_ATTIVATO' | 'MODULO_AGGIORNATO';
 
 /** Traccia di console che sopravvive al tenant (nessun dato di clienti). */
 export async function scriviEventoConsole(db: D1Database, v: { operatore: string; azione: AzioneConsole; tenantId: string | null; dettaglio?: unknown }): Promise<string> {
@@ -109,6 +109,8 @@ export async function eliminaStudioVuoto(env: Env, tenant: { id: string; denomin
     per('DELETE FROM sessioni WHERE tenant_id = ?1'),
     per('DELETE FROM password_reset_token WHERE utente_id IN (SELECT id FROM utenti WHERE tenant_id = ?1)'),
     per('DELETE FROM utenti WHERE tenant_id = ?1'),
+    // TS-M0: le righe dei moduli (contratto, non archivio) vanno via con lo studio.
+    per('DELETE FROM moduli_tenant WHERE tenant_id = ?1'),
     per('DELETE FROM tenants WHERE id = ?1'),
   ]);
 

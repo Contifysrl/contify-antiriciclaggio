@@ -14,6 +14,8 @@ export interface SessioneApp {
     tema?: string | null; modoColore?: string | null;
     /** AR-M15: il ruolo dice se firma, il flag dice se amministra lo studio. */
     amministratore?: boolean; professionista?: boolean;
+    /** TS-M0: accessi per modulo (chi amministra accede comunque a tutti). */
+    accessoAr?: boolean; tsRuolo?: 'TITOLARE' | 'COLLABORATORE' | null;
     codiceFiscale?: string | null; ordine?: string | null;
     numeroIscrizione?: string | null; qualifica?: string | null;
   };
@@ -21,6 +23,8 @@ export interface SessioneApp {
     id: string; denominazione: string; piano: string; stato?: string; logo?: string | null;
     /** AR-M16: posti professionista a contratto. null = nessun limite. */
     professionistiInclusi?: number | null;
+    /** TS-M0: stato per modulo; null = non acquistato. Lo stato effettivo è il peggiore con `stato`. */
+    moduli?: { AR: 'attivo' | 'sospeso' | 'cessato' | null; TS: 'attivo' | 'sospeso' | 'cessato' | null };
   };
 }
 

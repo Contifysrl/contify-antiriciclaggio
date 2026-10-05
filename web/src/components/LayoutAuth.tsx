@@ -13,8 +13,12 @@ import { ReactNode } from 'react';
 const LOGO_SCURO = '#0a6068';
 const LOGO_CHIARO = '#0e8a8f';
 
-/** Logo Contify AR: anello + wordmark testuale. */
-export function LogoContify({ inverso = false, altezza = 30 }: { inverso?: boolean; altezza?: number }) {
+/**
+ * Logo Contify: anello + wordmark testuale. `prodotto` è la parola accanto
+ * al marchio: «AR» (predefinito) o «Timesheet» (TS-M0: il nome segue il
+ * modulo scelto nella barra laterale).
+ */
+export function LogoContify({ inverso = false, altezza = 30, prodotto = 'AR' }: { inverso?: boolean; altezza?: number; prodotto?: string }) {
   return (
     <div className="flex items-center gap-2">
       <img
@@ -34,7 +38,7 @@ export function LogoContify({ inverso = false, altezza = 30 }: { inverso?: boole
           className="text-lg font-light tracking-tight ml-1"
           style={{ color: inverso ? '#99CECF' : LOGO_CHIARO }}
         >
-          AR
+          {prodotto}
         </span>
       </div>
     </div>

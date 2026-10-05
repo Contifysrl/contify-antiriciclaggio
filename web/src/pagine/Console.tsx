@@ -320,6 +320,18 @@ function ConversazioneConsole({ id, onChiudi }: { id: string; onChiudi: () => vo
 // console: stato commerciale, date del contratto e note, senza mai
 // entrare negli archivi degli studi.
 
+// TS-M0: riga di `moduli_tenant` come la vede la console (nessuna riga =
+// AR attivo per il programma, segnalato da `senzaRigheModuli`).
+interface RigaModulo {
+  stato: 'attivo' | 'sospeso' | 'cessato';
+  dataAttivazione: string | null;
+  dataScadenzaCanone: string | null;
+  postiInclusi: number | null;
+  noteContratto: string | null;
+}
+type ModuliStudio = { AR: RigaModulo | null; TS: RigaModulo | null };
+const NOME_MODULO: Record<'AR' | 'TS', string> = { AR: 'Antiriciclaggio', TS: 'Timesheet' };
+
 interface StudioRiga {
   id: string;
   denominazione: string;
@@ -335,6 +347,21 @@ interface StudioRiga {
   nUtenti: number;
   nProfessionisti: number;
   ultimoAccesso: string | null;
+  /** TS-M0 */
+  moduli?: ModuliStudio;
+  senzaRigheModuli?: boolean;
+}
+
+/** Etichette AR / TS accanto allo studio (TS-M0). */
+function BadgeModuli({ studio }: { studio: StudioRiga }) {
+  const m = studio.moduli ?? { AR: null, TS: null };
+  const tone = (r: RigaModulo | null) => (!r ? 'gray' : r.stato === 'attivo' ? 'teal' : r.stato === 'sospeso' ? 'amber' : 'gray');
+  return (
+    <span className="inline-flex gap-1" data-test="badge-moduli">
+      {(m.AR || studio.senzaRigheModuli) && <Badge tone={m.AR ? tone(m.AR) : 'teal'}>AR{m.AR && m.AR.stato !== 'attivo' ? ` ${m.AR.stato}` : ''}</Badge>}
+      {m.TS && <Badge tone={tone(m.TS)}>TS{m.TS.stato !== 'attivo' ? ` ${m.TS.stato}` : ''}</Badge>}
+    </span>
+  );
 }
 
 const STATO_STUDIO: Record<StudioRiga['stato'], { testo: string; tone: 'teal' | 'gray' | 'amber' }> = {
@@ -387,7 +414,7 @@ function StudiConsole() {
         <div className="card p-5">
           <table>
             <thead>
-              <tr><th>Studio</th><th>Stato</th><th>Attivazione</th><th>Scadenza canone</th><th>Professionisti</th><th>Utenti</th></tr>
+              <tr><th>Studio</th><th>Moduli</th><th>Stato</th><th>Attivazione</th><th>Scadenza canone</th><th>Professionisti</th><th>Utenti</th></tr>
             </thead>
             <tbody>
               {studi.map((s) => {
@@ -395,6 +422,7 @@ function StudiConsole() {
                 return (
                   <tr key={s.id} className="cursor-pointer hover:bg-ink-50" onClick={() => setAperto(s)}>
                     <td className="font-semibold">{s.denominazione}</td>
+                    <td><BadgeModuli studio={s} /></td>
                     <td><Badge tone={STATO_STUDIO[s.stato].tone}>{STATO_STUDIO[s.stato].testo}</Badge></td>
                     <td className="whitespace-nowrap">{dataIt(s.dataAttivazione)}</td>
                     <td className="whitespace-nowrap">
@@ -461,6 +489,9 @@ function NuovoStudioModal({ onChiudi }: { onChiudi: (creato: boolean) => void })
   const [pCf, setPCf] = useState('');
   const [pOrdine, setPOrdine] = useState('');
   const [pNumero, setPNumero] = useState('');
+  // TS-M0: i moduli acquistati (predefinito: solo AR, come prima).
+  const [conAr, setConAr] = useState(true);
+  const [conTs, setConTs] = useState(false);
   const [errore, setErrore] = useState('');
   const [omonimo, setOmonimo] = useState(false);
   const [invio, setInvio] = useState(false);
@@ -478,6 +509,7 @@ function NuovoStudioModal({ onChiudi }: { onChiudi: (creato: boolean) => void })
         professionistiInclusi: posti.trim() === '' ? null : Number(posti),
         noteContratto: note.trim() || null,
         confermaOmonimo,
+        moduli: [...(conAr ? ['AR'] : []), ...(conTs ? ['TS'] : [])],
         professionista: { nome: pNome, email: pEmail, qualifica: pQualifica, codiceFiscale: pCf, ordine: pOrdine, numeroIscrizione: pNumero },
       });
       setEsito(r);
@@ -580,6 +612,24 @@ function NuovoStudioModal({ onChiudi }: { onChiudi: (creato: boolean) => void })
           <div className="aiuto">
             Riceve una password temporanea da cambiare al primo accesso, e potrà aggiungere gli altri utenti da solo.
             Qualifica, ordine e numero compaiono nell'intestazione dei verbali: si possono completare dopo.
+          </div>
+        </fieldset>
+
+        <fieldset className="space-y-3">
+          <legend className="font-semibold text-ink-700">Moduli</legend>
+          <div className="flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" className="!w-4" checked={conAr} onChange={(e) => setConAr(e.target.checked)} data-test="modulo-ar" />
+              <span className="text-sm">Antiriciclaggio (Contify AR)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" className="!w-4" checked={conTs} onChange={(e) => setConTs(e.target.checked)} data-test="modulo-ts" />
+              <span className="text-sm">Timesheet (Contify Timesheet)</span>
+            </label>
+          </div>
+          <div className="aiuto">
+            Almeno un modulo. Con Antiriciclaggio il contratto qui sotto è quello di AR; con il solo Timesheet le date
+            vanno sulla riga del modulo Timesheet. Un modulo si può aggiungere anche dopo, dalla scheda dello studio.
           </div>
         </fieldset>
 
@@ -794,6 +844,7 @@ function StudioModal({ studio, onChiudi }: { studio: StudioRiga; onChiudi: (rica
         </div>
       </form>
 
+      <ModuliStudioSezione studio={studio} onCambiato={() => setToccato(true)} />
       <UtentiStudio studioId={studio.id} onCambiato={() => setToccato(true)} />
       <EliminaStudio studio={studio} denominazione={titolo} onEliminato={() => onChiudi(true)} />
 
@@ -814,8 +865,147 @@ function StudioModal({ studio, onChiudi }: { studio: StudioRiga; onChiudi: (rica
   );
 }
 
+// ── TS-M0: moduli dello studio (attiva, sospende, cessa un modulo) ──
+// Lo stato dello studio (sopra) agisce su tutto; qui si agisce sul solo
+// modulo. Attivare Timesheet copia i ruoli Timesheet dal ruolo AR.
+function ModuliStudioSezione({ studio, onCambiato }: { studio: StudioRiga; onCambiato: () => void }) {
+  const [moduli, setModuli] = useState<ModuliStudio | null>(null);
+  const [senzaRighe, setSenzaRighe] = useState(false);
+  const [errore, setErrore] = useState('');
+  const [esito, setEsito] = useState('');
+
+  const carica = () => api.get<{ moduli: ModuliStudio; senzaRigheModuli: boolean }>(`/console/studi/${studio.id}`)
+    .then((r) => { setModuli(r.moduli); setSenzaRighe(r.senzaRigheModuli); })
+    .catch((e) => setErrore(e.message));
+  useEffect(() => { carica(); /* eslint-disable-next-line */ }, [studio.id]);
+
+  const salva = async (modulo: 'AR' | 'TS', dati: Record<string, unknown>) => {
+    setErrore(''); setEsito('');
+    try {
+      const r = await api.post<{ creato: boolean; ruoliCopiati: number }>(`/console/studi/${studio.id}/moduli/${modulo}`, dati);
+      setEsito(r.creato
+        ? `${NOME_MODULO[modulo]} attivato${r.ruoliCopiati ? ` (ruoli Timesheet assegnati a ${r.ruoliCopiati} utent${r.ruoliCopiati === 1 ? 'e' : 'i'})` : ''}.`
+        : `${NOME_MODULO[modulo]} aggiornato.`);
+      await carica();
+      onCambiato();
+    } catch (e) { setErrore((e as Error).message); }
+  };
+
+  return (
+    <div className="mt-5 pt-5 border-t border-ink-100 text-sm" data-test="moduli-studio">
+      <div className="font-semibold text-ink-700 mb-2">Moduli</div>
+      {esito && <div className="riquadro info !my-2 text-sm" data-test="esito-moduli">{esito}</div>}
+      {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
+      {!moduli && !errore && <Spinner />}
+      {moduli && (
+        <div className="grid gap-3 md:grid-cols-2">
+          {(['AR', 'TS'] as const).map((m) => (
+            <SchedaModulo key={m} modulo={m} riga={moduli[m]} implicito={m === 'AR' && senzaRighe} onSalva={(dati) => salva(m, dati)} />
+          ))}
+        </div>
+      )}
+      <div className="aiuto mt-2">
+        Lo stato dello studio (sopra) ferma tutto, voci comuni comprese; lo stato di un modulo ferma solo quel modulo
+        (sospeso = sola lettura, cessato = chiuso). Le date della riga AR sono informative: il contratto di AR resta
+        quello sopra. Attivare Timesheet assegna il ruolo Timesheet dal ruolo AR a chi non ce l'ha.
+      </div>
+    </div>
+  );
+}
+
+function SchedaModulo({ modulo, riga, implicito, onSalva }: { modulo: 'AR' | 'TS'; riga: RigaModulo | null; implicito: boolean; onSalva: (dati: Record<string, unknown>) => Promise<void> }) {
+  const [stato, setStato] = useState<'attivo' | 'sospeso' | 'cessato'>(riga?.stato ?? 'attivo');
+  const [attivazione, setAttivazione] = useState(riga?.dataAttivazione?.slice(0, 10) ?? new Date().toISOString().slice(0, 10));
+  const [scadenza, setScadenza] = useState(riga?.dataScadenzaCanone?.slice(0, 10) ?? '');
+  const [posti, setPosti] = useState(riga?.postiInclusi != null ? String(riga.postiInclusi) : '');
+  const [note, setNote] = useState(riga?.noteContratto ?? '');
+  const [apri, setApri] = useState(false);
+  const [invio, setInvio] = useState(false);
+  useEffect(() => {
+    setStato(riga?.stato ?? 'attivo');
+    setAttivazione(riga?.dataAttivazione?.slice(0, 10) ?? new Date().toISOString().slice(0, 10));
+    setScadenza(riga?.dataScadenzaCanone?.slice(0, 10) ?? '');
+    setPosti(riga?.postiInclusi != null ? String(riga.postiInclusi) : '');
+    setNote(riga?.noteContratto ?? '');
+  }, [riga]);
+
+  const invia = async (e: FormEvent) => {
+    e.preventDefault();
+    setInvio(true);
+    try {
+      await onSalva({ stato, dataAttivazione: attivazione || null, dataScadenzaCanone: scadenza || null, postiInclusi: posti.trim() === '' ? null : Number(posti), noteContratto: note.trim() || null });
+      setApri(false);
+    } finally { setInvio(false); }
+  };
+
+  const toneStato = !riga ? 'gray' : riga.stato === 'attivo' ? 'teal' : riga.stato === 'sospeso' ? 'amber' : 'gray';
+  return (
+    <div className="rounded-lg border border-ink-100 p-3" data-test={`scheda-modulo-${modulo}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="font-semibold text-ink-800">{NOME_MODULO[modulo]} <span className="text-ink-400 font-normal">({modulo})</span></div>
+        {riga
+          ? <Badge tone={toneStato}>{riga.stato}</Badge>
+          : implicito ? <Badge tone="teal">attivo (implicito)</Badge> : <Badge tone="gray">non attivo</Badge>}
+      </div>
+      {riga && !apri && (
+        <div className="text-xs text-ink-500 mt-1">
+          {riga.dataAttivazione ? `dal ${dataIt(riga.dataAttivazione)}` : 'senza data di attivazione'}
+          {riga.dataScadenzaCanone ? ` · scade ${dataIt(riga.dataScadenzaCanone)}` : ''}
+          {riga.postiInclusi != null ? ` · ${riga.postiInclusi} posti` : ''}
+        </div>
+      )}
+      {!riga && !apri && implicito && (
+        <div className="text-xs text-ink-500 mt-1">Nessuna riga in archivio: per il programma vale «AR attivo». Il lavoro notturno la crea da solo.</div>
+      )}
+      {!apri ? (
+        <div className="mt-2">
+          <button type="button" className="btn btn-secondary btn-sm" data-test={riga ? `modifica-modulo-${modulo}` : `attiva-modulo-${modulo}`} onClick={() => setApri(true)}>
+            {riga ? 'Modifica' : `Attiva ${NOME_MODULO[modulo]}`}
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={invia} className="mt-2 space-y-2">
+          {riga && (
+            <div>
+              <label className="label">Stato del modulo</label>
+              <select className="input" value={stato} onChange={(e) => setStato(e.target.value as 'attivo' | 'sospeso' | 'cessato')} data-test={`stato-modulo-${modulo}`}>
+                <option value="attivo">Attivo</option>
+                <option value="sospeso">Sospeso (sola lettura)</option>
+                <option value="cessato">Cessato</option>
+              </select>
+            </div>
+          )}
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div>
+              <label className="label">Attivazione</label>
+              <input className="input" type="date" value={attivazione} onChange={(e) => setAttivazione(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">Scadenza canone</label>
+              <input className="input" type="date" value={scadenza} onChange={(e) => setScadenza(e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label className="label">Posti inclusi</label>
+            <input className="input" type="number" min={1} max={999} value={posti} onChange={(e) => setPosti(e.target.value)} placeholder="vuoto = non indicato" />
+            <div className="aiuto mt-1">Solo memorizzati: i prezzi di Timesheet non sono ancora decisi, nessun limite viene fatto rispettare.</div>
+          </div>
+          <div>
+            <label className="label">Note (visibili solo a Contify)</label>
+            <textarea className="input min-h-[50px]" value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setApri(false)}>Annulla</button>
+            <button className="btn btn-primary btn-sm" disabled={invio} data-test={`salva-modulo-${modulo}`}>{invio ? 'Salvataggio…' : riga ? 'Salva' : 'Attiva'}</button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
 // ── AR-M21 CON-02: utenti dello studio dalla console (reset password, disattiva/riattiva) ──
-interface UtenteStudioRiga { id: string; email: string; nome: string; ruolo: string; amministratore: boolean; attivo: boolean; ultimoAccesso: string | null }
+interface UtenteStudioRiga { id: string; email: string; nome: string; ruolo: string; amministratore: boolean; attivo: boolean; ultimoAccesso: string | null; accessoAr?: boolean; tsRuolo?: string | null }
 
 function UtentiStudio({ studioId, onCambiato }: { studioId: string; onCambiato: () => void }) {
   const [utenti, setUtenti] = useState<UtenteStudioRiga[] | null>(null);
@@ -861,14 +1051,18 @@ function UtentiStudio({ studioId, onCambiato }: { studioId: string; onCambiato: 
       {errore && <ErrorBanner message={errore} onDismiss={() => setErrore('')} />}
       {!utenti && !errore && <Spinner />}
       {utenti && (
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead><tr className="text-left text-xs text-ink-400"><th className="py-1">Nome</th><th>Email</th><th>Ruolo</th><th>Stato</th><th></th></tr></thead>
+          <thead><tr className="text-left text-xs text-ink-400"><th className="py-1">Nome</th><th>Email</th><th>Ruolo</th><th>Moduli</th><th>Stato</th><th></th></tr></thead>
           <tbody>
             {utenti.map((u) => (
               <tr key={u.id} className="border-t border-ink-100" data-test={`utente-${u.email}`}>
                 <td className="py-1.5">{u.nome}{u.amministratore && <span className="text-[10px] text-amber-700 ml-1">amministratore</span>}</td>
                 <td className="mono text-xs">{u.email}</td>
                 <td className="text-xs">{u.ruolo.toLowerCase()}</td>
+                <td className="text-xs text-ink-500" data-test="moduli-utente">
+                  {[u.amministratore || u.accessoAr !== false ? 'AR' : null, u.tsRuolo ? `TS ${u.tsRuolo.toLowerCase()}` : u.amministratore ? 'TS' : null].filter(Boolean).join(' · ') || '—'}
+                </td>
                 <td><Badge tone={u.attivo ? 'teal' : 'red'}>{u.attivo ? 'attivo' : 'disattivato'}</Badge></td>
                 <td className="text-right whitespace-nowrap">
                   {u.attivo && (
@@ -882,6 +1076,7 @@ function UtentiStudio({ studioId, onCambiato }: { studioId: string; onCambiato: 
             ))}
           </tbody>
         </table>
+        </div>
       )}
       <div className="aiuto mt-2">
         Per il lock-out: l'unico amministratore che ha perso la password o è stato disattivato. Il reset revoca le sessioni aperte

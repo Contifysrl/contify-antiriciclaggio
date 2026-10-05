@@ -15,6 +15,7 @@ import type { Context, Next } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { sha256Hex, nuovoToken } from './crypto';
 import type { Env, Sessione, Utente, Variabili } from './tipi';
+import { moduliDaRighe } from './moduli';
 
 const COOKIE = 'antiriciclaggio_sess';
 
@@ -108,16 +109,20 @@ export async function richiediAutenticazione(
   const id = await sha256Hex(token);
   // Il JOIN su tenants porta lo stato commerciale dentro la stessa query:
   // nessuna query aggiuntiva per richiesta (blocco sospeso/cessato, AR-M6).
+  // TS-M0: le due sottoquery portano anche lo stato dei moduli dello studio
+  // (NULL = riga assente); la rete di sicurezza la applica moduliDaRighe.
   const riga = await c.env.DB.prepare(
     `SELECT s.id AS sid, s.scade_il, s.scade_assoluta, s.ricordami, s.ultimo_utilizzo,
-            u.*, t.stato AS tenant_stato
+            u.*, t.stato AS tenant_stato,
+            (SELECT m.stato FROM moduli_tenant m WHERE m.tenant_id = t.id AND m.modulo = 'AR') AS modulo_ar,
+            (SELECT m.stato FROM moduli_tenant m WHERE m.tenant_id = t.id AND m.modulo = 'TS') AS modulo_ts
      FROM sessioni s
      JOIN utenti u ON u.id = s.utente_id
      JOIN tenants t ON t.id = u.tenant_id
      WHERE s.id = ? AND u.attivo = 1`,
   )
     .bind(id)
-    .first<Sessione & Utente & { sid: string; scade_il: string; scade_assoluta: string | null; ricordami: number | null; ultimo_utilizzo: string | null; tenant_stato: string | null }>();
+    .first<Sessione & Utente & { sid: string; scade_il: string; scade_assoluta: string | null; ricordami: number | null; ultimo_utilizzo: string | null; tenant_stato: string | null; modulo_ar: string | null; modulo_ts: string | null }>();
 
   if (!riga) return c.json({ errore: 'Sessione non valida' }, 401);
   const adesso = new Date().toISOString();
@@ -149,6 +154,9 @@ export async function richiediAutenticazione(
     tema: riga.tema ?? null,
     modo_colore: riga.modo_colore ?? null,
     amministratore: riga.amministratore ?? 0,
+    // TS-M0: una riga del codice precedente (senza le colonne) accede ad AR.
+    accesso_ar: riga.accesso_ar ?? 1,
+    ts_ruolo: riga.ts_ruolo ?? null,
     codice_fiscale: riga.codice_fiscale ?? null,
     ordine: riga.ordine ?? null,
     numero_iscrizione: riga.numero_iscrizione ?? null,
@@ -157,6 +165,10 @@ export async function richiediAutenticazione(
   c.set('sessioneId', riga.sid);
   c.set('tenantId', riga.tenant_id);
   c.set('tenantStato', riga.tenant_stato ?? 'attivo');
+  c.set('moduli', moduliDaRighe([
+    ...(riga.modulo_ar ? [{ modulo: 'AR', stato: riga.modulo_ar }] : []),
+    ...(riga.modulo_ts ? [{ modulo: 'TS', stato: riga.modulo_ts }] : []),
+  ]));
   c.set('ip', c.req.header('CF-Connecting-IP') ?? null);
   await next();
 }

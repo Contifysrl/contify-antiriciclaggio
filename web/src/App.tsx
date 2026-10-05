@@ -22,24 +22,38 @@ import { Assistenza } from './pagine/Assistenza';
 import { Console } from './pagine/Console';
 import { VerificaRemota } from './pagine/VerificaRemota';
 import { ChatAssistente } from './pagine/ChatAssistente';
+import { TsInizio } from './ts/Inizio';
+import { NOME_MODULO, type Modulo, accedeAdAr, moduliDisponibili, pubblicaModuloCorrente, statoModulo, useModulo } from './lib/moduli';
 
 type Sessione = SessioneApp;
 
-/** Routing su hash: nessuna dipendenza da un router. */
+/** Routing su hash: nessuna dipendenza da un router. Hash vuoto = pagina iniziale del modulo. */
 function usaPercorso(): [string, (p: string) => void] {
-  const [p, setP] = useState(() => window.location.hash.slice(1) || 'cruscotto');
+  const [p, setP] = useState(() => window.location.hash.slice(1));
   useEffect(() => {
-    const h = () => setP(window.location.hash.slice(1) || 'cruscotto');
+    const h = () => setP(window.location.hash.slice(1));
     window.addEventListener('hashchange', h);
     return () => window.removeEventListener('hashchange', h);
   }, []);
   return [p, (nuovo: string) => { window.location.hash = nuovo; }];
 }
 
+// TS-M0: ogni voce appartiene a un modulo o è comune ai due. Le pagine di
+// dettaglio (cliente, fascicolo, registro) seguono la voce che le apre.
+type ClasseVoce = Modulo | 'COMUNE';
+const PAGINE_AR = new Set(['cruscotto', 'completezza', 'coda', 'autovalutazione', 'clienti', 'cliente', 'fascicoli', 'fascicolo', 'scadenzario', 'contante', 'controlli', 'sos', 'normativa']);
+const PAGINE_TS = new Set(['ts-inizio']);
+const PAGINA_INIZIALE: Record<Modulo, string> = { AR: 'cruscotto', TS: 'ts-inizio' };
+
 export default function App() {
   const [sessione, setSessione] = useState<Sessione | null>(null);
   const [caricando, setCaricando] = useState(true);
   const [percorso, vaiA] = usaPercorso();
+  // TS-M0: i moduli che lo studio ha e a cui l'utente accede; il modulo
+  // scelto nella barra laterale è ricordato nel browser.
+  const disponibili = sessione ? moduliDisponibili(sessione) : [];
+  const [modulo, cambiaModulo] = useModulo(disponibili);
+  pubblicaModuloCorrente(modulo);
 
   useEffect(() => {
     api.get<Sessione>('/auth/io').then(setSessione).catch(() => setSessione(null)).finally(() => setCaricando(false));
@@ -55,8 +69,14 @@ export default function App() {
 
   if (caricando) return <div className="caricamento" style={{ padding: 40 }}>Caricamento…</div>;
 
-  const [pagina, query] = percorso.split('?');
+  const [paginaRichiesta, query] = percorso.split('?');
   const parametri = new URLSearchParams(query ?? '');
+  const inizio = modulo ? PAGINA_INIZIALE[modulo] : 'impostazioni';
+  // Senza il modulo di una pagina (studio che non lo ha, o utente che non vi
+  // accede) si torna alla pagina iniziale del modulo scelto: il server
+  // rifiuterebbe comunque ogni chiamata.
+  let pagina = paginaRichiesta || inizio;
+  if ((PAGINE_AR.has(pagina) && !disponibili.includes('AR')) || (PAGINE_TS.has(pagina) && !disponibili.includes('TS'))) pagina = inizio;
 
   // ── Rotte pubbliche (anche con sessione: il link del cliente vince) ──
   if (pagina === 'verifica') return <VerificaRemota token={parametri.get('token') ?? ''} />;
@@ -68,7 +88,7 @@ export default function App() {
   if (!sessione) {
     if (pagina === 'password-dimenticata') return <PasswordDimenticata />;
     if (pagina === 'reset') return <ResetPassword token={parametri.get('token') ?? ''} />;
-    return <Accesso onEntrato={(s) => { setSessione(s); vaiA('cruscotto'); }} />;
+    return <Accesso onEntrato={(s) => { setSessione(s); vaiA(''); }} />;
   }
 
   // ── Primo accesso: la password temporanea va sostituita ──────
@@ -83,39 +103,51 @@ export default function App() {
 
   // AR-M15: alcune voci dipendono dal ruolo (chi firma), altre
   // dall'amministrazione dello studio (chi tiene la licenza e l'archivio).
-  const voci: Array<{ id: string; testo: string; icona: string; ruoli?: string[]; soloAmministratore?: boolean }> = [
-    { id: 'cruscotto', testo: 'Cruscotto', icona: 'dashboard' },
+  // TS-M0: ogni voce ha il suo modulo; si vede se lo studio ha il modulo,
+  // l'utente vi accede ed è il modulo scelto; le voci comuni si vedono sempre.
+  const voci: Array<{ id: string; testo: string; icona: string; modulo: ClasseVoce; ruoli?: string[]; soloAmministratore?: boolean }> = [
+    { id: 'cruscotto', testo: 'Cruscotto', icona: 'dashboard', modulo: 'AR' },
     // AR-M19: «oggi ti mancano N cose» e le proposte del programma da rivedere.
-    { id: 'completezza', testo: 'Da completare', icona: 'spunta' },
-    { id: 'coda', testo: 'Coda di revisione', icona: 'carica' },
-    { id: 'autovalutazione', testo: 'Autovalutazione studio', icona: 'grafico' },
-    { id: 'clienti', testo: 'Clienti', icona: 'edificio' },
-    { id: 'fascicoli', testo: 'Fascicoli', icona: 'elenco' },
-    { id: 'scadenzario', testo: 'Scadenzario', icona: 'orologio' },
-    { id: 'contante', testo: 'Limiti al contante', icona: 'mano' },
-    { id: 'controlli', testo: 'Controlli automatici', icona: 'cerca' },
-    { id: 'sos', testo: 'Segnalazioni', icona: 'avviso', ruoli: ['TITOLARE'] },
-    { id: 'normativa', testo: 'Normativa', icona: 'libro' },
+    { id: 'completezza', testo: 'Da completare', icona: 'spunta', modulo: 'AR' },
+    { id: 'coda', testo: 'Coda di revisione', icona: 'carica', modulo: 'AR' },
+    { id: 'autovalutazione', testo: 'Autovalutazione studio', icona: 'grafico', modulo: 'AR' },
+    { id: 'clienti', testo: 'Clienti', icona: 'edificio', modulo: 'AR' },
+    { id: 'fascicoli', testo: 'Fascicoli', icona: 'elenco', modulo: 'AR' },
+    { id: 'scadenzario', testo: 'Scadenzario', icona: 'orologio', modulo: 'AR' },
+    { id: 'contante', testo: 'Limiti al contante', icona: 'mano', modulo: 'AR' },
+    { id: 'controlli', testo: 'Controlli automatici', icona: 'cerca', modulo: 'AR' },
+    { id: 'sos', testo: 'Segnalazioni', icona: 'avviso', modulo: 'AR', ruoli: ['TITOLARE'] },
+    { id: 'normativa', testo: 'Normativa', icona: 'libro', modulo: 'AR' },
+    // Contify Timesheet (TS-M0: pagina provvisoria; TS-M1 porta «Registra»).
+    { id: 'ts-inizio', testo: 'Timesheet', icona: 'orologio', modulo: 'TS' },
     // Blocco di servizio, stesse voci e stesso ordine di Assist (AR-M11).
-    { id: 'impostazioni', testo: 'Impostazioni', icona: 'ingranaggio' },
-    { id: 'backup', testo: 'Backup', icona: 'database', soloAmministratore: true },
-    { id: 'attivita', testo: 'Attività', icona: 'attivita' },
-    { id: 'novita', testo: 'Novità', icona: 'campana' },
-    { id: 'guida', testo: 'Guida', icona: 'aiuto' },
-    { id: 'assistenza', testo: 'Assistenza', icona: 'salvagente' },
+    { id: 'impostazioni', testo: 'Impostazioni', icona: 'ingranaggio', modulo: 'COMUNE' },
+    { id: 'backup', testo: 'Backup', icona: 'database', modulo: 'COMUNE', soloAmministratore: true },
+    // «Attività» è il registro: lo vede chi accede ad AR o amministra (regola di /api/audit*).
+    { id: 'attivita', testo: 'Attività', icona: 'attivita', modulo: 'COMUNE' },
+    { id: 'novita', testo: 'Novità', icona: 'campana', modulo: 'COMUNE' },
+    { id: 'guida', testo: 'Guida', icona: 'aiuto', modulo: 'COMUNE' },
+    { id: 'assistenza', testo: 'Assistenza', icona: 'salvagente', modulo: 'COMUNE' },
   ];
+  const vedeAttivita = accedeAdAr(sessione);
 
   return (
     <Shell
       sessione={sessione}
       onSessioneAggiornata={setSessione}
       voci={voci.filter((v) =>
+        (v.modulo === 'COMUNE' || v.modulo === modulo) &&
+        (v.id !== 'attivita' || vedeAttivita) &&
         (!v.ruoli || v.ruoli.includes(sessione.utente.ruolo)) &&
         (!v.soloAmministratore || sessione.utente.amministratore === true))}
       pagina={pagina}
       vaiA={vaiA}
+      modulo={modulo}
+      disponibili={disponibili}
+      onCambiaModulo={(m) => { cambiaModulo(m); vaiA(PAGINA_INIZIALE[m]); }}
     >
       {pagina === 'cruscotto' && <Cruscotto vaiA={vaiA} />}
+      {pagina === 'ts-inizio' && <TsInizio tsRuolo={sessione.utente.tsRuolo ?? null} amministratore={sessione.utente.amministratore === true} />}
       {pagina === 'completezza' && <Completezza vaiA={vaiA} />}
       {pagina === 'coda' && <Coda vaiA={vaiA} />}
       {pagina === 'autovalutazione' && <Autovalutazione amministratore={sessione.utente.amministratore === true} />}
@@ -129,7 +161,7 @@ export default function App() {
       {pagina === 'sos' && <Sos />}
       {pagina === 'normativa' && <Normativa />}
       {/* «Attività» è il nuovo nome del registro; il vecchio hash resta valido. */}
-      {(pagina === 'attivita' || pagina === 'registro') && <Registro />}
+      {(pagina === 'attivita' || pagina === 'registro') && vedeAttivita && <Registro />}
       {pagina === 'impostazioni' && <Impostazioni sessione={sessione} onSessioneAggiornata={setSessione} />}
       {pagina === 'backup' && sessione.utente.amministratore === true && <Backup />}
       {pagina === 'novita' && <Novita />}
@@ -144,15 +176,23 @@ export default function App() {
  * cassetto off-canvas su mobile, blocco utente con «Esci» sempre in vista.
  * Pre-login parla il prodotto; qui compare lo studio, dal database.
  */
-function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }: {
+function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, modulo, disponibili, onCambiaModulo, children }: {
   sessione: Sessione;
   onSessioneAggiornata: (s: Sessione) => void;
   voci: Array<{ id: string; testo: string; icona: string }>;
   pagina: string;
   vaiA: (p: string) => void;
+  /** TS-M0: modulo scelto (null = l'utente non accede a nessun modulo), moduli disponibili, cambio. */
+  modulo: Modulo | null;
+  disponibili: Modulo[];
+  onCambiaModulo: (m: Modulo) => void;
   children: React.ReactNode;
 }) {
   const [menuAperto, setMenuAperto] = useState(false);
+  const prodotto = modulo === 'TS' ? 'Timesheet' : 'AR';
+  const accedeAr = disponibili.includes('AR');
+  // Stato effettivo del modulo scelto: i riquadri di sospeso/cessato valgono per lui.
+  const statoCorrente = modulo ? statoModulo(sessione, modulo) : sessione.studio.stato;
   const chiudiMenu = () => setMenuAperto(false);
   const fileAvatarRef = useRef<HTMLInputElement>(null);
 
@@ -181,12 +221,14 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
     };
     novita();
     assistenza();
-    coda();
+    if (accedeAr) coda();
     const timer = window.setInterval(assistenza, 60_000);
     window.addEventListener('novita-viste', novita);
     window.addEventListener('ticket-letti', assistenza);
-    window.addEventListener('coda-cambiata', coda);
-    window.addEventListener('hashchange', coda);
+    if (accedeAr) {
+      window.addEventListener('coda-cambiata', coda);
+      window.addEventListener('hashchange', coda);
+    }
     return () => {
       vivo = false;
       window.clearInterval(timer);
@@ -195,7 +237,7 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
       window.removeEventListener('coda-cambiata', coda);
       window.removeEventListener('hashchange', coda);
     };
-  }, []);
+  }, [accedeAr]);
   const pallini: Record<string, number> = { novita: nNovita, assistenza: nAssistenza, coda: nCoda };
 
   // Foto profilo caricabile anche dalla sidebar, come in Assist.
@@ -231,7 +273,7 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
         >
           <Icona nome="menu" size={22} />
         </button>
-        <LogoContify altezza={20} />
+        <LogoContify altezza={20} prodotto={prodotto} />
       </header>
 
       {menuAperto && (
@@ -252,7 +294,7 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
           >
             <Icona nome="x" size={20} />
           </button>
-          <LogoContify altezza={24} />
+          <LogoContify altezza={24} prodotto={prodotto} />
           <div className="text-[11px] text-ink-400 font-medium mt-1">per {sessione.studio.denominazione}</div>
           {sessione.studio.logo && (
             <img
@@ -263,6 +305,26 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
           )}
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto flex flex-col">
+          {/* TS-M0: chi ha entrambi i moduli sceglie qui; con uno solo
+              l'interfaccia resta identica a prima. */}
+          {disponibili.length > 1 && (
+            <div className="flex gap-1 bg-ink-50 border border-ink-100 rounded-xl p-1 mb-2" role="group" aria-label="Modulo" data-test="selettore-moduli">
+              {disponibili.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    modulo === m ? 'bg-teal-600 text-accento-on' : 'text-ink-500 hover:bg-ink-100 hover:text-ink-800'
+                  }`}
+                  aria-pressed={modulo === m}
+                  data-test={`modulo-${m}`}
+                  onClick={() => { if (m !== modulo) { onCambiaModulo(m); chiudiMenu(); } }}
+                >
+                  {NOME_MODULO[m]}
+                </button>
+              ))}
+            </div>
+          )}
           {voci.map((v) => (
             <button
               key={v.id}
@@ -326,24 +388,30 @@ function Shell({ sessione, onSessioneAggiornata, voci, pagina, vaiA, children }:
         <div className="max-w-[1180px]">
           {/* Stato commerciale (AR-M6): il blocco vero è lato server; qui
               si spiega all'utente perché i salvataggi falliscono. */}
-          {sessione.studio.stato === 'sospeso' && (
+          {statoCorrente === 'sospeso' && (
             <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-sm px-4 py-3">
               <strong>Servizio in sola lettura.</strong> Puoi consultare ed esportare i dati dello studio,
               ma non modificarli. Per riattivare le modifiche contatta Contify (anche dal modulo di assistenza).
             </div>
           )}
-          {sessione.studio.stato === 'cessato' && (
+          {statoCorrente === 'cessato' && (
             <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm px-4 py-3">
               <strong>Il servizio non è più attivo per questo studio.</strong> Contatta Contify
               (info@contify.it) per riattivarlo.
+            </div>
+          )}
+          {modulo === null && (
+            <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-sm px-4 py-3">
+              <strong>Il tuo utente non accede a nessun modulo dello studio.</strong> Chiedi a chi amministra
+              lo studio di abilitarti ad Antiriciclaggio o di assegnarti un ruolo Timesheet.
             </div>
           )}
           {children}
         </div>
       </main>
 
-      {/* Chat di assistenza (AR-M10): compare solo con l'AI abilitata. */}
-      <ChatAssistente />
+      {/* Chat di assistenza (AR-M10): compare solo con l'AI abilitata, ed è di AR. */}
+      {modulo === 'AR' && <ChatAssistente />}
     </div>
   );
 }

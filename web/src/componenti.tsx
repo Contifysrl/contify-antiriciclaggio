@@ -1,4 +1,5 @@
 import { type ReactNode } from 'react';
+import { moduloCorrente } from './lib/moduli';
 import { CLASSE_STILE, type ClasseRischio, type Fattore, type Ruleset, type Vincolo } from './api';
 
 export function Tessera({ etichetta, valore, nota }: { etichetta: string; valore: ReactNode; nota?: string }) {
@@ -124,13 +125,30 @@ export function GruppoFattori({
   );
 }
 
+/**
+ * Il piede legale segue il modulo scelto nella barra laterale (TS-M0): la
+ * dicitura antiriciclaggio non ha senso nelle pagine di Timesheet. Il modulo
+ * corrente lo pubblica App.tsx in `moduloCorrente()`, così le pagine comuni
+ * non devono passarsi il dato.
+ */
 export function PiedeLegale() {
+  const modulo = moduloCorrente();
   return (
     <div className="piede-legale">
-      Contify AR (AntiRiciclaggio) è uno strumento di supporto agli adempimenti del DLgs. 21.11.2007 n. 231 e alle regole tecniche
-      adottate dal CNDCEC ai sensi dell’art. 11 co. 2. Gli esiti prodotti non sostituiscono la valutazione del
-      professionista incaricato, cui restano imputate le decisioni sull’adeguata verifica, sull’astensione e sulla
-      segnalazione di operazioni sospette.
+      {modulo === 'TS' ? (
+        <>
+          Contify Timesheet è uno strumento di supporto all’organizzazione dello studio: registra il lavoro
+          svolto e prepara i proforma. Le registrazioni, le tariffe e i documenti emessi restano sotto la
+          responsabilità dello studio.
+        </>
+      ) : (
+        <>
+          Contify AR (AntiRiciclaggio) è uno strumento di supporto agli adempimenti del DLgs. 21.11.2007 n. 231 e alle regole tecniche
+          adottate dal CNDCEC ai sensi dell’art. 11 co. 2. Gli esiti prodotti non sostituiscono la valutazione del
+          professionista incaricato, cui restano imputate le decisioni sull’adeguata verifica, sull’astensione e sulla
+          segnalazione di operazioni sospette.
+        </>
+      )}
     </div>
   );
 }
