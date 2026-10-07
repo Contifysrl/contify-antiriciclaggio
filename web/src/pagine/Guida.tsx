@@ -764,6 +764,7 @@ const SEZIONI: Sezione[] = [
         </P>
         <Punti punti={[
           <>Se qualcosa manca o è ambiguo, il programma <K>fa una domanda</K> con le scelte come pulsanti («Per quale cliente?», «Che tipo di lavoro?», «Quanto tempo?»). Puoi anche rispondere scrivendo. Non salva mai un dato di cui non è sicuro.</>,
+          <>Se chi amministra lo studio ha attivato l'AI, nelle domande il <K>primo pulsante è il suggerimento del modello</K> (per esempio il tipo di lavoro più probabile). È solo un suggerimento: il modello non cambia ciò che il programma ha già riconosciuto con certezza e non propone clienti che il programma non abbia già individuato come possibili.</>,
           <>Se nomini un cliente che non esiste, puoi cercarlo nell'elenco o, se lo studio lo permette, crearlo al volo: resta <K>«da verificare»</K> finché chi dirige lo studio non ne completa l'anagrafica.</>,
           <>Quando scegli un cliente per un modo di dire che il programma non conosceva («il ponte»), ti propone di ricordarlo per la prossima volta.</>,
           <>Il giorno è oggi se non lo dici; «ieri», «venerdì», «il 28» funzionano. Non si registra nel futuro.</>,
@@ -884,7 +885,8 @@ const SEZIONI: Sezione[] = [
           Chi <K>amministra lo studio</K> decide anche il consenso all'<K>AI e alla dettatura vocale</K> di Timesheet, separato da quello
           dell'assistente di Antiriciclaggio, dopo aver letto l'informativa: cosa viene inviato e a chi, che l'audio non è conservato,
           che la voce non serve a riconoscere chi parla, che il registro delle operazioni non si cancella. Senza consenso il programma
-          funziona con il riconoscimento di base e l'inserimento a mano. L'uso dell'AI è limitato per persona e per giorno.
+          funziona con il riconoscimento di base e l'inserimento a mano; con il consenso, il modello <K>suggerisce</K> (primo pulsante
+          delle domande) ma non decide mai da solo. L'uso dell'AI è limitato per persona e per giorno.
         </P>
         <Attenzione>
           Il backup dello studio comprende anche le ore. <K>Ripristinare</K> un backup riporta a quella data anche le registrazioni

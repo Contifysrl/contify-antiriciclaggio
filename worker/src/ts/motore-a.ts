@@ -1,15 +1,22 @@
 /**
  * Contify Timesheet — passo 2 dell'interpretazione, motore A: modello presso
  * Cloudflare (Workers AI). Parte solo quando il passo 1 lascia qualcosa di
- * mancante o ambiguo, anche il cliente: il modello riceve il testo, i servizi
- * e un elenco RISTRETTO di clienti (i candidati locali, oppure tutti i clienti
- * dello studio fino a 150) e restituisce JSON secondo uno schema.
+ * mancante o ambiguo: il modello riceve il testo, i servizi e SOLO i clienti
+ * candidati del locale (mai l'elenco dello studio) e restituisce JSON secondo
+ * uno schema.
  *
- * La risposta del modello è DATO NON FIDATO: ogni identificativo si verifica
- * contro lo studio; i minuti devono coincidere con una durata riconosciuta
- * localmente, le date con una data riconosciuta localmente (o oggi); altrimenti
- * il campo torna nullo e si chiede. Se la risposta è malformata, in errore o
- * in ritardo, vale il solo passo 1.
+ * La risposta del modello è DATO NON FIDATO e vale solo come SUGGERIMENTO:
+ * il locale decide ciò che è certo; dove il locale non ha deciso, il
+ * servizio indicato dal modello va in testa ai candidati e, fra i candidati
+ * cliente del locale, quello indicato dal modello va in testa; mai una scelta
+ * certa, mai un cliente che il locale non aveva considerato. Minuti, data,
+ * nota e numero di registrazioni restano quelli del locale. Così il modello
+ * non può produrre un errore silenzioso né proporre un cliente inventato: può
+ * solo far risparmiare un tocco. Regola nata dalla prova del 5/10/2026: usato
+ * al posto del locale, il modello peggiorava tutto (3 errori sul cliente, 14
+ * silenziosi); con l'elenco intero inventava clienti per nomi sconosciuti e
+ * non recuperava quelli storpiati. Ogni identificativo si verifica contro lo
+ * studio; se la risposta è malformata, in errore o in ritardo, vale il passo 1.
  *
  * Il trasporto (binding `env.AI` nel Worker, REST nelle prove) è iniettato:
  * questo file non conosce la rete.
@@ -22,8 +29,6 @@ import { completa, interpretaLocale, type Candidato, type Contesto, type Propost
 export type MessaggioModello = { role: 'system' | 'user'; content: string };
 export type ChiamaModello = (messaggi: MessaggioModello[], schema: Record<string, unknown>) => Promise<{ testo: string; usoTokens?: unknown }>;
 
-/** Oltre questo numero di clienti si passano al modello i più usati di recente (il chiamante li ordina così). */
-export const MAX_CLIENTI_AL_MODELLO = 150;
 export const TEMPO_MASSIMO_MODELLO_MS = 6000;
 
 const GIORNI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
@@ -65,12 +70,8 @@ export function preparaRichiesta(testo: string, ctx: Contesto, locali: Proposta[
     if (p.cliente.id) candidatiLocali.set(p.cliente.id, { id: p.cliente.id, nome: ctx.clienti.find((c) => c.id === p.cliente.id)?.nome ?? p.cliente.id });
     for (const c of p.cliente.candidati) candidatiLocali.set(c.id, c);
   }
-  const mancaCliente = locali.some((p) => !p.cliente.id);
-  const clientiInviati: Candidato[] = mancaCliente && !candidatiLocali.size
-    ? ctx.clienti.slice(0, MAX_CLIENTI_AL_MODELLO).map((c) => ({ id: c.id, nome: c.nome }))
-    : mancaCliente
-      ? [...candidatiLocali.values()]
-      : [...candidatiLocali.values()];
+  // Solo i clienti che il locale ha già considerato: il modello non ne introduce altri.
+  const clientiInviati: Candidato[] = [...candidatiLocali.values()];
 
   const sistema = [
     'Sei il motore di una rilevazione ore per studi di commercialisti e consulenti del lavoro in Italia.',
@@ -80,10 +81,9 @@ export function preparaRichiesta(testo: string, ctx: Contesto, locali: Proposta[
     '',
     'Regole:',
     `- Oggi è ${GIORNI[giornoSettimana(ctx.oggi)]} ${ctx.oggi}. Le date vanno scritte AAAA-MM-GG, mai nel futuro. Se la frase non dice il giorno, la data è oggi. Usa le date già risolte che ti vengono fornite.`,
-    '- "cliente" è l\'id di un cliente dell\'elenco fornito, oppure null se la frase non nomina nessun cliente dell\'elenco, o nomina un cliente che non c\'è, o è ambigua fra più clienti (in quel caso metti gli id possibili in candidati_cliente).',
+    '- "cliente" è l\'id del cliente PIÙ PROBABILE fra quelli dell\'elenco fornito (anche se il nome è storpiato, con lettere sbagliate o parole unite/spezzate); gli altri plausibili, in ordine, in candidati_cliente. Null se l\'elenco è vuoto o nessun cliente dell\'elenco è plausibile: non inventare clienti fuori dall\'elenco. La tua scelta è un suggerimento: la conferma la dà chi registra.',
     '- Nomi di persone che compaiono come dipendenti, soci, avvocati, fornitori o controparti del cliente NON sono clienti: il cliente è quello per cui si lavora.',
-    '- Non confondere clienti con nomi simili: se il testo non basta a distinguerli, cliente null e tutti i possibili in candidati_cliente. Un nome dettato può avere lettere sbagliate o parole unite/spezzate.',
-    '- "servizio" è l\'id di un servizio dell\'elenco, scelto dalle parole chiave e dal senso della frase; null se non si capisce o se più servizi sono plausibili (mettili in candidati_servizio). Non usare mai il servizio generico se non è detto esplicitamente.',
+    '- "servizio" è l\'id del servizio PIÙ ADATTO dell\'elenco, scelto dalle parole chiave e dal senso della frase; le alternative plausibili in candidati_servizio. Null solo se non si capisce. Non usare mai il servizio generico se non è detto esplicitamente.',
     '- "minuti": usa SOLO le durate già riconosciute che ti vengono fornite, assegnando ciascuna al lavoro giusto; null se per quel lavoro la frase non dà una durata. Se una sola durata vale per più clienti e la frase dice "ciascuno" o simili, ripetila; se dice un totale senza ripartizione, metti null a tutti.',
     '- "nota": ciò che la frase dice in più (dettagli del lavoro), senza ripetere cliente, servizio e durata; null se non c\'è nulla.',
     '- Il mese da solo ("cedolini di settembre") non è la data del lavoro ma il periodo a cui si riferisce.',
@@ -96,7 +96,7 @@ export function preparaRichiesta(testo: string, ctx: Contesto, locali: Proposta[
     ...ctx.servizi.map((s) => `- ${s.id}: ${s.nome}${s.generico ? ' (generico)' : ''}${s.parole.length ? ' — ' + s.parole.join(', ') : ''}`),
     '',
     `Clienti possibili (id: nome):`,
-    ...clientiInviati.map((c) => `- ${c.id}: ${c.nome}`),
+    ...(clientiInviati.length ? clientiInviati.map((c) => `- ${c.id}: ${c.nome}`) : ['- (nessuno: la frase non nomina un cliente conosciuto; cliente null)']),
     '',
     `Durate riconosciute nella frase, in minuti e in ordine: ${durate.length ? durate.join(', ') : 'nessuna'}.`,
     `Date riconosciute nella frase: ${date.length ? date.map((d) => `«${d.testo}» = ${d.data ?? 'non determinabile (chiedere)'}`).join('; ') : 'nessuna (oggi)'}.`,
@@ -114,7 +114,8 @@ export function estraiJson(testo: string): any | null {
 }
 
 /**
- * Valida la risposta del modello contro lo studio e i fatti locali.
+ * Valida la risposta del modello contro lo studio e i fatti locali e la
+ * traduce in proposte «del modello», da fondere con il locale (`fondi`).
  * Restituisce null se la risposta non è usabile (si tiene il passo 1).
  */
 export function validaRisposta(grezzo: any, ctx: Contesto, clientiInviati: Candidato[], fatti: FattiLocali): Proposta[] | null {
@@ -129,7 +130,9 @@ export function validaRisposta(grezzo: any, ctx: Contesto, clientiInviati: Candi
   for (const r of reg) {
     if (!r || typeof r !== 'object') return null;
     const clienteId = typeof r.cliente === 'string' && clientiOk.has(r.cliente) ? r.cliente : null;
-    const candCliente = (Array.isArray(r.candidati_cliente) ? r.candidati_cliente : []).filter((x: unknown) => typeof x === 'string' && clientiOk.has(x)).slice(0, 4) as string[];
+    const candTutti = (Array.isArray(r.candidati_cliente) ? r.candidati_cliente : []).filter((x: unknown) => typeof x === 'string' && clientiOk.has(x)) as string[];
+    // Più di 4 candidati = il modello non sa (nella prova elencava tutti i clienti): nessun candidato.
+    const candCliente = candTutti.length > 4 ? [] : candTutti;
     const servizio = typeof r.servizio === 'string' ? servizi.get(r.servizio) : undefined;
     const servizioId = servizio && !servizio.generico ? servizio.id : null;
     const candServizio = (Array.isArray(r.candidati_servizio) ? r.candidati_servizio : []).filter((x: unknown) => typeof x === 'string' && servizi.has(x)).slice(0, 4) as string[];
@@ -137,8 +140,9 @@ export function validaRisposta(grezzo: any, ctx: Contesto, clientiInviati: Candi
     const data = typeof r.data === 'string' && dateOk.has(r.data) ? r.data : fatti.date.some((d) => d.data === null) ? null : fatti.date.length ? null : ctx.oggi;
     const nota = typeof r.nota === 'string' && r.nota.trim() ? r.nota.trim().slice(0, 500) : null;
     out.push({
-      cliente: { id: clienteId, candidati: clienteId ? [] : candCliente.map((id) => ({ id, nome: nomeCliente(id) })) },
-      servizio: { id: servizioId, candidati: servizioId ? [] : candServizio.map((id) => ({ id, nome: servizi.get(id)!.nome })) },
+      // Qui id e candidati convivono: sono la scelta principale e le alternative del modello, che `fondi` userà come suggerimenti.
+      cliente: { id: clienteId, candidati: candCliente.filter((id) => id !== clienteId).map((id) => ({ id, nome: nomeCliente(id) })) },
+      servizio: { id: servizioId, candidati: candServizio.filter((id) => id !== servizioId).map((id) => ({ id, nome: servizi.get(id)!.nome })) },
       minuti,
       data,
       nota,
@@ -148,12 +152,72 @@ export function validaRisposta(grezzo: any, ctx: Contesto, clientiInviati: Candi
   return out;
 }
 
+/** I suggerimenti del modello per un campo, in ordine: la scelta principale, poi i candidati. */
+function suggeriti(campo: { id: string | null; candidati: Candidato[] }): Candidato[] {
+  const visti = new Set<string>();
+  const out: Candidato[] = [];
+  for (const c of [campo.id ? { id: campo.id, nome: '' } : null, ...campo.candidati]) {
+    if (c && !visti.has(c.id)) { visti.add(c.id); out.push(c); }
+  }
+  return out;
+}
+
+/** Mette in testa ai candidati del locale quelli suggeriti dal modello (stessi elementi, ordine diverso). */
+function riordina(locali: Candidato[], suggerimenti: Candidato[]): Candidato[] {
+  const ordine = new Map(suggerimenti.map((s, i) => [s.id, i]));
+  return [...locali].sort((a, b) => (ordine.get(a.id) ?? Infinity) - (ordine.get(b.id) ?? Infinity));
+}
+
+/**
+ * Fonde il passo 1 con la risposta (validata) del modello. Il locale decide
+ * ciò che è certo e quante registrazioni sono; il modello può solo suggerire:
+ * - cliente certo nel locale → resta; candidati nel locale → gli stessi, con il
+ *   suggerito in testa; nessun candidato → resta nessuno (il modello non
+ *   introduce clienti: nella prova ne inventava per i nomi sconosciuti);
+ * - servizio: certo nel locale → resta; altrimenti il suggerito in testa ai
+ *   candidati del locale (mai certo, mai il generico);
+ * - minuti, data, nota: sempre dal locale.
+ * `motore` vale 'AI' solo dove un suggerimento è entrato.
+ */
+export function fondi(locali: Proposta[], modello: Proposta[], ctx: Contesto): Proposta[] {
+  const nomeCliente = (id: string) => ctx.clienti.find((c) => c.id === id)?.nome ?? id;
+  const nomeServizio = (id: string) => ctx.servizi.find((s) => s.id === id)?.nome ?? id;
+  return locali.map((l, i) => {
+    const m = modello[i];
+    if (!m) return l;
+    let usato = false;
+    let cliente = l.cliente;
+    if (!l.cliente.id) {
+      // Più di 4 suggerimenti = il modello non sa (nella prova elencava tutti i clienti): nessun suggerimento.
+      const tutti = suggeriti(m.cliente);
+      const sugg = tutti.length > 4 ? [] : tutti.map((c) => ({ id: c.id, nome: nomeCliente(c.id) }));
+      if (sugg.length && l.cliente.candidati.length) {
+        const nuovi = riordina(l.cliente.candidati, sugg);
+        usato = usato || nuovi[0].id !== l.cliente.candidati[0].id;
+        cliente = { id: null, candidati: nuovi };
+      }
+    }
+    let servizio = l.servizio;
+    if (!l.servizio.id) {
+      const sugg = suggeriti(m.servizio).filter((s) => !ctx.servizi.find((x) => x.id === s.id)?.generico).map((s) => ({ id: s.id, nome: nomeServizio(s.id) }));
+      if (sugg.length) {
+        const visti = new Set(sugg.map((s) => s.id));
+        servizio = { id: null, candidati: [...sugg, ...l.servizio.candidati.filter((c) => !visti.has(c.id))].slice(0, 4) };
+        usato = true;
+      }
+    }
+    return usato ? { ...l, cliente, servizio, motore: 'AI' } : l;
+  });
+}
+
 export interface EsitoMotoreA {
   proposte: Proposta[];
   aiChiamata: boolean;
   /** Motivo per cui vale il solo passo 1, se così è andata. */
   ripiego?: string;
   usoTokens?: unknown;
+  /** La risposta del modello validata, prima della fusione (per le prove e i rapporti). */
+  modello?: Proposta[];
 }
 
 /** Passo 1 sempre; passo 2 (modello) solo se qualcosa manca o è ambiguo. */
@@ -173,5 +237,5 @@ export async function interpretaConMotoreA(testo: string, ctx: Contesto, chiama:
   const grezzo = estraiJson(risposta.testo);
   const valide = grezzo ? validaRisposta(grezzo, ctx, clientiInviati, fatti) : null;
   if (!valide) return { proposte: locali, aiChiamata: true, ripiego: 'risposta non valida', usoTokens: risposta.usoTokens };
-  return { proposte: valide, aiChiamata: true, usoTokens: risposta.usoTokens };
+  return { proposte: fondi(locali, valide, ctx), aiChiamata: true, usoTokens: risposta.usoTokens, modello: valide };
 }

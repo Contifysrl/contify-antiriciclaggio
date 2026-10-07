@@ -206,6 +206,23 @@ if (conAudio) {
   console.log('  (ffmpeg assente: microfono non provato)');
 }
 
+// Con l'AI abilitata il modello (fixture) suggerisce il primo servizio: nella domanda compare per primo,
+// poi il generico e «Altri…» che apre l'elenco intero. Il suggerimento non decide: la scheda nasce solo dopo il tocco.
+{
+  const prima = await schede().count();
+  await p.fill('[data-test="campo-chat"]', `un'ora per Omega ${suffisso}`);
+  await p.click('[data-test="invia-chat"]');
+  await p.waitForSelector('[data-test="domanda-servizio"]');
+  const testi = await p.locator('[data-test="domanda-servizio"] button').allTextContents();
+  verifica('AI abilitata, frase senza servizio → il suggerimento del modello è il primo pulsante, poi il generico e «Altri…»', testi.length === 3 && testi[0] === 'Contabilità' && testi[1] === 'Altro' && testi[2] === 'Altri…', testi);
+  verifica('nessuna scheda salvata dal solo suggerimento', (await schede().count()) === prima);
+  await p.click('[data-test="altri-servizi"]');
+  verifica('«Altri…» mostra l’elenco intero dei servizi', (await p.locator('[data-test="domanda-servizio"] button').count()) >= 8);
+  await p.click('[data-test="domanda-servizio"] button:has-text("Consulenza")');
+  await p.waitForTimeout(1200);
+  verifica('scelta diversa dal suggerimento → scheda salvata (Omega, Consulenza, 1 h)', (await schede().count()) === prima + 1 && /Omega.*Consulenza.*1 h/s.test(await schede().last().textContent()));
+}
+
 await b.close();
 console.log(`\nUI TS-M1: ${ok} ok, ${fail} fail`);
 process.exit(fail ? 1 : 0);

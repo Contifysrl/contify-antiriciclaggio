@@ -92,14 +92,18 @@ export function fuoriFinestra(u: { amministratore?: number; ts_ruolo?: string | 
 }
 
 /** Il trasporto verso il modello presso Cloudflare (binding `AI`), con le fixture per le prove. */
-function chiamaModello(c: Ctx, locali: Proposta[]): ChiamaModello {
+function chiamaModello(c: Ctx, locali: Proposta[], ctx: Contesto): ChiamaModello {
   if (c.env.AI_FIXTURES === '1') {
+    // Fixture deterministica che imita un modello: conferma ciò che il locale ha, sceglie il primo
+    // candidato dove ce n'è più d'uno e, senza servizio, suggerisce il primo servizio non generico
+    // dello studio. La fusione (`fondi`) la tratta come ogni altra risposta: solo suggerimenti.
+    const primoServizio = ctx.servizi.find((s) => !s.generico)?.id ?? null;
     return async () => ({
       testo: JSON.stringify({
         registrazioni: locali.map((p) => ({
-          cliente: p.cliente.id ?? (p.cliente.candidati.length === 1 ? p.cliente.candidati[0].id : null),
+          cliente: p.cliente.id ?? p.cliente.candidati[0]?.id ?? null,
           candidati_cliente: p.cliente.id ? [] : p.cliente.candidati.map((x) => x.id),
-          servizio: p.servizio.id ?? (p.servizio.candidati.length === 1 ? p.servizio.candidati[0].id : null),
+          servizio: p.servizio.id ?? p.servizio.candidati[0]?.id ?? primoServizio,
           candidati_servizio: p.servizio.id ? [] : p.servizio.candidati.map((x) => x.id),
           minuti: p.minuti, data: p.data, nota: p.nota,
         })),
@@ -204,10 +208,11 @@ tsApp.post('/interpreta', async (c) => {
       const uso = await usoAiOggi(c.env.DB, tenantId, u.id, ctx.oggi);
       if (uso.interpretazioni >= LIMITE_INTERPRETAZIONI_GIORNO) limiteAi = true;
       else {
-        const esito = await interpretaConMotoreA(frase, ctx, chiamaModello(c, proposte));
+        const esito = await interpretaConMotoreA(frase, ctx, chiamaModello(c, proposte, ctx));
         if (esito.aiChiamata) await contaUsoAi(c.env.DB, tenantId, u.id, ctx.oggi, { interpretazioni: 1 });
         if (!esito.ripiego) {
-          motore = 'AI';
+          // 'AI' solo se un suggerimento del modello è entrato davvero in una proposta (il locale resta il decisore).
+          if (esito.proposte.some((p) => p.motore === 'AI')) motore = 'AI';
           // Le proposte in sospeso già complete non si perdono: il modello ha visto solo la frase nuova.
           proposte = inSospeso.length ? [...inSospeso.filter(completa), ...esito.proposte] : esito.proposte;
         }

@@ -51,6 +51,7 @@ export function TsRegistra({ sessioneUtenteId, vaiA }: { sessioneUtenteId: strin
   const [cercaCliente, setCercaCliente] = useState(false);
   const [nuovoCliente, setNuovoCliente] = useState<string | null>(null);
   const [altraDurata, setAltraDurata] = useState(false);
+  const [altriServizi, setAltriServizi] = useState(false);
   const [aliasProposto, setAliasProposto] = useState<{ testo: string; clienteId: string; nome: string } | null>(null);
   const [aMano, setAMano] = useState(false);
   const [modifica, setModifica] = useState<Registrazione | null>(null);
@@ -122,6 +123,7 @@ export function TsRegistra({ sessioneUtenteId, vaiA }: { sessioneUtenteId: strin
     setCercaCliente(false);
     setNuovoCliente(null);
     setAltraDurata(false);
+    setAltriServizi(false);
   };
 
   const invia = async (frase: string, origine: 'CHAT' | 'VOCE' = 'CHAT') => {
@@ -316,9 +318,13 @@ export function TsRegistra({ sessioneUtenteId, vaiA }: { sessioneUtenteId: strin
                   )}
                 </div>
               )}
-              {campo === 'servizio' && (prima.servizio.candidati.length ? [...prima.servizio.candidati, ...contesto.servizi.filter((s) => s.generico && !prima.servizio.candidati.some((c) => c.id === s.id))] : serviziOrdinati).map((s) => (
+              {/* Servizio: prima i candidati (il primo può essere il suggerimento del modello) e il generico; «Altri…» mostra il resto dell'elenco. */}
+              {campo === 'servizio' && (prima.servizio.candidati.length && !altriServizi ? [...prima.servizio.candidati, ...contesto.servizi.filter((s) => s.generico && !prima.servizio.candidati.some((c) => c.id === s.id))] : serviziOrdinati).map((s) => (
                 <button key={s.id} type="button" className="btn btn-secondary btn-sm" onClick={() => rispondi('servizio', s.id)}>{s.nome}</button>
               ))}
+              {campo === 'servizio' && prima.servizio.candidati.length > 0 && !altriServizi && serviziOrdinati.length > prima.servizio.candidati.length + 1 && (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAltriServizi(true)} data-test="altri-servizi">Altri…</button>
+              )}
               {campo === 'minuti' && !altraDurata && SCELTE_MINUTI.map((m) => (
                 <button key={m} type="button" className="btn btn-secondary btn-sm" onClick={() => rispondi('minuti', m)}>{durata(m)}</button>
               ))}

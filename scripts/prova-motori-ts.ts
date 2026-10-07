@@ -88,7 +88,7 @@ async function trascriviFile(f: Frase): Promise<string | null> {
   return testo;
 }
 
-async function interpreta(f: Frase): Promise<{ proposte: Proposta[]; ms: number; aiChiamata: boolean }> {
+async function interpreta(f: Frase): Promise<{ proposte: Proposta[]; ms: number; aiChiamata: boolean; modello?: Proposta[] }> {
   if (f.tipo === 'audio') {
     const testo = await trascriviFile(f);
     if (testo === null) throw new Error('file audio assente');
@@ -101,7 +101,7 @@ async function interpreta(f: Frase): Promise<{ proposte: Proposta[]; ms: number;
   }
   if (MOTORE === 'A') {
     const esito = await interpretaConMotoreA(f.testo, ctx, chiamaCloudflare());
-    return { proposte: esito.proposte, ms: performance.now() - t0, aiChiamata: esito.aiChiamata };
+    return { proposte: esito.proposte, ms: performance.now() - t0, aiChiamata: esito.aiChiamata, modello: esito.modello };
   }
   throw new Error(`Motore ${MOTORE} non ancora realizzato in questo script.`);
 }
@@ -109,8 +109,28 @@ async function interpreta(f: Frase): Promise<{ proposte: Proposta[]; ms: number;
 const valutazioni: Valutazione[] = [];
 const tempi: number[] = [];
 let chiamateAi = 0;
+/**
+ * Qualità dei suggerimenti del modello, misurata PRIMA della fusione (la fusione
+ * non li lascia mai decidere, quindi le misure sopra non li vedono): la scelta
+ * principale del modello contro l'attesa della frase.
+ */
+const sugg = { clienteGiusto: 0, clienteFraCandidati: 0, clienteSbagliato: 0, clienteNullo: 0, clienteAstenuto: 0, clienteInventato: 0, servizioGiusto: 0, servizioFraPlausibili: 0, servizioSbagliato: 0, servizioNullo: 0 };
+const suggDettagli: string[] = [];
+function misuraSuggerimenti(f: Frase, modello: Proposta[]) {
+  f.attese.forEach((a, i) => {
+    const m = modello[i];
+    if (!m) return;
+    const c = m.cliente.id, sv = m.servizio.id;
+    if (a.c) { if (c === a.c) sugg.clienteGiusto++; else if (c) { sugg.clienteSbagliato++; suggDettagli.push(`${f.id} cliente ${c} ≠ ${a.c}`); } else sugg.clienteNullo++; }
+    else if (a.cand?.length) { if (c && a.cand.includes(c)) sugg.clienteFraCandidati++; else if (c) { sugg.clienteSbagliato++; suggDettagli.push(`${f.id} cliente ${c} fuori da ${a.cand.join('/')}`); } else sugg.clienteNullo++; }
+    else { if (c) { sugg.clienteInventato++; suggDettagli.push(`${f.id} cliente inventato ${c}`); } else sugg.clienteAstenuto++; }
+    if (a.s) { if (sv === a.s) sugg.servizioGiusto++; else if (sv) { sugg.servizioSbagliato++; suggDettagli.push(`${f.id} servizio ${sv} ≠ ${a.s}`); } else sugg.servizioNullo++; }
+    else if (a.scand?.length) { if (sv && a.scand.includes(sv)) sugg.servizioFraPlausibili++; else if (sv) { sugg.servizioSbagliato++; suggDettagli.push(`${f.id} servizio ${sv} fuori da ${a.scand.join('/')}`); } else sugg.servizioNullo++; }
+    else { if (sv) { sugg.servizioSbagliato++; suggDettagli.push(`${f.id} servizio ${sv} dove si deve chiedere`); } else sugg.servizioNullo++; }
+  });
+}
 for (const f of frasi) {
-  let esito: { proposte: Proposta[]; ms: number; aiChiamata: boolean };
+  let esito: { proposte: Proposta[]; ms: number; aiChiamata: boolean; modello?: Proposta[] };
   try {
     esito = await interpreta(f);
   } catch (e) {
@@ -119,6 +139,7 @@ for (const f of frasi) {
     esito = { proposte: interpretaLocale(f.testo, ctx), ms: 0, aiChiamata: false };
   }
   if (esito.aiChiamata) { chiamateAi++; tempi.push(esito.ms); }
+  if (esito.modello) misuraSuggerimenti(f, esito.modello);
   const v = valutaFrase(f, esito.proposte, insieme.oggi);
   valutazioni.push(v);
   if (DETTAGLIO || v.esito !== 'esatta') {
@@ -146,6 +167,16 @@ const righeAudio = trascrizioni.length ? [
   '',
   `Tempo mediano di trascrizione: ${(([...trascrizioni].sort((a, b) => a.ms - b.ms)[Math.floor(trascrizioni.length / 2)]?.ms ?? 0) / 1000).toFixed(2)} s.`,
 ] : [];
+const righeSugg = chiamateAi ? [
+  '',
+  '## Suggerimenti del modello (prima della fusione)',
+  '',
+  'Il locale decide ciò che è certo e il modello può solo mettere in testa un candidato: queste righe dicono quanto spesso il suo suggerimento coincide con l\'attesa.',
+  '',
+  `- Cliente: giusto ${sugg.clienteGiusto}, fra i candidati attesi ${sugg.clienteFraCandidati}, **sbagliato ${sugg.clienteSbagliato}**, **inventato (nessun cliente nella frase) ${sugg.clienteInventato}**, astenuto a ragione ${sugg.clienteAstenuto}, nullo dove c'era ${sugg.clienteNullo}`,
+  `- Servizio: giusto ${sugg.servizioGiusto}, fra i plausibili ${sugg.servizioFraPlausibili}, **sbagliato o dove si deve chiedere ${sugg.servizioSbagliato}**, nullo ${sugg.servizioNullo}`,
+  ...(suggDettagli.length ? ['', ...suggDettagli.map((d) => `  - ${d}`)] : []),
+] : [];
 const righe = [
   `# Prova dei motori — motore ${MOTORE} (${new Date().toISOString().slice(0, 10)})`,
   '',
@@ -168,6 +199,7 @@ const righe = [
   '## Frasi non esatte',
   '',
   ...valutazioni.filter((v) => v.esito !== 'esatta').map((v) => `- ${v.id} **${v.esito}**${v.erroriCliente ? ' (CLIENTE)' : ''}: ${v.dettagli.join('; ')}`),
+  ...righeSugg,
   ...righeAudio,
 ];
 console.log('\n' + righe.join('\n'));
